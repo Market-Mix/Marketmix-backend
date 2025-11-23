@@ -23,10 +23,16 @@ const register = async (req, res) => {
       return sendError(res, 400, 'Invalid role. Must be either buyer or seller');
     }
 
-    // Check if user already exists
-    const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+    // Check if user already exists (including soft-deleted)
+    const existingUser = await db.query(
+      'SELECT id, is_deleted FROM users WHERE email = $1', 
+      [email]
+    );
 
     if (existingUser.rows.length > 0) {
+      if (existingUser.rows[0].is_deleted) {
+        return sendError(res, 400, 'This account has been deleted. Please contact support.');
+      }
       return sendError(res, 400, 'User with this email already exists');
     }
 
@@ -82,8 +88,11 @@ const login = async (req, res) => {
       return sendError(res, 400, 'Please provide email and password');
     }
 
-    // Check if user exists
-    const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    // Check if user exists and is not deleted
+    const result = await db.query(
+      'SELECT * FROM users WHERE email = $1 AND is_deleted = FALSE', 
+      [email]
+    );
 
     if (result.rows.length === 0) {
       return sendError(res, 401, 'Invalid email or password');
@@ -130,7 +139,7 @@ const login = async (req, res) => {
 const getMe = async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT id, email, first_name, last_name, phone, role, created_at FROM users WHERE id = $1',
+      'SELECT id, email, first_name, last_name, phone, role, created_at FROM users WHERE id = $1 AND is_deleted = FALSE',
       [req.user.id]
     );
 
