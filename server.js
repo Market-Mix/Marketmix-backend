@@ -32,26 +32,26 @@ app.get('/', (req, res) => {
   });
 });
 
-// Import routes
+// Import routes (match actual filenames in /routes)
 const authRoutes = require('./routes/auth.routes');
 const buyerRoutes = require('./routes/buyer.routes');
 const sellerRoutes = require('./routes/seller.routes');
 const adminRoutes = require('./routes/admin.routes');
-const productRoutes = require('./routes/product.routes');
+const productsRoutes = require('./routes/products.routes');
 const cartRoutes = require('./routes/cart.routes');
-const orderRoutes = require('./routes/order.routes');
+const ordersRoutes = require('./routes/orders.routes');
 const earningsRoutes = require('./routes/earnings.routes');
 const withdrawalRoutes = require('./routes/withdrawal.routes');
-const notificationRoutes = require('./routes/notification.routes');
+const notificationRoutes = require('./routes/notification.route');
 
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/buyer', buyerRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/products', productRoutes);
+app.use('/api/products', productsRoutes);
 app.use('/api/cart', cartRoutes);
-app.use('/api/orders', orderRoutes);
+app.use('/api/orders', ordersRoutes);
 app.use('/api/earnings', earningsRoutes);
 app.use('/api/withdrawals', withdrawalRoutes);
 app.use('/api/notifications', notificationRoutes);
