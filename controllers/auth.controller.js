@@ -41,12 +41,13 @@ const register = async (req, res) => {
     const passwordHash = await bcrypt.hash(password, salt);
 
     // Insert new user
-    const result = await db.query(
-      `INSERT INTO users (email, password_hash, first_name, last_name, phone, role) 
-       VALUES ($1, $2, $3, $4, $5, $6) 
-       RETURNING id, email, first_name, last_name, phone, role, created_at`,
-      [email, passwordHash, firstName, lastName, phone || null, role || 'buyer']
-    );
+   const result = await db.query(
+  `INSERT INTO users 
+   (email, password_hash, first_name, last_name, phone, role, is_verified, avatar_url, is_deleted, created_at, updated_at)
+   VALUES ($1, $2, $3, $4, $5, $6, FALSE, NULL, FALSE, NOW(), NOW())
+   RETURNING id, email, first_name, last_name, phone, role, created_at`,
+  [email, passwordHash, firstName, lastName, phone || null, role || 'buyer']
+);
 
     const user = result.rows[0];
 
