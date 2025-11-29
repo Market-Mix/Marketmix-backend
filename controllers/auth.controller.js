@@ -10,11 +10,24 @@ const { sendSuccess, sendError } = require('../utils/response');
  */
 const register = async (req, res) => {
   try {
-    const { email, password, firstName, lastName, phone, role } = req.body;
+    const { email, password, firstName, lastName, fullName, phone, role } = req.body;
+
+    // Handle both fullName and firstName/lastName formats
+    let first_name, last_name;
+    
+    if (fullName) {
+      // Split fullName into first and last name
+      const nameParts = fullName.trim().split(' ');
+      first_name = nameParts[0];
+      last_name = nameParts.slice(1).join(' ') || nameParts[0]; // Use first name as last name if only one word
+    } else {
+      first_name = firstName;
+      last_name = lastName;
+    }
 
     // Validate required fields
-    if (!email || !password || !firstName || !lastName) {
-      return sendError(res, 400, 'Please provide email, password, first name, and last name');
+    if (!email || !password || !first_name) {
+      return sendError(res, 400, 'Please provide email, password, and name');
     }
 
     // Validate role
@@ -41,13 +54,12 @@ const register = async (req, res) => {
     const passwordHash = await bcrypt.hash(password, salt);
 
     // Insert new user
-   const result = await db.query(
-  `INSERT INTO users 
-   (email, password_hash, first_name, last_name, phone, role, is_verified, avatar_url, is_deleted, created_at, updated_at)
-   VALUES ($1, $2, $3, $4, $5, $6, FALSE, NULL, FALSE, NOW(), NOW())
-   RETURNING id, email, first_name, last_name, phone, role, created_at`,
-  [email, passwordHash, firstName, lastName, phone || null, role || 'buyer']
-);
+    const result = await db.query(
+      `INSERT INTO users (email, password_hash, first_name, last_name, phone, role) 
+       VALUES ($1, $2, $3, $4, $5, $6) 
+       RETURNING id, email, first_name, last_name, phone, role, created_at`,
+      [email, passwordHash, first_name, last_name, phone || null, role || 'buyer']
+    );
 
     const user = result.rows[0];
 
