@@ -1,9 +1,19 @@
 const express = require('express');
 const router = express.Router();
+const {
+  addToCart,
+  getCart,
+  updateCartItem,
+  removeFromCart,
+  clearCart
+} = require('../controllers/cart.controller');
+const { protect } = require('../middlewares/auth.middleware');
 
-// Cart routes placeholder
-router.get('/', (req, res) => {
-	res.json({ status: 'success', message: 'Cart routes placeholder' });
-});
+// Protected routes
+router.post('/add', protect, addToCart);
+router.get('/', protect, getCart);
+router.put('/:cartItemId', protect, updateCartItem);
+router.delete('/:cartItemId', protect, removeFromCart);
+router.delete('/', protect, clearCart);
 
 module.exports = router;
