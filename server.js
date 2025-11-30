@@ -32,7 +32,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// Import routes (match actual filenames in /routes)
+// Import routes
 const authRoutes = require('./routes/auth.routes');
 const buyerRoutes = require('./routes/buyer.routes');
 const sellerRoutes = require('./routes/seller.routes');
@@ -42,7 +42,7 @@ const cartRoutes = require('./routes/cart.routes');
 const ordersRoutes = require('./routes/orders.routes');
 const earningsRoutes = require('./routes/earnings.routes');
 const withdrawalRoutes = require('./routes/withdrawal.routes');
-const notificationRoutes = require('./routes/notification.route');
+const notificationRoutes = require('./routes/notification.routes');
 
 // Mount routes
 app.use('/api/auth', authRoutes);
@@ -74,14 +74,16 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Port configuration
+// Port configuration - Railway provides PORT via environment variable
 const PORT = process.env.PORT || 5000;
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 MarketMix server listening on port ${PORT}`);
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 API available at: http://localhost:${PORT}/api`);
+  console.log(`📊 Database: ${process.env.DATABASE_URL ? '✅ Connected' : '❌ Not configured'}`);
+  console.log(`🔐 JWT: ${process.env.JWT_SECRET ? '✅ Configured' : '❌ Not configured'}`);
 });
 
 // Graceful shutdown

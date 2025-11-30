@@ -7,7 +7,8 @@ const pool = new Pool(
         connectionString: process.env.DATABASE_URL,
         ssl: {
           rejectUnauthorized: false // Required for Supabase
-        }
+        },
+        family: 4 // ⚡ Force IPv4 to avoid ENETUNREACH
       }
     : {
         host: process.env.DB_HOST,
@@ -17,7 +18,8 @@ const pool = new Pool(
         password: process.env.DB_PASSWORD,
         ssl: {
           rejectUnauthorized: false
-        }
+        },
+        family: 4
       }
 );
 
