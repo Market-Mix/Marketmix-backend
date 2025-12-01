@@ -2,29 +2,31 @@ const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 
 /**
- * Helper: Get or create user's cart
+ * Helper: Get or create a user's cart
  */
 const getOrCreateCart = async (user_id) => {
   try {
-    // Try to find existing active cart
-    let result = await db.query(
-      'SELECT id FROM cart WHERE user_id = $1 AND is_active = true AND is_deleted = false LIMIT 1',
+    // Look for existing cart
+    let cartResult = await db.query(
+      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false LIMIT 1`,
       [user_id]
     );
 
-    if (result.rows.length > 0) {
-      return result.rows[0].id;
+    if (cartResult.rows.length > 0) {
+      return cartResult.rows[0].id;
     }
 
-    // Create new cart if doesn't exist
-    const createResult = await db.query(
-      'INSERT INTO cart (user_id, cart_type, is_active, is_deleted, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW()) RETURNING id',
-      [user_id, 'shopping', true, false]
+    // Create new cart
+    const newCartResult = await db.query(
+      `INSERT INTO cart (user_id, cart_type, is_active, is_deleted, created_at, updated_at)
+       VALUES ($1, 'buyer', true, false, NOW(), NOW())
+       RETURNING id`,
+      [user_id]
     );
 
-    return createResult.rows[0].id;
+    return newCartResult.rows[0].id;
   } catch (error) {
-    console.error('Error getting or creating cart:', error);
+    console.error('Get or create cart error:', error);
     throw error;
   }
 };
@@ -47,6 +49,12 @@ const addToCart = async (req, res) => {
     // Validate quantity
     if (quantity < 1 || !Number.isInteger(quantity)) {
       return sendError(res, 400, 'Quantity must be a positive integer');
+    }
+
+    // Validate product_id is a UUID
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(product_id)) {
+      return sendError(res, 400, 'Invalid product_id format');
     }
 
     // Check if product exists and is active
@@ -72,7 +80,7 @@ const addToCart = async (req, res) => {
       );
     }
 
-    // Get or create cart for user
+    // Get or create user's cart
     const cart_id = await getOrCreateCart(user_id);
 
     // Check if item already exists in cart
@@ -102,7 +110,7 @@ const addToCart = async (req, res) => {
         `UPDATE cart_items 
          SET quantity = $1, updated_at = NOW() 
          WHERE id = $2 
-         RETURNING id, product_id, quantity, updated_at`,
+         RETURNING id, cart_id, product_id, quantity, updated_at`,
         [newQuantity, existingItem.id]
       );
 
@@ -112,7 +120,7 @@ const addToCart = async (req, res) => {
       const insertResult = await db.query(
         `INSERT INTO cart_items (cart_id, product_id, quantity, created_at, updated_at) 
          VALUES ($1, $2, $3, NOW(), NOW()) 
-         RETURNING id, product_id, quantity, created_at, updated_at`,
+         RETURNING id, cart_id, product_id, quantity, created_at, updated_at`,
         [cart_id, product_id, quantity]
       );
 
@@ -145,14 +153,13 @@ const getCart = async (req, res) => {
   try {
     const user_id = req.user.id;
 
-    // Get user's cart first
+    // Get user's cart
     const cartResult = await db.query(
-      'SELECT id FROM cart WHERE user_id = $1 AND is_active = true AND is_deleted = false LIMIT 1',
+      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false LIMIT 1`,
       [user_id]
     );
 
     if (cartResult.rows.length === 0) {
-      // User has no cart yet, return empty
       return sendSuccess(res, 200, 'Cart retrieved successfully', {
         items: [],
         totalItems: 0,
@@ -220,16 +227,16 @@ const updateCartItem = async (req, res) => {
     }
 
     // Get user's cart
-    const userCartResult = await db.query(
-      'SELECT id FROM cart WHERE user_id = $1 AND is_active = true AND is_deleted = false LIMIT 1',
+    const cartResult = await db.query(
+      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false LIMIT 1`,
       [user_id]
     );
 
-    if (userCartResult.rows.length === 0) {
+    if (cartResult.rows.length === 0) {
       return sendError(res, 404, 'Cart not found');
     }
 
-    const cart_id = userCartResult.rows[0].id;
+    const cart_id = cartResult.rows[0].id;
 
     // Check if cart item exists and belongs to user's cart
     const cartItemResult = await db.query(
@@ -294,16 +301,16 @@ const removeFromCart = async (req, res) => {
     const user_id = req.user.id;
 
     // Get user's cart
-    const userCartResult = await db.query(
-      'SELECT id FROM cart WHERE user_id = $1 AND is_active = true AND is_deleted = false LIMIT 1',
+    const cartResult = await db.query(
+      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false LIMIT 1`,
       [user_id]
     );
 
-    if (userCartResult.rows.length === 0) {
+    if (cartResult.rows.length === 0) {
       return sendError(res, 404, 'Cart not found');
     }
 
-    const cart_id = userCartResult.rows[0].id;
+    const cart_id = cartResult.rows[0].id;
 
     // Check if cart item exists and belongs to user's cart
     const cartItemResult = await db.query(
@@ -335,18 +342,18 @@ const clearCart = async (req, res) => {
     const user_id = req.user.id;
 
     // Get user's cart
-    const userCartResult = await db.query(
-      'SELECT id FROM cart WHERE user_id = $1 AND is_active = true AND is_deleted = false LIMIT 1',
+    const cartResult = await db.query(
+      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false LIMIT 1`,
       [user_id]
     );
 
-    if (userCartResult.rows.length === 0) {
-      return sendSuccess(res, 200, 'Cart already empty');
+    if (cartResult.rows.length === 0) {
+      return sendSuccess(res, 200, 'Cart cleared successfully');
     }
 
-    const cart_id = userCartResult.rows[0].id;
+    const cart_id = cartResult.rows[0].id;
 
-    // Delete all cart items for this cart
+    // Delete all cart items for cart
     await db.query('DELETE FROM cart_items WHERE cart_id = $1', [cart_id]);
 
     return sendSuccess(res, 200, 'Cart cleared successfully');
