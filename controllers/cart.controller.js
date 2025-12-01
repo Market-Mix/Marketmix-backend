@@ -6,9 +6,9 @@ const { sendSuccess, sendError } = require('../utils/response');
  */
 const getOrCreateCart = async (user_id) => {
   try {
-    // Try to find existing cart
+    // Try to find existing active cart
     let result = await db.query(
-      'SELECT id FROM carts WHERE user_id = $1 LIMIT 1',
+      'SELECT id FROM cart WHERE user_id = $1 AND is_active = true AND is_deleted = false LIMIT 1',
       [user_id]
     );
 
@@ -18,8 +18,8 @@ const getOrCreateCart = async (user_id) => {
 
     // Create new cart if doesn't exist
     const createResult = await db.query(
-      'INSERT INTO carts (user_id, created_at, updated_at) VALUES ($1, NOW(), NOW()) RETURNING id',
-      [user_id]
+      'INSERT INTO cart (user_id, cart_type, is_active, is_deleted, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW()) RETURNING id',
+      [user_id, 'shopping', true, false]
     );
 
     return createResult.rows[0].id;
@@ -147,7 +147,7 @@ const getCart = async (req, res) => {
 
     // Get user's cart first
     const cartResult = await db.query(
-      'SELECT id FROM carts WHERE user_id = $1 LIMIT 1',
+      'SELECT id FROM cart WHERE user_id = $1 AND is_active = true AND is_deleted = false LIMIT 1',
       [user_id]
     );
 
@@ -221,7 +221,7 @@ const updateCartItem = async (req, res) => {
 
     // Get user's cart
     const userCartResult = await db.query(
-      'SELECT id FROM carts WHERE user_id = $1 LIMIT 1',
+      'SELECT id FROM cart WHERE user_id = $1 AND is_active = true AND is_deleted = false LIMIT 1',
       [user_id]
     );
 
@@ -295,7 +295,7 @@ const removeFromCart = async (req, res) => {
 
     // Get user's cart
     const userCartResult = await db.query(
-      'SELECT id FROM carts WHERE user_id = $1 LIMIT 1',
+      'SELECT id FROM cart WHERE user_id = $1 AND is_active = true AND is_deleted = false LIMIT 1',
       [user_id]
     );
 
@@ -336,7 +336,7 @@ const clearCart = async (req, res) => {
 
     // Get user's cart
     const userCartResult = await db.query(
-      'SELECT id FROM carts WHERE user_id = $1 LIMIT 1',
+      'SELECT id FROM cart WHERE user_id = $1 AND is_active = true AND is_deleted = false LIMIT 1',
       [user_id]
     );
 
