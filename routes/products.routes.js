@@ -1,9 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const { getProducts } = require('../controllers/products.controller');
 
-// Products routes placeholder
-router.get('/', (req, res) => {
-	res.json({ status: 'success', message: 'Products routes placeholder' });
-});
+// Public: list products (supports pagination, search, category_id, seller_id)
+router.get('/', getProducts);
 
 module.exports = router;
