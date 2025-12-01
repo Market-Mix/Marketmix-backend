@@ -2,6 +2,34 @@ const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 
 /**
+ * Helper: Get or create user's cart
+ */
+const getOrCreateCart = async (user_id) => {
+  try {
+    // Try to find existing cart
+    let result = await db.query(
+      'SELECT id FROM carts WHERE user_id = $1 LIMIT 1',
+      [user_id]
+    );
+
+    if (result.rows.length > 0) {
+      return result.rows[0].id;
+    }
+
+    // Create new cart if doesn't exist
+    const createResult = await db.query(
+      'INSERT INTO carts (user_id, created_at, updated_at) VALUES ($1, NOW(), NOW()) RETURNING id',
+      [user_id]
+    );
+
+    return createResult.rows[0].id;
+  } catch (error) {
+    console.error('Error getting or creating cart:', error);
+    throw error;
+  }
+};
+
+/**
  * @desc    Add item to cart
  * @route   POST /api/cart/add
  * @access  Private
@@ -44,11 +72,14 @@ const addToCart = async (req, res) => {
       );
     }
 
+    // Get or create cart for user
+    const cart_id = await getOrCreateCart(user_id);
+
     // Check if item already exists in cart
     const existingCartItem = await db.query(
       `SELECT id, quantity FROM cart_items 
-       WHERE user_id = $1 AND product_id = $2`,
-      [user_id, product_id]
+       WHERE cart_id = $1 AND product_id = $2`,
+      [cart_id, product_id]
     );
 
     let cartItem;
@@ -71,7 +102,7 @@ const addToCart = async (req, res) => {
         `UPDATE cart_items 
          SET quantity = $1, updated_at = NOW() 
          WHERE id = $2 
-         RETURNING id, user_id, product_id, quantity, updated_at`,
+         RETURNING id, product_id, quantity, updated_at`,
         [newQuantity, existingItem.id]
       );
 
@@ -79,10 +110,10 @@ const addToCart = async (req, res) => {
     } else {
       // Insert new cart item
       const insertResult = await db.query(
-        `INSERT INTO cart_items (user_id, product_id, quantity, created_at, updated_at) 
+        `INSERT INTO cart_items (cart_id, product_id, quantity, created_at, updated_at) 
          VALUES ($1, $2, $3, NOW(), NOW()) 
-         RETURNING id, user_id, product_id, quantity, created_at, updated_at`,
-        [user_id, product_id, quantity]
+         RETURNING id, product_id, quantity, created_at, updated_at`,
+        [cart_id, product_id, quantity]
       );
 
       cartItem = insertResult.rows[0];
@@ -114,6 +145,23 @@ const getCart = async (req, res) => {
   try {
     const user_id = req.user.id;
 
+    // Get user's cart first
+    const cartResult = await db.query(
+      'SELECT id FROM carts WHERE user_id = $1 LIMIT 1',
+      [user_id]
+    );
+
+    if (cartResult.rows.length === 0) {
+      // User has no cart yet, return empty
+      return sendSuccess(res, 200, 'Cart retrieved successfully', {
+        items: [],
+        totalItems: 0,
+        totalPrice: 0
+      });
+    }
+
+    const cart_id = cartResult.rows[0].id;
+
     const result = await db.query(
       `SELECT 
         ci.id,
@@ -126,9 +174,9 @@ const getCart = async (req, res) => {
         (p.price * ci.quantity) as total_price
        FROM cart_items ci
        JOIN products p ON ci.product_id = p.id
-       WHERE ci.user_id = $1 AND p.is_deleted = false
+       WHERE ci.cart_id = $1 AND p.is_deleted = false
        ORDER BY ci.created_at DESC`,
-      [user_id]
+      [cart_id]
     );
 
     const cartItems = result.rows.map(item => ({
@@ -171,13 +219,25 @@ const updateCartItem = async (req, res) => {
       return sendError(res, 400, 'Quantity must be a positive integer');
     }
 
-    // Check if cart item exists and belongs to user
+    // Get user's cart
+    const userCartResult = await db.query(
+      'SELECT id FROM carts WHERE user_id = $1 LIMIT 1',
+      [user_id]
+    );
+
+    if (userCartResult.rows.length === 0) {
+      return sendError(res, 404, 'Cart not found');
+    }
+
+    const cart_id = userCartResult.rows[0].id;
+
+    // Check if cart item exists and belongs to user's cart
     const cartItemResult = await db.query(
       `SELECT ci.id, ci.product_id, p.stock_quantity, p.price, p.name, p.main_image_url
        FROM cart_items ci
        JOIN products p ON ci.product_id = p.id
-       WHERE ci.id = $1 AND ci.user_id = $2`,
-      [cartItemId, user_id]
+       WHERE ci.id = $1 AND ci.cart_id = $2`,
+      [cartItemId, cart_id]
     );
 
     if (cartItemResult.rows.length === 0) {
@@ -233,10 +293,22 @@ const removeFromCart = async (req, res) => {
     const { cartItemId } = req.params;
     const user_id = req.user.id;
 
-    // Check if cart item exists and belongs to user
+    // Get user's cart
+    const userCartResult = await db.query(
+      'SELECT id FROM carts WHERE user_id = $1 LIMIT 1',
+      [user_id]
+    );
+
+    if (userCartResult.rows.length === 0) {
+      return sendError(res, 404, 'Cart not found');
+    }
+
+    const cart_id = userCartResult.rows[0].id;
+
+    // Check if cart item exists and belongs to user's cart
     const cartItemResult = await db.query(
-      `SELECT id FROM cart_items WHERE id = $1 AND user_id = $2`,
-      [cartItemId, user_id]
+      `SELECT id FROM cart_items WHERE id = $1 AND cart_id = $2`,
+      [cartItemId, cart_id]
     );
 
     if (cartItemResult.rows.length === 0) {
@@ -262,8 +334,20 @@ const clearCart = async (req, res) => {
   try {
     const user_id = req.user.id;
 
-    // Delete all cart items for user
-    await db.query('DELETE FROM cart_items WHERE user_id = $1', [user_id]);
+    // Get user's cart
+    const userCartResult = await db.query(
+      'SELECT id FROM carts WHERE user_id = $1 LIMIT 1',
+      [user_id]
+    );
+
+    if (userCartResult.rows.length === 0) {
+      return sendSuccess(res, 200, 'Cart already empty');
+    }
+
+    const cart_id = userCartResult.rows[0].id;
+
+    // Delete all cart items for this cart
+    await db.query('DELETE FROM cart_items WHERE cart_id = $1', [cart_id]);
 
     return sendSuccess(res, 200, 'Cart cleared successfully');
   } catch (error) {
