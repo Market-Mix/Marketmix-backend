@@ -273,134 +273,93 @@ const clearCart = async (req, res) => {
 };
 
 /**
- * @desc    Merge local cart (from localStorage) with server cart
+ * @desc    Merge local cart items into server cart
  * @route   POST /api/cart/merge
  * @access  Private
- * @param   items[] - Array of { productId, quantity, name, price, image } from localStorage
+ *
+ * Body: { items: [{ product_id, quantity }, ...] }
  */
 const mergeCart = async (req, res) => {
+  const client = await db.getClient();
   try {
-    const { items } = req.body;
     const user_id = req.user.id;
+    const { items } = req.body;
 
-    // Validate items array
-    if (!Array.isArray(items)) {
-      return sendError(res, 400, 'Items must be an array');
+    if (!Array.isArray(items) || items.length === 0) {
+      return sendError(res, 400, 'No items to merge');
     }
 
-    if (items.length === 0) {
-      return sendSuccess(res, 200, 'No items to merge', { merged: [] });
-    }
+    await client.query('BEGIN');
 
-    const merged = [];
-    const errors = [];
+    const mergedItems = [];
+    const adjustments = [];
 
-    // Process each item from localStorage
-    for (const item of items) {
-      try {
-        const { productId, quantity } = item;
+    for (const it of items) {
+      const product_id = it.product_id;
+      let quantity = parseInt(it.quantity, 10) || 0;
 
-        // Validate required fields
-        if (!productId || !quantity) {
-          errors.push(`Item skipped: missing productId or quantity`);
-          continue;
-        }
+      if (!product_id || quantity < 1) continue; // skip invalid
 
-        if (quantity < 1 || !Number.isInteger(quantity)) {
-          errors.push(`Item ${productId}: quantity must be a positive integer`);
-          continue;
-        }
+      // Lock product row to avoid race conditions
+      const prodRes = await client.query(
+        `SELECT id, price, stock_quantity, name, main_image_url
+         FROM products
+         WHERE id = $1 AND is_active = true AND is_deleted = false
+         FOR UPDATE`,
+        [product_id]
+      );
 
-        // Check if product exists and is active
-        const productResult = await db.query(
-          `SELECT id, price, stock_quantity, name, main_image_url 
-           FROM products 
-           WHERE id = $1 AND is_active = true AND is_deleted = false`,
-          [productId]
-        );
-
-        if (productResult.rows.length === 0) {
-          errors.push(`Product ${productId}: not found or inactive`);
-          continue;
-        }
-
-        const product = productResult.rows[0];
-
-        // Validate stock
-        const requestedQty = quantity;
-        if (product.stock_quantity < requestedQty) {
-          errors.push(`Product ${product.name}: insufficient stock (available: ${product.stock_quantity}, requested: ${requestedQty})`);
-          continue;
-        }
-
-        // Check if item already exists in cart
-        const existingCartItem = await db.query(
-          `SELECT id, quantity FROM cart_items 
-           WHERE user_id = $1 AND product_id = $2`,
-          [user_id, productId]
-        );
-
-        let mergedItem;
-
-        if (existingCartItem.rows.length > 0) {
-          // Item exists: update quantity (sum with existing)
-          const existing = existingCartItem.rows[0];
-          const newQuantity = existing.quantity + requestedQty;
-
-          // Validate new quantity against stock
-          if (product.stock_quantity < newQuantity) {
-            errors.push(
-              `Product ${product.name}: merged quantity (${newQuantity}) exceeds stock (${product.stock_quantity}). Set to maximum.`
-            );
-            // Cap at available stock
-            const updateResult = await db.query(
-              `UPDATE cart_items 
-               SET quantity = $1, updated_at = NOW() 
-               WHERE id = $2 
-               RETURNING id, product_id, quantity`,
-              [product.stock_quantity, existing.id]
-            );
-            mergedItem = updateResult.rows[0];
-          } else {
-            // Update with summed quantity
-            const updateResult = await db.query(
-              `UPDATE cart_items 
-               SET quantity = $1, updated_at = NOW() 
-               WHERE id = $2 
-               RETURNING id, product_id, quantity`,
-              [newQuantity, existing.id]
-            );
-            mergedItem = updateResult.rows[0];
-          }
-        } else {
-          // Item doesn't exist: insert it
-          const insertResult = await db.query(
-            `INSERT INTO cart_items (user_id, product_id, quantity, created_at, updated_at) 
-             VALUES ($1, $2, $3, NOW(), NOW()) 
-             RETURNING id, product_id, quantity`,
-            [user_id, productId, requestedQty]
-          );
-          mergedItem = insertResult.rows[0];
-        }
-
-        merged.push({
-          productId: mergedItem.product_id,
-          quantity: mergedItem.quantity,
-          productName: product.name
-        });
-      } catch (itemErr) {
-        errors.push(`Item processing error: ${itemErr.message}`);
+      if (prodRes.rows.length === 0) {
+        adjustments.push({ product_id, reason: 'product_not_found_or_inactive' });
+        continue;
       }
+
+      const product = prodRes.rows[0];
+
+      // Get existing cart item if any
+      const existingRes = await client.query(
+        `SELECT id, quantity FROM cart_items WHERE user_id = $1 AND product_id = $2 FOR UPDATE`,
+        [user_id, product_id]
+      );
+
+      let finalQuantity = quantity;
+      if (existingRes.rows.length > 0) {
+        finalQuantity = existingRes.rows[0].quantity + quantity;
+      }
+
+      // Enforce stock limits
+      if (product.stock_quantity < finalQuantity) {
+        // cap to stock
+        finalQuantity = product.stock_quantity;
+        adjustments.push({ product_id, requested: it.quantity, adjusted_to: finalQuantity });
+      }
+
+      if (existingRes.rows.length > 0) {
+        // update
+        await client.query(
+          `UPDATE cart_items SET quantity = $1, updated_at = NOW() WHERE id = $2`,
+          [finalQuantity, existingRes.rows[0].id]
+        );
+      } else {
+        // insert
+        await client.query(
+          `INSERT INTO cart_items (user_id, product_id, quantity, created_at, updated_at) VALUES ($1,$2,$3,NOW(),NOW())`,
+          [user_id, product_id, finalQuantity]
+        );
+      }
+
+      mergedItems.push({ product_id, quantity: finalQuantity });
     }
 
-    return sendSuccess(res, 200, 'Cart merged successfully', {
-      merged,
-      errors: errors.length > 0 ? errors : undefined,
-      totalMergedItems: merged.length
-    });
-  } catch (error) {
-    console.error('Merge cart error:', error);
-    return sendError(res, 500, 'Error merging cart', error);
+    await client.query('COMMIT');
+
+    return sendSuccess(res, 200, 'Cart merged successfully', { mergedItems, adjustments });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Merge cart error:', err);
+    return sendError(res, 500, 'Error merging cart', err.message || err);
+  } finally {
+    client.release();
   }
 };
 
@@ -409,6 +368,6 @@ module.exports = {
   getCart,
   updateCartItem,
   removeFromCart,
-  clearCart,
-  mergeCart
+  clearCart
+  , mergeCart
 };

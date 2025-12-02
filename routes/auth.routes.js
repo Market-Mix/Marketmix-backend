@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const {
   register,
+  googleRegister,
+  googleLogin,
   login,
   getMe,
   updatePassword,
@@ -9,9 +11,13 @@ const {
 } = require('../controllers/auth.controller');
 const { protect } = require('../middlewares/auth.middleware');
 
-// Public routes
+// Public routes - Email/Password Authentication
 router.post('/register', register);
 router.post('/login', login);
+
+// Public routes - Google OAuth Authentication
+router.post('/google-register', googleRegister);
+router.post('/google-login', googleLogin);
 
 // Protected routes
 router.get('/me', protect, getMe);
