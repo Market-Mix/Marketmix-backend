@@ -200,18 +200,20 @@ const updateCartItem = async (req, res) => {
     const { quantity } = req.body;
     const user_id = req.user.id;
 
+    console.log('DEBUG updateCartItem called', { cartItemId, quantity, user_id });
+
     // Validate quantity
     if (!quantity || quantity < 1 || !Number.isInteger(quantity)) {
       return sendError(res, 400, 'Quantity must be a positive integer');
     }
 
     // Get user's cart to verify ownership
-    console.log(`[DEBUG] updateCartItem: incoming cartItemId=${cartItemId}, user_id=${user_id}`);
     const cartRes = await db.query(
       `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
       [user_id]
     );
-    console.log('[DEBUG] updateCartItem: cartRes.rows=', cartRes.rows);
+
+    console.log('DEBUG updateCartItem cartRes.rows', cartRes.rows);
 
     if (cartRes.rows.length === 0) {
       return sendError(res, 404, 'Cart not found');
@@ -227,7 +229,8 @@ const updateCartItem = async (req, res) => {
        WHERE ci.id = $1 AND ci.cart_id = $2`,
       [cartItemId, cart_id]
     );
-    console.log('[DEBUG] updateCartItem: cartItemResult.rows=', cartItemResult.rows);
+
+    console.log('DEBUG updateCartItem cartItemResult.rows', cartItemResult.rows);
 
     if (cartItemResult.rows.length === 0) {
       return sendError(res, 404, 'Cart item not found');
@@ -245,6 +248,7 @@ const updateCartItem = async (req, res) => {
     }
 
     // Update cart item
+    console.log('DEBUG updateCartItem performing UPDATE', { cartItemId, quantity });
     const updateResult = await db.query(
       `UPDATE cart_items 
        SET quantity = $1, updated_at = NOW() 
@@ -282,13 +286,15 @@ const removeFromCart = async (req, res) => {
     const { cartItemId } = req.params;
     const user_id = req.user.id;
 
+    console.log('DEBUG removeFromCart called', { cartItemId, user_id });
+
     // Get user's cart to verify ownership
-    console.log(`[DEBUG] removeFromCart: incoming cartItemId=${cartItemId}, user_id=${user_id}`);
     const cartRes = await db.query(
       `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
       [user_id]
     );
-    console.log('[DEBUG] removeFromCart: cartRes.rows=', cartRes.rows);
+
+    console.log('DEBUG removeFromCart cartRes.rows', cartRes.rows);
 
     if (cartRes.rows.length === 0) {
       return sendError(res, 404, 'Cart not found');
@@ -301,13 +307,15 @@ const removeFromCart = async (req, res) => {
       `SELECT id FROM cart_items WHERE id = $1 AND cart_id = $2`,
       [cartItemId, cart_id]
     );
-    console.log('[DEBUG] removeFromCart: cartItemResult.rows=', cartItemResult.rows);
+
+    console.log('DEBUG removeFromCart cartItemResult.rows', cartItemResult.rows);
 
     if (cartItemResult.rows.length === 0) {
       return sendError(res, 404, 'Cart item not found');
     }
 
     // Delete cart item
+    console.log('DEBUG removeFromCart performing DELETE', { cartItemId });
     await db.query('DELETE FROM cart_items WHERE id = $1', [cartItemId]);
 
     return sendSuccess(res, 200, 'Item removed from cart successfully');
@@ -327,12 +335,10 @@ const clearCart = async (req, res) => {
     const user_id = req.user.id;
 
     // Get user's cart
-    console.log(`[DEBUG] clearCart: incoming user_id=${user_id}`);
     const cartRes = await db.query(
       `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
       [user_id]
     );
-    console.log('[DEBUG] clearCart: cartRes.rows=', cartRes.rows);
 
     if (cartRes.rows.length === 0) {
       return sendSuccess(res, 200, 'Cart cleared successfully');
@@ -340,9 +346,10 @@ const clearCart = async (req, res) => {
 
     const cart_id = cartRes.rows[0].id;
 
+    console.log('DEBUG clearCart cart_id', { user_id, cart_id });
+
     // Delete all cart items for user's cart
-    const deleteRes = await db.query('DELETE FROM cart_items WHERE cart_id = $1 RETURNING id', [cart_id]);
-    console.log('[DEBUG] clearCart: deleteRes.rowCount=', deleteRes.rowCount);
+    await db.query('DELETE FROM cart_items WHERE cart_id = $1', [cart_id]);
 
     return sendSuccess(res, 200, 'Cart cleared successfully');
   } catch (error) {
