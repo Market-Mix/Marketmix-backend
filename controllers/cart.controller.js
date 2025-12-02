@@ -206,10 +206,12 @@ const updateCartItem = async (req, res) => {
     }
 
     // Get user's cart to verify ownership
+    console.log(`[DEBUG] updateCartItem: incoming cartItemId=${cartItemId}, user_id=${user_id}`);
     const cartRes = await db.query(
       `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
       [user_id]
     );
+    console.log('[DEBUG] updateCartItem: cartRes.rows=', cartRes.rows);
 
     if (cartRes.rows.length === 0) {
       return sendError(res, 404, 'Cart not found');
@@ -225,6 +227,7 @@ const updateCartItem = async (req, res) => {
        WHERE ci.id = $1 AND ci.cart_id = $2`,
       [cartItemId, cart_id]
     );
+    console.log('[DEBUG] updateCartItem: cartItemResult.rows=', cartItemResult.rows);
 
     if (cartItemResult.rows.length === 0) {
       return sendError(res, 404, 'Cart item not found');
@@ -280,10 +283,12 @@ const removeFromCart = async (req, res) => {
     const user_id = req.user.id;
 
     // Get user's cart to verify ownership
+    console.log(`[DEBUG] removeFromCart: incoming cartItemId=${cartItemId}, user_id=${user_id}`);
     const cartRes = await db.query(
       `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
       [user_id]
     );
+    console.log('[DEBUG] removeFromCart: cartRes.rows=', cartRes.rows);
 
     if (cartRes.rows.length === 0) {
       return sendError(res, 404, 'Cart not found');
@@ -296,6 +301,7 @@ const removeFromCart = async (req, res) => {
       `SELECT id FROM cart_items WHERE id = $1 AND cart_id = $2`,
       [cartItemId, cart_id]
     );
+    console.log('[DEBUG] removeFromCart: cartItemResult.rows=', cartItemResult.rows);
 
     if (cartItemResult.rows.length === 0) {
       return sendError(res, 404, 'Cart item not found');
@@ -321,10 +327,12 @@ const clearCart = async (req, res) => {
     const user_id = req.user.id;
 
     // Get user's cart
+    console.log(`[DEBUG] clearCart: incoming user_id=${user_id}`);
     const cartRes = await db.query(
       `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
       [user_id]
     );
+    console.log('[DEBUG] clearCart: cartRes.rows=', cartRes.rows);
 
     if (cartRes.rows.length === 0) {
       return sendSuccess(res, 200, 'Cart cleared successfully');
@@ -333,7 +341,8 @@ const clearCart = async (req, res) => {
     const cart_id = cartRes.rows[0].id;
 
     // Delete all cart items for user's cart
-    await db.query('DELETE FROM cart_items WHERE cart_id = $1', [cart_id]);
+    const deleteRes = await db.query('DELETE FROM cart_items WHERE cart_id = $1 RETURNING id', [cart_id]);
+    console.log('[DEBUG] clearCart: deleteRes.rowCount=', deleteRes.rowCount);
 
     return sendSuccess(res, 200, 'Cart cleared successfully');
   } catch (error) {
