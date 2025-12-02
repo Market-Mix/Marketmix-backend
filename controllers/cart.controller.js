@@ -291,6 +291,26 @@ const mergeCart = async (req, res) => {
 
     await client.query('BEGIN');
 
+    // Get or create user's cart
+    const cartRes = await client.query(
+      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false FOR UPDATE`,
+      [user_id]
+    );
+
+    let cart_id;
+    if (cartRes.rows.length > 0) {
+      cart_id = cartRes.rows[0].id;
+    } else {
+      // Create new cart if it doesn't exist
+      const newCartRes = await client.query(
+        `INSERT INTO cart (user_id, cart_type, is_active, is_deleted, created_at, updated_at)
+         VALUES ($1, 'personal', true, false, NOW(), NOW())
+         RETURNING id`,
+        [user_id]
+      );
+      cart_id = newCartRes.rows[0].id;
+    }
+
     const mergedItems = [];
     const adjustments = [];
 
@@ -318,8 +338,8 @@ const mergeCart = async (req, res) => {
 
       // Get existing cart item if any
       const existingRes = await client.query(
-        `SELECT id, quantity FROM cart_items WHERE user_id = $1 AND product_id = $2 FOR UPDATE`,
-        [user_id, product_id]
+        `SELECT id, quantity FROM cart_items WHERE cart_id = $1 AND product_id = $2 FOR UPDATE`,
+        [cart_id, product_id]
       );
 
       let finalQuantity = quantity;
@@ -343,8 +363,8 @@ const mergeCart = async (req, res) => {
       } else {
         // insert
         await client.query(
-          `INSERT INTO cart_items (user_id, product_id, quantity, created_at, updated_at) VALUES ($1,$2,$3,NOW(),NOW())`,
-          [user_id, product_id, finalQuantity]
+          `INSERT INTO cart_items (cart_id, product_id, quantity, created_at, updated_at) VALUES ($1,$2,$3,NOW(),NOW())`,
+          [cart_id, product_id, finalQuantity]
         );
       }
 
