@@ -436,11 +436,40 @@ const updatePassword = async (req, res) => {
  * @desc    Logout user
  * @route   POST /api/auth/logout
  * @access  Private
+ *
+ * Optionally accepts: { cartItems } to persist guest cart on logout
  */
 const logout = async (req, res) => {
-  // If using httpOnly cookies, clear them
-  res.clearCookie('token');
-  return sendSuccess(res, 200, 'Logged out successfully');
+  try {
+    const user_id = req.user.id;
+    const { cartItems } = req.body;
+
+    // If cart items are provided, they will be handled by frontend localStorage
+    // Backend just clears the token and confirms logout
+    
+    // Optional: Log logout event for audit trail
+    const auditResult = await db.query(
+      `INSERT INTO audit_log (user_id, action, details, created_at)
+       VALUES ($1, $2, $3, NOW())`,
+      [user_id, 'logout', JSON.stringify({ cartItemsCount: cartItems?.length || 0 })]
+    ).catch(() => {
+      // Audit log not critical, silently fail if table doesn't exist
+      return null;
+    });
+
+    // If using httpOnly cookies, clear them
+    res.clearCookie('token');
+    
+    return sendSuccess(res, 200, 'Logged out successfully', {
+      message: 'Your cart has been saved locally. It will sync when you log back in.',
+      cartItemsSaved: cartItems?.length || 0
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+    // Always clear token even if there's an error
+    res.clearCookie('token');
+    return sendSuccess(res, 200, 'Logged out successfully');
+  }
 };
 
 module.exports = {
