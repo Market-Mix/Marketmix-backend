@@ -8,24 +8,24 @@ const {
   deleteNotification,
   deleteAllNotifications
 } = require('../controllers/notification.controller');
-const authMiddleware = require('../middlewares/auth.middleware');
+const { protect } = require('../middlewares/auth.middleware');
 
 // Get all notifications for current user
-router.get('/', authMiddleware, getNotifications);
+router.get('/', protect, getNotifications);
 
 // Create notification (admin/system)
-router.post('/', authMiddleware, createNotification);
+router.post('/', protect, createNotification);
 
 // Mark specific notification as read
-router.put('/:notificationId/read', authMiddleware, markAsRead);
+router.put('/:notificationId/read', protect, markAsRead);
 
 // Mark all notifications as read
-router.put('/read-all', authMiddleware, markAllAsRead);
+router.put('/read-all', protect, markAllAsRead);
 
 // Delete specific notification
-router.delete('/:notificationId', authMiddleware, deleteNotification);
+router.delete('/:notificationId', protect, deleteNotification);
 
 // Delete all notifications
-router.delete('/', authMiddleware, deleteAllNotifications);
+router.delete('/', protect, deleteAllNotifications);
 
 module.exports = router;
