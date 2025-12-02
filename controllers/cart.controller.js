@@ -230,6 +230,22 @@ const updateCartItem = async (req, res) => {
       [cartItemId, cart_id]
     );
 
+    // If not found by cart_item id, try treating the provided identifier as product_id
+    if (cartItemResult.rows.length === 0) {
+      console.log('DEBUG updateCartItem: not found by id, trying product_id fallback', { cartItemId });
+      const fallback = await db.query(
+        `SELECT ci.id, ci.product_id, p.stock_quantity, p.price, p.name, p.main_image_url
+         FROM cart_items ci
+         JOIN products p ON ci.product_id = p.id
+         WHERE ci.cart_id = $1 AND ci.product_id = $2`,
+        [cart_id, cartItemId]
+      );
+      if (fallback.rows.length > 0) {
+        // replace cartItemId with the real cart_items.id
+        cartItemResult.rows = fallback.rows;
+        console.log('DEBUG updateCartItem: fallback found', fallback.rows[0]);
+      }
+    }
     console.log('DEBUG updateCartItem cartItemResult.rows', cartItemResult.rows);
 
     if (cartItemResult.rows.length === 0) {
@@ -310,13 +326,25 @@ const removeFromCart = async (req, res) => {
 
     console.log('DEBUG removeFromCart cartItemResult.rows', cartItemResult.rows);
 
+    // If not found by cart_item id, try treating the provided identifier as product_id
+    let resolvedCartItemId = cartItemId;
     if (cartItemResult.rows.length === 0) {
-      return sendError(res, 404, 'Cart item not found');
+      console.log('DEBUG removeFromCart: not found by id, trying product_id fallback', { cartItemId });
+      const fallback = await db.query(
+        `SELECT id FROM cart_items WHERE cart_id = $1 AND product_id = $2`,
+        [cart_id, cartItemId]
+      );
+      console.log('DEBUG removeFromCart fallback.rows', fallback.rows);
+      if (fallback.rows.length === 0) {
+        return sendError(res, 404, 'Cart item not found');
+      }
+      resolvedCartItemId = fallback.rows[0].id;
+      console.log('DEBUG removeFromCart resolvedCartItemId', resolvedCartItemId);
     }
 
     // Delete cart item
-    console.log('DEBUG removeFromCart performing DELETE', { cartItemId });
-    await db.query('DELETE FROM cart_items WHERE id = $1', [cartItemId]);
+    console.log('DEBUG removeFromCart performing DELETE', { resolvedCartItemId });
+    await db.query('DELETE FROM cart_items WHERE id = $1', [resolvedCartItemId]);
 
     return sendSuccess(res, 200, 'Item removed from cart successfully');
   } catch (error) {
