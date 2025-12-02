@@ -205,13 +205,25 @@ const updateCartItem = async (req, res) => {
       return sendError(res, 400, 'Quantity must be a positive integer');
     }
 
-    // Check if cart item exists and belongs to user
+    // Get user's cart to verify ownership
+    const cartRes = await db.query(
+      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
+      [user_id]
+    );
+
+    if (cartRes.rows.length === 0) {
+      return sendError(res, 404, 'Cart not found');
+    }
+
+    const cart_id = cartRes.rows[0].id;
+
+    // Check if cart item exists and belongs to user's cart
     const cartItemResult = await db.query(
       `SELECT ci.id, ci.product_id, p.stock_quantity, p.price, p.name, p.main_image_url
        FROM cart_items ci
        JOIN products p ON ci.product_id = p.id
-       WHERE ci.id = $1 AND ci.user_id = $2`,
-      [cartItemId, user_id]
+       WHERE ci.id = $1 AND ci.cart_id = $2`,
+      [cartItemId, cart_id]
     );
 
     if (cartItemResult.rows.length === 0) {
@@ -267,10 +279,22 @@ const removeFromCart = async (req, res) => {
     const { cartItemId } = req.params;
     const user_id = req.user.id;
 
-    // Check if cart item exists and belongs to user
+    // Get user's cart to verify ownership
+    const cartRes = await db.query(
+      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
+      [user_id]
+    );
+
+    if (cartRes.rows.length === 0) {
+      return sendError(res, 404, 'Cart not found');
+    }
+
+    const cart_id = cartRes.rows[0].id;
+
+    // Check if cart item exists and belongs to user's cart
     const cartItemResult = await db.query(
-      `SELECT id FROM cart_items WHERE id = $1 AND user_id = $2`,
-      [cartItemId, user_id]
+      `SELECT id FROM cart_items WHERE id = $1 AND cart_id = $2`,
+      [cartItemId, cart_id]
     );
 
     if (cartItemResult.rows.length === 0) {
@@ -296,8 +320,20 @@ const clearCart = async (req, res) => {
   try {
     const user_id = req.user.id;
 
-    // Delete all cart items for user
-    await db.query('DELETE FROM cart_items WHERE user_id = $1', [user_id]);
+    // Get user's cart
+    const cartRes = await db.query(
+      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
+      [user_id]
+    );
+
+    if (cartRes.rows.length === 0) {
+      return sendSuccess(res, 200, 'Cart cleared successfully');
+    }
+
+    const cart_id = cartRes.rows[0].id;
+
+    // Delete all cart items for user's cart
+    await db.query('DELETE FROM cart_items WHERE cart_id = $1', [cart_id]);
 
     return sendSuccess(res, 200, 'Cart cleared successfully');
   } catch (error) {
