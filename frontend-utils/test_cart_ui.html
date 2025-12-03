@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Cart API Test</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 16px; }
+    input, button { margin: 4px 0; }
+    #log { white-space: pre-wrap; background:#f7f7f7; padding:10px; border:1px solid #ddd; height:240px; overflow:auto }
+  </style>
+</head>
+<body>
+  <h2>Cart API Quick Tester</h2>
+  <p>Use this page to call your backend directly. Enter your JWT token and a cart item ID from your cart (see Supabase or GET /api/cart).</p>
+
+  <label>API Base URL (example: https://marketmix-backend-production.up.railway.app/api)</label><br/>
+  <input id="apiBase" style="width:100%" value="https://marketmix-backend-production.up.railway.app/api" />
+
+  <label>JWT Token</label><br/>
+  <input id="token" style="width:100%" placeholder="Bearer token..." />
+
+  <label>Cart Item ID</label><br/>
+  <input id="cartItemId" style="width:100%" placeholder="cart item id (uuid)" />
+
+  <div style="margin-top:8px">
+    <button id="btnGet">Fetch Cart (GET /cart)</button>
+    <button id="btnPlus">+ (increase)</button>
+    <button id="btnMinus">- (decrease)</button>
+    <button id="btnDelete">Delete item</button>
+  </div>
+
+  <h3>Log</h3>
+  <div id="log">Ready.</div>
+
+  <script>
+    const logEl = document.getElementById('log');
+    function log(...args){ logEl.textContent += '\n' + args.map(a => (typeof a === 'object' ? JSON.stringify(a,null,2) : String(a))).join(' '); logEl.scrollTop = logEl.scrollHeight }
+
+    function apiFetch(path, opts){
+      const base = document.getElementById('apiBase').value.trim();
+      const token = document.getElementById('token').value.trim();
+      if(!base) return Promise.reject(new Error('apiBase required'));
+      opts = opts || {};
+      opts.headers = opts.headers || {};
+      if(token) opts.headers['Authorization'] = 'Bearer ' + token.replace(/^Bearer\s+/i, '');
+      return fetch(base + path, opts).then(async res => {
+        const txt = await res.text();
+        let body = txt;
+        try { body = JSON.parse(txt) } catch(e){}
+        return { status: res.status, ok: res.ok, body };
+      });
+    }
+
+    document.getElementById('btnGet').addEventListener('click', async ()=>{
+      log('GET /cart ->');
+      try{ const r = await apiFetch('/cart'); log('status', r.status); log('body', r.body); }catch(e){ log('Error', e.message) }
+    });
+
+    document.getElementById('btnPlus').addEventListener('click', async ()=>{
+      const id = document.getElementById('cartItemId').value.trim();
+      if(!id){ alert('Enter cart item id'); return }
+      log('PUT /cart/'+id+' -> increase');
+      try{
+        // fetch item current quantity via GET /cart
+        const cart = await apiFetch('/cart');
+        if(!cart.ok){ log('GET cart failed', cart); return }
+        const item = (cart.body.data && cart.body.data.items || []).find(it => it.id===id);
+        const newQ = item ? item.quantity + 1 : 1;
+        const r = await apiFetch('/cart/' + id, { method: 'PUT', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ quantity: newQ }) });
+        log('status', r.status); log('body', r.body);
+      }catch(e){ log('Error', e.message) }
+    });
+
+    document.getElementById('btnMinus').addEventListener('click', async ()=>{
+      const id = document.getElementById('cartItemId').value.trim();
+      if(!id){ alert('Enter cart item id'); return }
+      log('PUT /cart/'+id+' -> decrease');
+      try{
+        const cart = await apiFetch('/cart');
+        if(!cart.ok){ log('GET cart failed', cart); return }
+        const item = (cart.body.data && cart.body.data.items || []).find(it => it.id===id);
+        const newQ = item ? Math.max(1, item.quantity - 1) : 1;
+        const r = await apiFetch('/cart/' + id, { method: 'PUT', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ quantity: newQ }) });
+        log('status', r.status); log('body', r.body);
+      }catch(e){ log('Error', e.message) }
+    });
+
+    document.getElementById('btnDelete').addEventListener('click', async ()=>{
+      const id = document.getElementById('cartItemId').value.trim();
+      if(!id){ alert('Enter cart item id'); return }
+      if(!confirm('Remove item?')) return;
+      log('DELETE /cart/'+id+' ->');
+      try{
+        const r = await apiFetch('/cart/' + id, { method: 'DELETE' });
+        log('status', r.status); log('body', r.body);
+      }catch(e){ log('Error', e.message) }
+    });
+  </script>
+</body>
+</html>
