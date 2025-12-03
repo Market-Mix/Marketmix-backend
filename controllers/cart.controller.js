@@ -11,6 +11,8 @@ const addToCart = async (req, res) => {
     const { product_id, quantity } = req.body;
     const user_id = req.user.id;
 
+    console.log('DEBUG addToCart called', { user_id, product_id, quantity });
+
     // Validate required fields
     if (!product_id || !quantity) {
       return sendError(res, 400, 'Please provide product_id and quantity');
@@ -95,7 +97,7 @@ const addToCart = async (req, res) => {
 
       cartItem = updateResult.rows[0];
     } else {
-      // Insert new cart item tied to cart_id
+      // Insert new cart item
       const insertResult = await db.query(
         `INSERT INTO cart_items (cart_id, product_id, quantity, created_at, updated_at) 
          VALUES ($1, $2, $3, NOW(), NOW()) 
@@ -132,22 +134,6 @@ const getCart = async (req, res) => {
   try {
     const user_id = req.user.id;
 
-    // Get user's cart id
-    const cartRes = await db.query(
-      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
-      [user_id]
-    );
-
-    if (cartRes.rows.length === 0) {
-      return sendSuccess(res, 200, 'Cart retrieved successfully', {
-        items: [],
-        totalItems: 0,
-        totalPrice: 0
-      });
-    }
-
-    const cart_id = cartRes.rows[0].id;
-
     const result = await db.query(
       `SELECT 
         ci.id,
@@ -160,9 +146,9 @@ const getCart = async (req, res) => {
         (p.price * ci.quantity) as total_price
        FROM cart_items ci
        JOIN products p ON ci.product_id = p.id
-       WHERE ci.cart_id = $1 AND p.is_deleted = false
+       WHERE ci.user_id = $1 AND p.is_deleted = false
        ORDER BY ci.created_at DESC`,
-      [cart_id]
+      [user_id]
     );
 
     const cartItems = result.rows.map(item => ({
@@ -200,53 +186,19 @@ const updateCartItem = async (req, res) => {
     const { quantity } = req.body;
     const user_id = req.user.id;
 
-    console.log('DEBUG updateCartItem called', { cartItemId, quantity, user_id });
-
     // Validate quantity
     if (!quantity || quantity < 1 || !Number.isInteger(quantity)) {
       return sendError(res, 400, 'Quantity must be a positive integer');
     }
 
-    // Get user's cart to verify ownership
-    const cartRes = await db.query(
-      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
-      [user_id]
-    );
-
-    console.log('DEBUG updateCartItem cartRes.rows', cartRes.rows);
-
-    if (cartRes.rows.length === 0) {
-      return sendError(res, 404, 'Cart not found');
-    }
-
-    const cart_id = cartRes.rows[0].id;
-
-    // Check if cart item exists and belongs to user's cart
+    // Check if cart item exists and belongs to user
     const cartItemResult = await db.query(
       `SELECT ci.id, ci.product_id, p.stock_quantity, p.price, p.name, p.main_image_url
        FROM cart_items ci
        JOIN products p ON ci.product_id = p.id
-       WHERE ci.id = $1 AND ci.cart_id = $2`,
-      [cartItemId, cart_id]
+       WHERE ci.id = $1 AND ci.user_id = $2`,
+      [cartItemId, user_id]
     );
-
-    // If not found by cart_item id, try treating the provided identifier as product_id
-    if (cartItemResult.rows.length === 0) {
-      console.log('DEBUG updateCartItem: not found by id, trying product_id fallback', { cartItemId });
-      const fallback = await db.query(
-        `SELECT ci.id, ci.product_id, p.stock_quantity, p.price, p.name, p.main_image_url
-         FROM cart_items ci
-         JOIN products p ON ci.product_id = p.id
-         WHERE ci.cart_id = $1 AND ci.product_id = $2`,
-        [cart_id, cartItemId]
-      );
-      if (fallback.rows.length > 0) {
-        // replace cartItemId with the real cart_items.id
-        cartItemResult.rows = fallback.rows;
-        console.log('DEBUG updateCartItem: fallback found', fallback.rows[0]);
-      }
-    }
-    console.log('DEBUG updateCartItem cartItemResult.rows', cartItemResult.rows);
 
     if (cartItemResult.rows.length === 0) {
       return sendError(res, 404, 'Cart item not found');
@@ -264,7 +216,6 @@ const updateCartItem = async (req, res) => {
     }
 
     // Update cart item
-    console.log('DEBUG updateCartItem performing UPDATE', { cartItemId, quantity });
     const updateResult = await db.query(
       `UPDATE cart_items 
        SET quantity = $1, updated_at = NOW() 
@@ -302,49 +253,18 @@ const removeFromCart = async (req, res) => {
     const { cartItemId } = req.params;
     const user_id = req.user.id;
 
-    console.log('DEBUG removeFromCart called', { cartItemId, user_id });
-
-    // Get user's cart to verify ownership
-    const cartRes = await db.query(
-      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
-      [user_id]
-    );
-
-    console.log('DEBUG removeFromCart cartRes.rows', cartRes.rows);
-
-    if (cartRes.rows.length === 0) {
-      return sendError(res, 404, 'Cart not found');
-    }
-
-    const cart_id = cartRes.rows[0].id;
-
-    // Check if cart item exists and belongs to user's cart
+    // Check if cart item exists and belongs to user
     const cartItemResult = await db.query(
-      `SELECT id FROM cart_items WHERE id = $1 AND cart_id = $2`,
-      [cartItemId, cart_id]
+      `SELECT id FROM cart_items WHERE id = $1 AND user_id = $2`,
+      [cartItemId, user_id]
     );
 
-    console.log('DEBUG removeFromCart cartItemResult.rows', cartItemResult.rows);
-
-    // If not found by cart_item id, try treating the provided identifier as product_id
-    let resolvedCartItemId = cartItemId;
     if (cartItemResult.rows.length === 0) {
-      console.log('DEBUG removeFromCart: not found by id, trying product_id fallback', { cartItemId });
-      const fallback = await db.query(
-        `SELECT id FROM cart_items WHERE cart_id = $1 AND product_id = $2`,
-        [cart_id, cartItemId]
-      );
-      console.log('DEBUG removeFromCart fallback.rows', fallback.rows);
-      if (fallback.rows.length === 0) {
-        return sendError(res, 404, 'Cart item not found');
-      }
-      resolvedCartItemId = fallback.rows[0].id;
-      console.log('DEBUG removeFromCart resolvedCartItemId', resolvedCartItemId);
+      return sendError(res, 404, 'Cart item not found');
     }
 
     // Delete cart item
-    console.log('DEBUG removeFromCart performing DELETE', { resolvedCartItemId });
-    await db.query('DELETE FROM cart_items WHERE id = $1', [resolvedCartItemId]);
+    await db.query('DELETE FROM cart_items WHERE id = $1', [cartItemId]);
 
     return sendSuccess(res, 200, 'Item removed from cart successfully');
   } catch (error) {
@@ -362,138 +282,13 @@ const clearCart = async (req, res) => {
   try {
     const user_id = req.user.id;
 
-    // Get user's cart
-    const cartRes = await db.query(
-      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
-      [user_id]
-    );
-
-    if (cartRes.rows.length === 0) {
-      return sendSuccess(res, 200, 'Cart cleared successfully');
-    }
-
-    const cart_id = cartRes.rows[0].id;
-
-    console.log('DEBUG clearCart cart_id', { user_id, cart_id });
-
-    // Delete all cart items for user's cart
-    await db.query('DELETE FROM cart_items WHERE cart_id = $1', [cart_id]);
+    // Delete all cart items for user
+    await db.query('DELETE FROM cart_items WHERE user_id = $1', [user_id]);
 
     return sendSuccess(res, 200, 'Cart cleared successfully');
   } catch (error) {
     console.error('Clear cart error:', error);
     return sendError(res, 500, 'Error clearing cart', error);
-  }
-};
-
-/**
- * @desc    Merge local cart items into server cart
- * @route   POST /api/cart/merge
- * @access  Private
- *
- * Body: { items: [{ product_id, quantity }, ...] }
- */
-const mergeCart = async (req, res) => {
-  const client = await db.getClient();
-  try {
-    const user_id = req.user.id;
-    const { items } = req.body;
-
-    if (!Array.isArray(items) || items.length === 0) {
-      return sendError(res, 400, 'No items to merge');
-    }
-
-    await client.query('BEGIN');
-
-    // Get or create user's cart
-    const cartRes = await client.query(
-      `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false FOR UPDATE`,
-      [user_id]
-    );
-
-    let cart_id;
-    if (cartRes.rows.length > 0) {
-      cart_id = cartRes.rows[0].id;
-    } else {
-      // Create new cart if it doesn't exist
-      const newCartRes = await client.query(
-        `INSERT INTO cart (user_id, cart_type, is_active, is_deleted, created_at, updated_at)
-         VALUES ($1, 'personal', true, false, NOW(), NOW())
-         RETURNING id`,
-        [user_id]
-      );
-      cart_id = newCartRes.rows[0].id;
-    }
-
-    const mergedItems = [];
-    const adjustments = [];
-
-    for (const it of items) {
-      const product_id = it.product_id;
-      let quantity = parseInt(it.quantity, 10) || 0;
-
-      if (!product_id || quantity < 1) continue; // skip invalid
-
-      // Lock product row to avoid race conditions
-      const prodRes = await client.query(
-        `SELECT id, price, stock_quantity, name, main_image_url
-         FROM products
-         WHERE id = $1 AND is_active = true AND is_deleted = false
-         FOR UPDATE`,
-        [product_id]
-      );
-
-      if (prodRes.rows.length === 0) {
-        adjustments.push({ product_id, reason: 'product_not_found_or_inactive' });
-        continue;
-      }
-
-      const product = prodRes.rows[0];
-
-      // Get existing cart item if any
-      const existingRes = await client.query(
-        `SELECT id, quantity FROM cart_items WHERE cart_id = $1 AND product_id = $2 FOR UPDATE`,
-        [cart_id, product_id]
-      );
-
-      let finalQuantity = quantity;
-      if (existingRes.rows.length > 0) {
-        finalQuantity = existingRes.rows[0].quantity + quantity;
-      }
-
-      // Enforce stock limits
-      if (product.stock_quantity < finalQuantity) {
-        // cap to stock
-        finalQuantity = product.stock_quantity;
-        adjustments.push({ product_id, requested: it.quantity, adjusted_to: finalQuantity });
-      }
-
-      if (existingRes.rows.length > 0) {
-        // update
-        await client.query(
-          `UPDATE cart_items SET quantity = $1, updated_at = NOW() WHERE id = $2`,
-          [finalQuantity, existingRes.rows[0].id]
-        );
-      } else {
-        // insert
-        await client.query(
-          `INSERT INTO cart_items (cart_id, product_id, quantity, created_at, updated_at) VALUES ($1,$2,$3,NOW(),NOW())`,
-          [cart_id, product_id, finalQuantity]
-        );
-      }
-
-      mergedItems.push({ product_id, quantity: finalQuantity });
-    }
-
-    await client.query('COMMIT');
-
-    return sendSuccess(res, 200, 'Cart merged successfully', { mergedItems, adjustments });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('Merge cart error:', err);
-    return sendError(res, 500, 'Error merging cart', err.message || err);
-  } finally {
-    client.release();
   }
 };
 
@@ -503,5 +298,4 @@ module.exports = {
   updateCartItem,
   removeFromCart,
   clearCart
-  , mergeCart
 };
