@@ -201,6 +201,8 @@ const updateCartItem = async (req, res) => {
     const { quantity } = req.body;
     const user_id = req.user.id;
 
+    console.log('DEBUG updateCartItem:', { user_id, cartItemId, quantity, body: req.body });
+
     // Validate quantity
     if (!quantity || quantity < 1 || !Number.isInteger(quantity)) {
       return sendError(res, 400, 'Quantity must be a positive integer');
@@ -252,6 +254,7 @@ const updateCartItem = async (req, res) => {
     );
 
     const updatedItem = updateResult.rows[0];
+    console.log('DEBUG updateCartItem success:', { updatedItem, rowsAffected: updateResult.rowCount });
 
     return sendSuccess(res, 200, 'Cart item updated successfully', {
       cartItem: {
@@ -280,6 +283,8 @@ const removeFromCart = async (req, res) => {
     const { cartItemId } = req.params;
     const user_id = req.user.id;
 
+    console.log('DEBUG removeFromCart:', { user_id, cartItemId });
+
     // Get user's cart to verify ownership
     const cartRes = await db.query(
       `SELECT id FROM cart WHERE user_id = $1 AND is_deleted = false`,
@@ -303,7 +308,8 @@ const removeFromCart = async (req, res) => {
     }
 
     // Delete cart item
-    await db.query('DELETE FROM cart_items WHERE id = $1', [cartItemId]);
+    const delRes = await db.query('DELETE FROM cart_items WHERE id = $1', [cartItemId]);
+    console.log('DEBUG removeFromCart delete result:', { cartItemId, rowsDeleted: delRes.rowCount });
 
     return sendSuccess(res, 200, 'Item removed from cart successfully');
   } catch (error) {
