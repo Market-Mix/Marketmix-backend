@@ -5,6 +5,7 @@ const allowedOrigins = [
   'http://localhost:5500', // Live Server
   'http://127.0.0.1:5500', // Live Server alternative
   'https://marketmix.vercel.app', // your correct frontend domain
+  'https://marketmix-backend-production.up.railway.app', // Your Railway backend
   process.env.CLIENT_URL
 ].filter(Boolean);
 
@@ -13,12 +14,25 @@ const corsOptions = {
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
 
+    // Allow explicitly configured origins
     if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.log('Blocked by CORS:', origin);
-      callback(new Error('Not allowed by CORS'));
+      return callback(null, true);
     }
+
+    // Allow Vercel preview and production subdomains (e.g. *.vercel.app)
+    try {
+      const url = new URL(origin);
+      const hostname = url.hostname;
+      if (hostname && (hostname.endsWith('.vercel.app') || hostname === 'localhost')) {
+        return callback(null, true);
+      }
+    } catch (e) {
+      // If origin is not a valid URL, fall through to reject it
+      console.log('CORS URL parse error:', e.message);
+    }
+
+    console.log('Blocked by CORS:', origin);
+    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   optionsSuccessStatus: 200,

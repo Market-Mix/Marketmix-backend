@@ -164,24 +164,23 @@ const googleRegister = async (req, res) => {
     }
 
     // Create new user with Google OAuth (no password needed)
+    // Do NOT insert a null into password_hash if the column is NOT NULL in the DB.
     const result = await db.query(
       `INSERT INTO users (
-        email, 
-        password_hash, 
-        first_name, 
-        last_name, 
-        role, 
+        email,
+        first_name,
+        last_name,
+        role,
         google_id,
         avatar_url,
         is_verified
-      ) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING id, email, first_name, last_name, phone, role, avatar_url, google_id, created_at`,
       [
-        email, 
-        null, // No password for Google users
-        firstName, 
-        lastName || firstName, 
+        email,
+        firstName,
+        lastName || firstName,
         role || 'buyer',
         finalGoogleId,
         avatar_url || null,
