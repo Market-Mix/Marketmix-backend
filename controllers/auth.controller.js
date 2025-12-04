@@ -530,12 +530,7 @@ module.exports = {
   login,
   getMe,
   updatePassword,
-  changePassword,
-  updateProfile,
   updatePhone,
-  updateAddress,
-  updateNotificationPreferences,
-  deleteAccount,
   logout
 };
 
