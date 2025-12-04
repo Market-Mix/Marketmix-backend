@@ -11,6 +11,10 @@ const {
   logout,
   updateProfile,
   changePassword,
+  createOrder,
+  getUserOrders,
+  getOrderById,
+  cancelOrder,
   updateAddress,
   updateNotificationPreferences,
   deleteAccount
