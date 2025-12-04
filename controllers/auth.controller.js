@@ -471,6 +471,58 @@ const logout = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Update user phone number
+ * @route   PUT /api/auth/update-phone
+ * @access  Private
+ */
+const updatePhone = async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    // Validate phone number
+    if (!phone) {
+      return sendError(res, 400, 'Please provide a phone number');
+    }
+
+    // Basic phone validation (10-15 digits)
+    const phoneDigits = phone.replace(/[^0-9]/g, '');
+    if (phoneDigits.length < 10 || phoneDigits.length > 15) {
+      return sendError(res, 400, 'Please provide a valid phone number');
+    }
+
+    // Update phone number in database
+    const result = await db.query(
+      'UPDATE users SET phone = $1, updated_at = NOW() WHERE id = $2 RETURNING id, email, first_name, last_name, phone, role, created_at',
+      [phone, req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return sendError(res, 404, 'User not found');
+    }
+
+    const user = result.rows[0];
+
+    console.log(`✅ Phone number updated for user: ${user.email}`);
+
+    return sendSuccess(res, 200, 'Phone number updated successfully', {
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        phone: user.phone,
+        role: user.role,
+        createdAt: user.created_at
+      }
+    });
+  } catch (error) {
+    console.error('Update phone error:', error);
+    return sendError(res, 500, 'Error updating phone number', error);
+  }
+};
+
+
 module.exports = {
   register,
   googleRegister,
@@ -478,5 +530,6 @@ module.exports = {
   login,
   getMe,
   updatePassword,
+  updatePhone,
   logout
 };

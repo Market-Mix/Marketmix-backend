@@ -7,6 +7,7 @@ const {
   login,
   getMe,
   updatePassword,
+  updatePhone,
   logout
 } = require('../controllers/auth.controller');
 const { protect } = require('../middlewares/auth.middleware');
@@ -22,6 +23,7 @@ router.post('/google-login', googleLogin);
 // Protected routes
 router.get('/me', protect, getMe);
 router.put('/password', protect, updatePassword);
+router.put('/update-phone', protect, updatePhone);
 router.post('/logout', protect, logout);
 
 module.exports = router;
