@@ -11,6 +11,13 @@ const addToCart = async (req, res) => {
     const { product_id, quantity } = req.body;
     const user_id = req.user.id;
 
+    console.log('🛒 Add to cart request:', { product_id, quantity, user_id });
+
+    // Validate user_id
+    if (!user_id) {
+      return sendError(res, 401, 'User not authenticated - user_id missing');
+    }
+
     // Validate required fields
     if (!product_id || !quantity) {
       return sendError(res, 400, 'Please provide product_id and quantity');
@@ -100,8 +107,13 @@ const addToCart = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Add to cart error:', error);
-    return sendError(res, 500, 'Error adding item to cart', error);
+    console.error('❌ Add to cart error:', {
+      message: error.message,
+      code: error.code,
+      detail: error.detail,
+      stack: error.stack
+    });
+    return sendError(res, 500, 'Error adding item to cart', error.message);
   }
 };
 
@@ -166,6 +178,8 @@ const updateCartItem = async (req, res) => {
     const { quantity } = req.body;
     const user_id = req.user.id;
 
+    console.log('📝 Update cart item:', { cartItemId, quantity, user_id });
+
     // Validate quantity
     if (!quantity || quantity < 1 || !Number.isInteger(quantity)) {
       return sendError(res, 400, 'Quantity must be a positive integer');
@@ -218,8 +232,12 @@ const updateCartItem = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Update cart item error:', error);
-    return sendError(res, 500, 'Error updating cart item', error);
+    console.error('❌ Update cart item error:', {
+      message: error.message,
+      code: error.code,
+      detail: error.detail
+    });
+    return sendError(res, 500, 'Error updating cart item', error.message);
   }
 };
 
@@ -232,6 +250,8 @@ const removeFromCart = async (req, res) => {
   try {
     const { cartItemId } = req.params;
     const user_id = req.user.id;
+
+    console.log('🗑️ Remove from cart:', { cartItemId, user_id });
 
     // Check if cart item exists and belongs to user
     const cartItemResult = await db.query(
@@ -248,8 +268,12 @@ const removeFromCart = async (req, res) => {
 
     return sendSuccess(res, 200, 'Item removed from cart successfully');
   } catch (error) {
-    console.error('Remove from cart error:', error);
-    return sendError(res, 500, 'Error removing item from cart', error);
+    console.error('❌ Remove from cart error:', {
+      message: error.message,
+      code: error.code,
+      detail: error.detail
+    });
+    return sendError(res, 500, 'Error removing item from cart', error.message);
   }
 };
 
