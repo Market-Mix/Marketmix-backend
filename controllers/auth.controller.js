@@ -530,6 +530,210 @@ module.exports = {
   login,
   getMe,
   updatePassword,
+  changePassword,
+  updateProfile,
   updatePhone,
+  updateAddress,
+  updateNotificationPreferences,
+  deleteAccount,
   logout
+};
+
+/**
+ * @desc    Update profile
+ * @route   PUT /api/auth/update-profile
+ * @access  Private
+ */
+const updateProfile = async (req, res) => {
+  try {
+    const { firstName, lastName, fullName, phone, avatar_url } = req.body;
+
+    // Determine names
+    let first_name = firstName;
+    let last_name = lastName;
+    if (fullName) {
+      const parts = fullName.trim().split(' ');
+      first_name = parts[0];
+      last_name = parts.slice(1).join(' ') || parts[0];
+    }
+
+    // Build update fields dynamically
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    if (first_name) { fields.push(`first_name = $${idx++}`); values.push(first_name); }
+    if (last_name) { fields.push(`last_name = $${idx++}`); values.push(last_name); }
+    if (phone !== undefined) { fields.push(`phone = $${idx++}`); values.push(phone); }
+    if (avatar_url !== undefined) { fields.push(`avatar_url = $${idx++}`); values.push(avatar_url); }
+
+    if (fields.length === 0) {
+      return sendError(res, 400, 'No profile fields provided to update');
+    }
+
+    const query = `UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING id, email, first_name, last_name, phone, role, avatar_url, created_at`;
+    values.push(req.user.id);
+
+    const result = await db.query(query, values);
+    if (result.rows.length === 0) return sendError(res, 404, 'User not found');
+
+    const user = result.rows[0];
+    return sendSuccess(res, 200, 'Profile updated successfully', {
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        phone: user.phone,
+        role: user.role,
+        avatar_url: user.avatar_url,
+        createdAt: user.created_at
+      }
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    return sendError(res, 500, 'Error updating profile', error);
+  }
+};
+
+/**
+ * @desc    Change password (alias of updatePassword)
+ * @route   PUT /api/auth/change-password
+ * @access  Private
+ */
+const changePassword = async (req, res) => {
+  try {
+    // Reuse existing logic from updatePassword
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return sendError(res, 400, 'Please provide current and new password');
+    }
+
+    const result = await db.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
+    const user = result.rows[0];
+    if (!user) return sendError(res, 404, 'User not found');
+
+    if (!user.password_hash) {
+      return sendError(res, 400, 'Cannot update password for Google Sign-In accounts');
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isMatch) return sendError(res, 401, 'Current password is incorrect');
+
+    const salt = await bcrypt.genSalt(10);
+    const newPasswordHash = await bcrypt.hash(newPassword, salt);
+
+    await db.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [newPasswordHash, req.user.id]);
+
+    return sendSuccess(res, 200, 'Password changed successfully');
+  } catch (error) {
+    console.error('Change password error:', error);
+    return sendError(res, 500, 'Error changing password', error);
+  }
+};
+
+/**
+ * @desc    Update address
+ * @route   PUT /api/auth/update-address
+ * @access  Private
+ */
+const updateAddress = async (req, res) => {
+  try {
+    const {
+      address_line1,
+      address_line2,
+      city,
+      state,
+      postal_code,
+      country
+    } = req.body;
+
+    // At least one address field must be provided
+    if ([address_line1, address_line2, city, state, postal_code, country].every(v => v === undefined)) {
+      return sendError(res, 400, 'No address fields provided to update');
+    }
+
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    if (address_line1 !== undefined) { fields.push(`address_line1 = $${idx++}`); values.push(address_line1); }
+    if (address_line2 !== undefined) { fields.push(`address_line2 = $${idx++}`); values.push(address_line2); }
+    if (city !== undefined) { fields.push(`city = $${idx++}`); values.push(city); }
+    if (state !== undefined) { fields.push(`state = $${idx++}`); values.push(state); }
+    if (postal_code !== undefined) { fields.push(`postal_code = $${idx++}`); values.push(postal_code); }
+    if (country !== undefined) { fields.push(`country = $${idx++}`); values.push(country); }
+
+    const query = `UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING id, email, address_line1, address_line2, city, state, postal_code, country`;
+    values.push(req.user.id);
+
+    const result = await db.query(query, values);
+    if (result.rows.length === 0) return sendError(res, 404, 'User not found');
+
+    return sendSuccess(res, 200, 'Address updated successfully', { address: result.rows[0] });
+  } catch (error) {
+    console.error('Update address error:', error);
+    return sendError(res, 500, 'Error updating address', error);
+  }
+};
+
+/**
+ * @desc    Update notification preferences
+ * @route   PUT /api/auth/notification-preferences
+ * @access  Private
+ */
+const updateNotificationPreferences = async (req, res) => {
+  try {
+    const { email_notifications, sms_notifications, push_notifications } = req.body;
+
+    // At least one preference should be provided
+    if (email_notifications === undefined && sms_notifications === undefined && push_notifications === undefined) {
+      return sendError(res, 400, 'No notification preferences provided');
+    }
+
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    if (email_notifications !== undefined) { fields.push(`email_notifications = $${idx++}`); values.push(email_notifications); }
+    if (sms_notifications !== undefined) { fields.push(`sms_notifications = $${idx++}`); values.push(sms_notifications); }
+    if (push_notifications !== undefined) { fields.push(`push_notifications = $${idx++}`); values.push(push_notifications); }
+
+    const query = `UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING id, email_notifications, sms_notifications, push_notifications`;
+    values.push(req.user.id);
+
+    const result = await db.query(query, values);
+    if (result.rows.length === 0) return sendError(res, 404, 'User not found');
+
+    return sendSuccess(res, 200, 'Notification preferences updated', { preferences: result.rows[0] });
+  } catch (error) {
+    console.error('Update notification preferences error:', error);
+    return sendError(res, 500, 'Error updating notification preferences', error);
+  }
+};
+
+/**
+ * @desc    Delete (soft) account
+ * @route   DELETE /api/auth/delete-account
+ * @access  Private
+ */
+const deleteAccount = async (req, res) => {
+  try {
+    // Soft delete: mark is_deleted and append a timestamp to email to avoid unique constraint collisions
+    const result = await db.query(
+      `UPDATE users SET is_deleted = TRUE, email = CONCAT(email, '--deleted-', EXTRACT(EPOCH FROM NOW())::text), updated_at = NOW() WHERE id = $1 RETURNING id, email`,
+      [req.user.id]
+    );
+
+    if (result.rows.length === 0) return sendError(res, 404, 'User not found');
+
+    // Optional: write audit log
+    await db.query(
+      `INSERT INTO audit_log (user_id, action, details, created_at) VALUES ($1, $2, $3, NOW())`,
+      [req.user.id, 'delete_account', JSON.stringify({ reason: req.body.reason || null })]
+    ).catch(() => null);
+
+    return sendSuccess(res, 200, 'Account deleted successfully');
+  } catch (error) {
+    console.error('Delete account error:', error);
+    return sendError(res, 500, 'Error deleting account', error);
+  }
 };
