@@ -8,7 +8,12 @@ const {
   getMe,
   updatePassword,
   updatePhone,
-  logout
+  logout,
+  updateProfile,
+  changePassword,
+  updateAddress,
+  updateNotificationPreferences,
+  deleteAccount
 } = require('../controllers/auth.controller');
 const { protect } = require('../middlewares/auth.middleware');
 
@@ -25,5 +30,12 @@ router.get('/me', protect, getMe);
 router.put('/password', protect, updatePassword);
 router.put('/update-phone', protect, updatePhone);
 router.post('/logout', protect, logout);
+
+// New Account Settings routes
+router.put('/update-profile', protect, updateProfile);
+router.put('/change-password', protect, changePassword);
+router.put('/update-address', protect, updateAddress);
+router.put('/notification-preferences', protect, updateNotificationPreferences);
+router.delete('/delete-account', protect, deleteAccount);
 
 module.exports = router;

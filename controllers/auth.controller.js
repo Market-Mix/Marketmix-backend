@@ -349,15 +349,22 @@ const login = async (req, res) => {
   }
 };
 
+
 /**
- * @desc    Get current user
+ * @desc    Get current user (UPDATED VERSION)
  * @route   GET /api/auth/me
  * @access  Private
  */
 const getMe = async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT id, email, first_name, last_name, phone, role, avatar_url, google_id, created_at FROM users WHERE id = $1 AND is_deleted = FALSE',
+      `SELECT 
+        id, email, first_name, last_name, phone, role, avatar_url, google_id,
+        address_line1, city, state, postal_code, country,
+        email_notifications, sms_notifications, push_notifications,
+        created_at
+       FROM users 
+       WHERE id = $1 AND is_deleted = FALSE`,
       [req.user.id]
     );
 
@@ -372,11 +379,26 @@ const getMe = async (req, res) => {
         id: user.id,
         email: user.email,
         firstName: user.first_name,
-        lastName: user.last_name,
+        lastName: user.last_namegit ,
         phone: user.phone,
         role: user.role,
         avatar_url: user.avatar_url,
         google_id: user.google_id,
+        
+        // Address fields
+        address: user.address_line1,
+        city: user.city,
+        state: user.state,
+        postalCode: user.postal_code,
+        country: user.country,
+        
+        // Notification preferences
+        notificationPreferences: {
+          email: user.email_notifications,
+          sms: user.sms_notifications,
+          inApp: user.push_notifications
+        },
+        
         createdAt: user.created_at
       }
     });
@@ -522,17 +544,7 @@ const updatePhone = async (req, res) => {
   }
 };
 
-
-module.exports = {
-  register,
-  googleRegister,
-  googleLogin,
-  login,
-  getMe,
-  updatePassword,
-  updatePhone,
-  logout
-};
+// Add these functions to your auth.controller.js
 
 /**
  * @desc    Update profile
@@ -591,17 +603,20 @@ const updateProfile = async (req, res) => {
 };
 
 /**
- * @desc    Change password (alias of updatePassword)
+ * @desc    Change password (wrapper for updatePassword)
  * @route   PUT /api/auth/change-password
  * @access  Private
  */
 const changePassword = async (req, res) => {
   try {
-    // Reuse existing logic from updatePassword
     const { currentPassword, newPassword } = req.body;
 
     if (!currentPassword || !newPassword) {
       return sendError(res, 400, 'Please provide current and new password');
+    }
+
+    if (newPassword.length < 8) {
+      return sendError(res, 400, 'New password must be at least 8 characters long');
     }
 
     const result = await db.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
@@ -618,7 +633,12 @@ const changePassword = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const newPasswordHash = await bcrypt.hash(newPassword, salt);
 
-    await db.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [newPasswordHash, req.user.id]);
+    await db.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [
+      newPasswordHash, 
+      req.user.id
+    ]);
+
+    console.log(`✅ Password changed for user: ${user.email}`);
 
     return sendSuccess(res, 200, 'Password changed successfully');
   } catch (error) {
@@ -635,36 +655,46 @@ const changePassword = async (req, res) => {
 const updateAddress = async (req, res) => {
   try {
     const {
-      address_line1,
-      address_line2,
+      address,      // Match frontend field name
       city,
       state,
-      postal_code,
+      postalCode,   // Match frontend field name
       country
     } = req.body;
 
     // At least one address field must be provided
-    if ([address_line1, address_line2, city, state, postal_code, country].every(v => v === undefined)) {
+    if (!address && !city && !state && !postalCode && !country) {
       return sendError(res, 400, 'No address fields provided to update');
     }
 
     const fields = [];
     const values = [];
     let idx = 1;
-    if (address_line1 !== undefined) { fields.push(`address_line1 = $${idx++}`); values.push(address_line1); }
-    if (address_line2 !== undefined) { fields.push(`address_line2 = $${idx++}`); values.push(address_line2); }
+    
+    if (address !== undefined) { fields.push(`address_line1 = $${idx++}`); values.push(address); }
     if (city !== undefined) { fields.push(`city = $${idx++}`); values.push(city); }
     if (state !== undefined) { fields.push(`state = $${idx++}`); values.push(state); }
-    if (postal_code !== undefined) { fields.push(`postal_code = $${idx++}`); values.push(postal_code); }
+    if (postalCode !== undefined) { fields.push(`postal_code = $${idx++}`); values.push(postalCode); }
     if (country !== undefined) { fields.push(`country = $${idx++}`); values.push(country); }
 
-    const query = `UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING id, email, address_line1, address_line2, city, state, postal_code, country`;
+    const query = `UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING id, email, address_line1, city, state, postal_code, country`;
     values.push(req.user.id);
 
     const result = await db.query(query, values);
     if (result.rows.length === 0) return sendError(res, 404, 'User not found');
 
-    return sendSuccess(res, 200, 'Address updated successfully', { address: result.rows[0] });
+    const user = result.rows[0];
+    console.log(`✅ Address updated for user: ${user.email}`);
+
+    return sendSuccess(res, 200, 'Address updated successfully', { 
+      address: {
+        address: user.address_line1,
+        city: user.city,
+        state: user.state,
+        postalCode: user.postal_code,
+        country: user.country
+      }
+    });
   } catch (error) {
     console.error('Update address error:', error);
     return sendError(res, 500, 'Error updating address', error);
@@ -678,19 +708,20 @@ const updateAddress = async (req, res) => {
  */
 const updateNotificationPreferences = async (req, res) => {
   try {
-    const { email_notifications, sms_notifications, push_notifications } = req.body;
+    const { email, sms, inApp } = req.body;
 
     // At least one preference should be provided
-    if (email_notifications === undefined && sms_notifications === undefined && push_notifications === undefined) {
+    if (email === undefined && sms === undefined && inApp === undefined) {
       return sendError(res, 400, 'No notification preferences provided');
     }
 
     const fields = [];
     const values = [];
     let idx = 1;
-    if (email_notifications !== undefined) { fields.push(`email_notifications = $${idx++}`); values.push(email_notifications); }
-    if (sms_notifications !== undefined) { fields.push(`sms_notifications = $${idx++}`); values.push(sms_notifications); }
-    if (push_notifications !== undefined) { fields.push(`push_notifications = $${idx++}`); values.push(push_notifications); }
+    
+    if (email !== undefined) { fields.push(`email_notifications = $${idx++}`); values.push(email); }
+    if (sms !== undefined) { fields.push(`sms_notifications = $${idx++}`); values.push(sms); }
+    if (inApp !== undefined) { fields.push(`push_notifications = $${idx++}`); values.push(inApp); }
 
     const query = `UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING id, email_notifications, sms_notifications, push_notifications`;
     values.push(req.user.id);
@@ -698,7 +729,16 @@ const updateNotificationPreferences = async (req, res) => {
     const result = await db.query(query, values);
     if (result.rows.length === 0) return sendError(res, 404, 'User not found');
 
-    return sendSuccess(res, 200, 'Notification preferences updated', { preferences: result.rows[0] });
+    const user = result.rows[0];
+    console.log(`✅ Notification preferences updated for user ID: ${req.user.id}`);
+
+    return sendSuccess(res, 200, 'Notification preferences updated', { 
+      preferences: {
+        email: user.email_notifications,
+        sms: user.sms_notifications,
+        inApp: user.push_notifications
+      }
+    });
   } catch (error) {
     console.error('Update notification preferences error:', error);
     return sendError(res, 500, 'Error updating notification preferences', error);
@@ -712,9 +752,34 @@ const updateNotificationPreferences = async (req, res) => {
  */
 const deleteAccount = async (req, res) => {
   try {
-    // Soft delete: mark is_deleted and append a timestamp to email to avoid unique constraint collisions
+    const { password } = req.body;
+
+    if (!password) {
+      return sendError(res, 400, 'Please provide your password to confirm deletion');
+    }
+
+    // Get user with password
+    const userResult = await db.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
+    const user = userResult.rows[0];
+
+    if (!user) return sendError(res, 404, 'User not found');
+
+    // Verify password (skip for Google users)
+    if (user.password_hash) {
+      const isMatch = await bcrypt.compare(password, user.password_hash);
+      if (!isMatch) {
+        return sendError(res, 401, 'Incorrect password');
+      }
+    }
+
+    // Soft delete: mark is_deleted and append timestamp to email to avoid unique constraint
     const result = await db.query(
-      `UPDATE users SET is_deleted = TRUE, email = CONCAT(email, '--deleted-', EXTRACT(EPOCH FROM NOW())::text), updated_at = NOW() WHERE id = $1 RETURNING id, email`,
+      `UPDATE users SET 
+        is_deleted = TRUE, 
+        email = CONCAT(email, '--deleted-', EXTRACT(EPOCH FROM NOW())::text), 
+        updated_at = NOW() 
+       WHERE id = $1 
+       RETURNING id, email`,
       [req.user.id]
     );
 
@@ -722,9 +787,15 @@ const deleteAccount = async (req, res) => {
 
     // Optional: write audit log
     await db.query(
-      `INSERT INTO audit_log (user_id, action, details, created_at) VALUES ($1, $2, $3, NOW())`,
-      [req.user.id, 'delete_account', JSON.stringify({ reason: req.body.reason || null })]
-    ).catch(() => null);
+      `INSERT INTO audit_log (user_id, action, details, created_at) 
+       VALUES ($1, $2, $3, NOW())`,
+      [req.user.id, 'delete_account', JSON.stringify({ reason: req.body.reason || 'User requested deletion' })]
+    ).catch(() => {
+      // Audit log is optional, continue even if it fails
+      console.log('Audit log insert skipped (table may not exist)');
+    });
+
+    console.log(`✅ Account deleted for user: ${user.email}`);
 
     return sendSuccess(res, 200, 'Account deleted successfully');
   } catch (error) {
@@ -732,3 +803,21 @@ const deleteAccount = async (req, res) => {
     return sendError(res, 500, 'Error deleting account', error);
   }
 };
+
+// UPDATE YOUR MODULE.EXPORTS to include all functions:
+module.exports = {
+  register,
+  googleRegister,
+  googleLogin,
+  login,
+  getMe,
+  updatePassword,
+  updatePhone,
+  logout,
+  updateProfile,
+  changePassword,
+  updateAddress,
+  updateNotificationPreferences,
+  deleteAccount
+};
+
