@@ -7,7 +7,8 @@ const {
   updateReview,
   deleteReview,
   addReply,
-  voteHelpful
+  voteHelpful,
+  reportReview
 } = require('../controllers/reviews.controller');
 const { protect } = require('../middlewares/auth.middleware');
 
@@ -21,5 +22,6 @@ router.put('/:reviewId', protect, updateReview);
 router.delete('/:reviewId', protect, deleteReview);
 router.post('/:reviewId/reply', protect, addReply);
 router.post('/:reviewId/vote', protect, voteHelpful);
+router.post('/:reviewId/report', protect, reportReview);
 
 module.exports = router;

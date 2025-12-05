@@ -509,6 +509,77 @@ const voteHelpful = async (req, res) => {
   }
 };
 
+
+/**
+ * @desc    Report a review
+ * @route   POST /api/reviews/:reviewId/report
+ * @access  Private
+ */
+const reportReview = async (req, res) => {
+  try {
+    const { reviewId } = req.params;
+    const { reason, details } = req.body;
+    const reporter_id = req.user.id;
+
+    // Validation
+    if (!reason || !['spam', 'offensive', 'misleading', 'other'].includes(reason)) {
+      return sendError(res, 400, 'Invalid reason. Must be: spam, offensive, misleading, or other');
+    }
+
+    // Check if review exists
+    const reviewCheck = await db.query(
+      'SELECT id, status FROM reviews WHERE id = $1 AND is_deleted = FALSE',
+      [reviewId]
+    );
+
+    if (reviewCheck.rows.length === 0) {
+      return sendError(res, 404, 'Review not found');
+    }
+
+    // Check if user already reported this review
+    const existingReport = await db.query(
+      'SELECT id FROM review_reports WHERE review_id = $1 AND reporter_id = $2',
+      [reviewId, reporter_id]
+    );
+
+    if (existingReport.rows.length > 0) {
+      return sendError(res, 400, 'You have already reported this review');
+    }
+
+    // Insert report
+    await db.query(
+      `INSERT INTO review_reports (review_id, reporter_id, reason, details, created_at)
+       VALUES ($1, $2, $3, $4, NOW())`,
+      [reviewId, reporter_id, reason, details || null]
+    );
+
+    // Count total reports for this review
+    const reportCount = await db.query(
+      'SELECT COUNT(*) as count FROM review_reports WHERE review_id = $1',
+      [reviewId]
+    );
+
+    const totalReports = parseInt(reportCount.rows[0].count);
+
+    // Auto-flag if 3+ reports
+    if (totalReports >= 3 && reviewCheck.rows[0].status !== 'flagged') {
+      await db.query(
+        `UPDATE reviews SET status = 'flagged' WHERE id = $1`,
+        [reviewId]
+      );
+      console.log(`⚠️ Review ${reviewId} auto-flagged after ${totalReports} reports`);
+    }
+
+    console.log(`✅ Review ${reviewId} reported by user ${reporter_id}`);
+
+    return sendSuccess(res, 201, 'Review reported successfully. Our team will review it shortly.');
+
+  } catch (error) {
+    console.error('❌ Report review error:', error);
+    return sendError(res, 500, 'Error reporting review', error);
+  }
+};
+
 module.exports = {
   createReview,
   getProductReviews,
@@ -516,5 +587,6 @@ module.exports = {
   updateReview,
   deleteReview,
   addReply,
-  voteHelpful
+  voteHelpful,
+  reportReview 
 };
