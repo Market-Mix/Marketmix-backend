@@ -41,6 +41,7 @@ const productsRoutes = require('./routes/products.routes');
 const cartRoutes = require('./routes/cart.routes');
 const ordersRoutes = require('./routes/orders.routes');
 const earningsRoutes = require('./routes/earnings.routes');
+const reviewsRoutes = require('./routes/reviews.routes');
 const withdrawalRoutes = require('./routes/withdrawal.routes');
 const notificationRoutes = require('./routes/notification.routes');
 
@@ -53,6 +54,7 @@ app.use('/api/products', productsRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/orders', ordersRoutes);
 app.use('/api/earnings', earningsRoutes);
+app.use('/api/reviews', reviewsRoutes);
 app.use('/api/withdrawals', withdrawalRoutes);
 app.use('/api/notifications', notificationRoutes);
 
