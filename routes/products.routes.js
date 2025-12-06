@@ -85,13 +85,13 @@ router.get('/:id', async (req, res) => {
 			[id]
 		);
 
-		// Get related products (same category)
+		// Get related products (just get other products, since category column doesn't exist)
 		const relatedResult = await pool.query(
 			`SELECT id, name, price, main_image_url, rating, review_count 
 			 FROM products 
-			 WHERE category = $1 AND id != $2 AND is_active = true AND is_deleted = false
+			 WHERE id != $1 AND is_active = true AND is_deleted = false
 			 LIMIT 6`,
-			[product.category, id]
+			[id]
 		);
 
 		// Get other seller products
