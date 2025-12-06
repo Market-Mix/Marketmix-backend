@@ -1,35 +1,30 @@
 // ============================================
-// FILE 1: controllers/paymentMethodsController.js
+// PAYMENT METHODS CONTROLLER (PostgreSQL)
 // ============================================
-const { createClient } = require('@supabase/supabase-js');
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+const db = require('../config/db');
 
 // Get all payment methods for authenticated user
 exports.getAllPaymentMethods = async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('payment_methods')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .order('is_default', { ascending: false })
-      .order('created_at', { ascending: false });
+    const query = `
+      SELECT * FROM payment_methods
+      WHERE user_id = $1
+      ORDER BY is_default DESC, created_at DESC
+    `;
 
-    if (error) throw error;
+    const result = await db.query(query, [req.user.id]);
 
-    res.json({ 
-      success: true, 
-      data,
-      count: data.length 
+    res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length
     });
   } catch (error) {
     console.error('Error fetching payment methods:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to fetch payment methods' 
+      error: 'Failed to fetch payment methods'
     });
   }
 };
@@ -37,31 +32,26 @@ exports.getAllPaymentMethods = async (req, res) => {
 // Get single payment method by ID
 exports.getPaymentMethodById = async (req, res) => {
   try {
-    const { id } = req.params;
+    const query = `
+      SELECT * FROM payment_methods
+      WHERE id = $1 AND user_id = $2
+    `;
 
-    const { data, error } = await supabase
-      .from('payment_methods')
-      .select('*')
-      .eq('id', id)
-      .eq('user_id', req.user.id)
-      .single();
+    const result = await db.query(query, [req.params.id, req.user.id]);
 
-    if (error || !data) {
-      return res.status(404).json({ 
+    if (result.rowCount === 0) {
+      return res.status(404).json({
         success: false,
-        error: 'Payment method not found' 
+        error: 'Payment method not found'
       });
     }
 
-    res.json({ 
-      success: true, 
-      data 
-    });
+    res.json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Error fetching payment method:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to fetch payment method' 
+      error: 'Failed to fetch payment method'
     });
   }
 };
@@ -79,57 +69,52 @@ exports.createPaymentMethod = async (req, res) => {
       is_default
     } = req.body;
 
-    // Validate required fields
     if (!payment_type || !masked_number || !cardholder_name) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'Missing required fields: payment_type, masked_number, cardholder_name' 
+        error: 'Missing required fields'
       });
     }
 
-    // Validate payment_type
-    if (!['Card', 'Bank'].includes(payment_type)) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Invalid payment_type. Must be "Card" or "Bank"' 
-      });
-    }
-
-    // If setting as default, unset other defaults first
+    // If new default → unset all others
     if (is_default) {
-      await supabase
-        .from('payment_methods')
-        .update({ is_default: false })
-        .eq('user_id', req.user.id);
+      await db.query(
+        `UPDATE payment_methods SET is_default=false WHERE user_id=$1`,
+        [req.user.id]
+      );
     }
 
-    const { data, error } = await supabase
-      .from('payment_methods')
-      .insert([{
-        user_id: req.user.id,
-        payment_type,
-        masked_number,
-        cardholder_name,
-        extra_info,
-        billing_address: payment_type === 'Card' ? billing_address : null,
-        branch: payment_type === 'Bank' ? branch : null,
-        is_default: is_default || false
-      }])
-      .select()
-      .single();
+    const query = `
+      INSERT INTO payment_methods 
+      (user_id, payment_type, masked_number, cardholder_name, extra_info,
+       billing_address, branch, is_default)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING *
+    `;
 
-    if (error) throw error;
+    const values = [
+      req.user.id,
+      payment_type,
+      masked_number,
+      cardholder_name,
+      extra_info,
+      payment_type === 'Card' ? billing_address : null,
+      payment_type === 'Bank' ? branch : null,
+      is_default || false
+    ];
 
-    res.status(201).json({ 
-      success: true, 
-      data,
-      message: 'Payment method added successfully' 
+    const result = await db.query(query, values);
+
+    res.status(201).json({
+      success: true,
+      data: result.rows[0],
+      message: 'Payment method added successfully'
     });
   } catch (error) {
     console.error('Error adding payment method:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to add payment method' 
+      error: 'Failed to add payment method'
     });
   }
 };
@@ -148,115 +133,57 @@ exports.updatePaymentMethod = async (req, res) => {
       is_default
     } = req.body;
 
-    // Verify ownership
-    const { data: existing, error: fetchError } = await supabase
-      .from('payment_methods')
-      .select('user_id, payment_type')
-      .eq('id', id)
-      .single();
+    // Check ownership
+    const existRes = await db.query(
+      `SELECT user_id FROM payment_methods WHERE id=$1`,
+      [id]
+    );
 
-    if (fetchError || !existing || existing.user_id !== req.user.id) {
-      return res.status(404).json({ 
-        success: false,
-        error: 'Payment method not found' 
-      });
+    if (existRes.rowCount === 0 || existRes.rows[0].user_id !== req.user.id) {
+      return res.status(404).json({ success: false, error: 'Payment method not found' });
     }
 
-    // If setting as default, unset other defaults first
     if (is_default) {
-      await supabase
-        .from('payment_methods')
-        .update({ is_default: false })
-        .eq('user_id', req.user.id)
-        .neq('id', id);
+      await db.query(
+        `UPDATE payment_methods SET is_default=false WHERE user_id=$1 AND id<>$2`,
+        [req.user.id, id]
+      );
     }
 
-    // Build update object
-    const updateData = {};
-    if (payment_type !== undefined) {
-      if (!['Card', 'Bank'].includes(payment_type)) {
-        return res.status(400).json({ 
-          success: false,
-          error: 'Invalid payment_type. Must be "Card" or "Bank"' 
-        });
-      }
-      updateData.payment_type = payment_type;
-    }
-    if (masked_number !== undefined) updateData.masked_number = masked_number;
-    if (cardholder_name !== undefined) updateData.cardholder_name = cardholder_name;
-    if (extra_info !== undefined) updateData.extra_info = extra_info;
-    if (billing_address !== undefined) updateData.billing_address = billing_address;
-    if (branch !== undefined) updateData.branch = branch;
-    if (is_default !== undefined) updateData.is_default = is_default;
+    const query = `
+      UPDATE payment_methods
+      SET payment_type = COALESCE($1, payment_type),
+          masked_number = COALESCE($2, masked_number),
+          cardholder_name = COALESCE($3, cardholder_name),
+          extra_info = COALESCE($4, extra_info),
+          billing_address = COALESCE($5, billing_address),
+          branch = COALESCE($6, branch),
+          is_default = COALESCE($7, is_default)
+      WHERE id=$8
+      RETURNING *
+    `;
 
-    const { data, error } = await supabase
-      .from('payment_methods')
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single();
+    const result = await db.query(query, [
+      payment_type,
+      masked_number,
+      cardholder_name,
+      extra_info,
+      billing_address,
+      branch,
+      is_default,
+      id
+    ]);
 
-    if (error) throw error;
-
-    res.json({ 
-      success: true, 
-      data,
-      message: 'Payment method updated successfully' 
+    res.json({
+      success: true,
+      data: result.rows[0],
+      message: 'Payment method updated successfully'
     });
   } catch (error) {
     console.error('Error updating payment method:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to update payment method' 
-    });
-  }
-};
-
-// Set payment method as default
-exports.setDefaultPaymentMethod = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Verify ownership
-    const { data: existing, error: fetchError } = await supabase
-      .from('payment_methods')
-      .select('user_id')
-      .eq('id', id)
-      .single();
-
-    if (fetchError || !existing || existing.user_id !== req.user.id) {
-      return res.status(404).json({ 
-        success: false,
-        error: 'Payment method not found' 
-      });
-    }
-
-    // Unset all defaults for this user
-    await supabase
-      .from('payment_methods')
-      .update({ is_default: false })
-      .eq('user_id', req.user.id);
-
-    // Set this one as default
-    const { data, error } = await supabase
-      .from('payment_methods')
-      .update({ is_default: true })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    res.json({ 
-      success: true, 
-      data,
-      message: 'Default payment method set successfully' 
-    });
-  } catch (error) {
-    console.error('Error setting default payment method:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to set default payment method' 
+      error: 'Failed to update payment method'
     });
   }
 };
@@ -266,36 +193,23 @@ exports.deletePaymentMethod = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Verify ownership
-    const { data: existing, error: fetchError } = await supabase
-      .from('payment_methods')
-      .select('user_id')
-      .eq('id', id)
-      .single();
+    const check = await db.query(
+      `SELECT user_id FROM payment_methods WHERE id=$1`,
+      [id]
+    );
 
-    if (fetchError || !existing || existing.user_id !== req.user.id) {
-      return res.status(404).json({ 
-        success: false,
-        error: 'Payment method not found' 
-      });
+    if (check.rowCount === 0 || check.rows[0].user_id !== req.user.id) {
+      return res.status(404).json({ success: false, error: 'Payment method not found' });
     }
 
-    const { error } = await supabase
-      .from('payment_methods')
-      .delete()
-      .eq('id', id);
+    await db.query(`DELETE FROM payment_methods WHERE id=$1`, [id]);
 
-    if (error) throw error;
-
-    res.json({ 
-      success: true, 
-      message: 'Payment method deleted successfully' 
-    });
+    res.json({ success: true, message: 'Payment method deleted successfully' });
   } catch (error) {
     console.error('Error deleting payment method:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to delete payment method' 
+      error: 'Failed to delete payment method'
     });
   }
 };
@@ -303,29 +217,24 @@ exports.deletePaymentMethod = async (req, res) => {
 // Get default payment method
 exports.getDefaultPaymentMethod = async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('payment_methods')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .eq('is_default', true)
-      .single();
+    const result = await db.query(
+      `SELECT * FROM payment_methods WHERE user_id=$1 AND is_default=true`,
+      [req.user.id]
+    );
 
-    if (error || !data) {
-      return res.status(404).json({ 
+    if (result.rowCount === 0) {
+      return res.status(404).json({
         success: false,
-        error: 'No default payment method found' 
+        error: 'No default payment method found'
       });
     }
 
-    res.json({ 
-      success: true, 
-      data 
-    });
+    res.json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Error fetching default payment method:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Failed to fetch default payment method' 
+      error: 'Failed to fetch default payment method'
     });
   }
 };
