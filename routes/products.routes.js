@@ -11,32 +11,39 @@ router.get('/', async (req, res) => {
 
 	const result = await pool.query(
 		`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
-		        category, rating, review_count, is_active, created_at,
-		        COALESCE(flash_sale_active, false) as flash_sale_active,
-		        COALESCE(flash_sale_discount, 0) as flash_sale_discount
+		        category, rating, review_count, is_active, created_at
 		 FROM products 
 		 WHERE is_active = true AND is_deleted = false
 		 ORDER BY created_at DESC
 		 LIMIT $1 OFFSET $2`,
 		[limit, offset]
-	);		const countResult = await pool.query(
-			`SELECT COUNT(*) as total FROM products WHERE is_active = true AND is_deleted = false`
-		);
+	);
 
-		res.json({
-			status: 'success',
-			data: result.rows,
-			pagination: {
-				total: parseInt(countResult.rows[0].total),
-				page,
-				limit,
-				pages: Math.ceil(parseInt(countResult.rows[0].total) / limit)
-			}
-		});
-	} catch (error) {
-		console.error('Error fetching products:', error);
-		res.status(500).json({ status: 'error', message: error.message });
-	}
+	const countResult = await pool.query(
+		`SELECT COUNT(*) as total FROM products WHERE is_active = true AND is_deleted = false`
+	);
+
+	// Add default flash_sale fields to response
+	const productsWithDefaults = result.rows.map(p => ({
+		...p,
+		flash_sale_active: p.flash_sale_active || false,
+		flash_sale_discount: p.flash_sale_discount || 0
+	}));
+
+	res.json({
+		status: 'success',
+		data: productsWithDefaults,
+		pagination: {
+			total: parseInt(countResult.rows[0].total),
+			page,
+			limit,
+			pages: Math.ceil(parseInt(countResult.rows[0].total) / limit)
+		}
+	});
+} catch (error) {
+	console.error('Error fetching products:', error);
+	res.status(500).json({ status: 'error', message: error.message });
+}
 });
 
 // Get single product by ID
@@ -100,6 +107,8 @@ router.get('/:id', async (req, res) => {
 			status: 'success',
 			data: {
 				...product,
+				flash_sale_active: product.flash_sale_active || false,
+				flash_sale_discount: product.flash_sale_discount || 0,
 				seller: sellerResult.rows[0] || null,
 				reviews: reviewsResult.rows,
 				relatedProducts: relatedResult.rows,
