@@ -3,7 +3,7 @@
 // ============================================
 const express = require('express');
 const router = express.Router();
-const paymentMethodsController = require('../controllers/paymentMethodsController');
+const paymentMethodsController = require('../controllers/paymentMethods.controller');
 const { createClient } = require('@supabase/supabase-js');
 
 // Initialize Supabase client
