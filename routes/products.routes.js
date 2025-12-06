@@ -11,7 +11,7 @@ router.get('/', async (req, res) => {
 
 	const result = await pool.query(
 		`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
-		        category, rating, review_count, is_active, created_at
+		        rating, review_count, is_active, created_at
 		 FROM products 
 		 WHERE is_active = true AND is_deleted = false
 		 ORDER BY created_at DESC
@@ -54,7 +54,7 @@ router.get('/:id', async (req, res) => {
 		// Get product details
 		const productResult = await pool.query(
 			`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
-			        category, rating, review_count, is_active, flash_sale_discount, flash_sale_active,
+			        rating, review_count, is_active, 
 			        created_at, updated_at
 			 FROM products 
 			 WHERE id = $1 AND is_active = true AND is_deleted = false`,
