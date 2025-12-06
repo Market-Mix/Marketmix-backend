@@ -9,17 +9,17 @@ router.get('/', async (req, res) => {
 		const limit = parseInt(req.query.limit) || 20;
 		const offset = (page - 1) * limit;
 
-		const result = await pool.query(
-			`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
-			        category, rating, review_count, is_active, created_at
-			 FROM products 
-			 WHERE is_active = true AND is_deleted = false
-			 ORDER BY created_at DESC
-			 LIMIT $1 OFFSET $2`,
-			[limit, offset]
-		);
-
-		const countResult = await pool.query(
+	const result = await pool.query(
+		`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
+		        category, rating, review_count, is_active, created_at,
+		        COALESCE(flash_sale_active, false) as flash_sale_active,
+		        COALESCE(flash_sale_discount, 0) as flash_sale_discount
+		 FROM products 
+		 WHERE is_active = true AND is_deleted = false
+		 ORDER BY created_at DESC
+		 LIMIT $1 OFFSET $2`,
+		[limit, offset]
+	);		const countResult = await pool.query(
 			`SELECT COUNT(*) as total FROM products WHERE is_active = true AND is_deleted = false`
 		);
 
