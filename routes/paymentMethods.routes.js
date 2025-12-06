@@ -5,7 +5,7 @@ const { protect } = require('../middleware/auth.middleware');
  // your actual auth
 
 // Apply authentication middleware to all routes
-router.use(authenticate);
+router.use(protect);
 
 // Routes
 router.get('/', paymentMethodsController.getAllPaymentMethods);
