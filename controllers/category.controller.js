@@ -136,26 +136,53 @@ const searchCategories = async (req, res) => {
 
     const searchQuery = `%${q.toLowerCase()}%`;
 
-    const query = `
-      SELECT 
-        id,
-        name,
-        description,
-        product_count,
-        is_active,
-        created_at,
-        updated_at
-      FROM categories
-      WHERE is_active = true AND is_deleted = false 
-      AND LOWER(name) LIKE $1
-      ORDER BY name ASC
-      LIMIT 50
-    `;
-    
-    const result = await db.query(query, [searchQuery]);
+    let result;
+    try {
+      // Try full query with all columns
+      const query = `
+        SELECT 
+          id,
+          name,
+          description,
+          product_count,
+          is_active,
+          created_at,
+          updated_at
+        FROM categories
+        WHERE is_active = true AND is_deleted = false 
+        AND LOWER(name) LIKE $1
+        ORDER BY name ASC
+        LIMIT 50
+      `;
+      result = await db.query(query, [searchQuery]);
+    } catch (columnError) {
+      console.error('Full query failed, trying minimal columns:', columnError.message);
+      // Fallback to minimal columns if some don't exist
+      const query = `
+        SELECT 
+          id,
+          name
+        FROM categories
+        WHERE is_active = true AND is_deleted = false 
+        AND LOWER(name) LIKE $1
+        ORDER BY name ASC
+        LIMIT 50
+      `;
+      result = await db.query(query, [searchQuery]);
+    }
 
-    return sendSuccess(res, 200, 'Categories search successful', result.rows, {
-      count: result.rows.length
+    // Add default values for missing fields
+    const categoriesWithDefaults = result.rows.map(c => ({
+      ...c,
+      description: c.description || '',
+      product_count: c.product_count || 0,
+      is_active: c.is_active !== false,
+      created_at: c.created_at || new Date().toISOString(),
+      updated_at: c.updated_at || new Date().toISOString()
+    }));
+
+    return sendSuccess(res, 200, 'Categories search successful', categoriesWithDefaults, {
+      count: categoriesWithDefaults.length
     });
   } catch (error) {
     console.error('Error searching categories:', error);
