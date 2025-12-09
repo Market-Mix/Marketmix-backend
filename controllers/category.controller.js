@@ -125,9 +125,48 @@ const getCategoriesWithCount = async (req, res) => {
   }
 };
 
+// Search categories by name
+const searchCategories = async (req, res) => {
+  try {
+    const { q } = req.query;
+
+    if (!q || q.trim().length === 0) {
+      return sendSuccess(res, 200, 'No search query provided', []);
+    }
+
+    const searchQuery = `%${q.toLowerCase()}%`;
+
+    const query = `
+      SELECT 
+        id,
+        name,
+        description,
+        product_count,
+        is_active,
+        created_at,
+        updated_at
+      FROM categories
+      WHERE is_active = true AND is_deleted = false 
+      AND LOWER(name) LIKE $1
+      ORDER BY name ASC
+      LIMIT 50
+    `;
+    
+    const result = await db.query(query, [searchQuery]);
+
+    return sendSuccess(res, 200, 'Categories search successful', result.rows, {
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('Error searching categories:', error);
+    return sendError(res, 500, 'Error searching categories', error.message);
+  }
+};
+
 module.exports = {
   getAllCategories,
   getCategoryById,
   getProductsByCategory,
-  getCategoriesWithCount
+  getCategoriesWithCount,
+  searchCategories
 };

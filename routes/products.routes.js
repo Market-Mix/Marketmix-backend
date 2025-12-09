@@ -171,4 +171,49 @@ router.get('/:id', async (req, res) => {
 	}
 });
 
+// Search products by name or description
+router.get('/search/query', async (req, res) => {
+	try {
+		const { q } = req.query;
+
+		if (!q || q.trim().length === 0) {
+			return res.json({
+				status: 'success',
+				data: [],
+				message: 'No search query provided'
+			});
+		}
+
+		const searchQuery = `%${q.toLowerCase()}%`;
+
+		const result = await pool.query(
+			`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
+					rating, review_count, is_active, created_at
+			 FROM products 
+			 WHERE is_active = true AND is_deleted = false 
+			 AND (LOWER(name) LIKE $1 OR LOWER(description) LIKE $1)
+			 ORDER BY name ASC
+			 LIMIT 50`,
+			[searchQuery]
+		);
+
+		const productsWithDefaults = result.rows.map(p => ({
+			...p,
+			description: p.description || '',
+			main_image_url: p.main_image_url || 'https://via.placeholder.com/500',
+			rating: p.rating || 4.5,
+			review_count: p.review_count || 0
+		}));
+
+		res.json({
+			status: 'success',
+			data: productsWithDefaults,
+			count: productsWithDefaults.length
+		});
+	} catch (error) {
+		console.error('Error searching products:', error.message);
+		res.status(500).json({ status: 'error', message: error.message });
+	}
+});
+
 module.exports = router;

@@ -5,7 +5,8 @@ const {
   getAllCategories,
   getCategoryById,
   getProductsByCategory,
-  getCategoriesWithCount
+  getCategoriesWithCount,
+  searchCategories
 } = require('../controllers/category.controller');
 const { protect } = require('../middlewares/auth.middleware');
 
@@ -15,6 +16,9 @@ router.get('/', getAllCategories);
 
 // Get categories with product count (useful for buyer page)
 router.get('/with-count', getCategoriesWithCount);
+
+// Search categories by name
+router.get('/search/query', searchCategories);
 
 // Get single category by ID
 router.get('/:id', getCategoryById);
