@@ -97,20 +97,21 @@ const getProductsByCategory = async (req, res) => {
   }
 };
 
-// Get categories with product count
+// Get categories with product count (uses stored count column, automatically updated by triggers)
 const getCategoriesWithCount = async (req, res) => {
   try {
     const query = `
       SELECT 
-        c.*,
-        COUNT(p.id)::integer as product_count
-      FROM categories c
-      LEFT JOIN products p ON c.id = p.category_id 
-        AND p.is_active = true 
-        AND p.is_deleted = false
-      WHERE c.is_active = true AND c.is_deleted = false
-      GROUP BY c.id
-      ORDER BY c.name ASC
+        id,
+        name,
+        description,
+        product_count,
+        is_active,
+        created_at,
+        updated_at
+      FROM categories
+      WHERE is_active = true AND is_deleted = false
+      ORDER BY name ASC
     `;
     
     const result = await db.query(query);
