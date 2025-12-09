@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const paymentMethodsController = require('../controllers/paymentMethods.controller');
-const { protect } = require('../middlewaressfc/auth.middleware'); // <-- your JWT auth middleware
+const { protect } = require('../middlewares/auth.middleware'); // <-- your JWT auth middleware
 
 // Apply authentication middleware to all routes
 router.use(protect);
