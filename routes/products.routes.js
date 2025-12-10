@@ -18,12 +18,14 @@ router.get('/', async (req, res) => {
 						p.is_active, p.created_at, p.category_id,
 						COALESCE(c.name, 'uncategorized') as category_name
 				 FROM products p
-				 LEFT JOIN categories c ON p.category_id = c.id AND c.is_deleted = false
+				 LEFT JOIN categories c ON p.category_id = c.id
 				 WHERE p.is_active = true AND p.is_deleted = false
 				 ORDER BY p.created_at DESC
 				 LIMIT $1 OFFSET $2`,
 				[limit, offset]
 			);
+			
+			console.log(`✅ Successfully fetched ${result.rows.length} products with categories`);
 		} catch (queryError) {
 			console.error('Query error details:', queryError.message);
 			// If the query fails, try with fewer columns
@@ -32,7 +34,7 @@ router.get('/', async (req, res) => {
 				`SELECT p.id, p.name, p.price, p.category_id, p.main_image_url, p.description,
 						COALESCE(c.name, 'uncategorized') as category_name
 				 FROM products p
-				 LEFT JOIN categories c ON p.category_id = c.id AND c.is_deleted = false
+				 LEFT JOIN categories c ON p.category_id = c.id
 				 WHERE p.is_active = true AND p.is_deleted = false
 				 ORDER BY p.created_at DESC
 				 LIMIT $1 OFFSET $2`,
