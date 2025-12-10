@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
 			// Using COALESCE to handle NULL category names
 			result = await pool.query(
 				`SELECT p.id, p.seller_id, p.name, p.description, p.price, p.stock_quantity, p.main_image_url, 
-						p.rating, p.review_count, p.is_active, p.created_at, p.category_id,
+						p.is_active, p.created_at, p.category_id,
 						COALESCE(c.name, 'uncategorized') as category_name
 				 FROM products p
 				 LEFT JOIN categories c ON p.category_id = c.id AND c.is_deleted = false
@@ -29,7 +29,13 @@ router.get('/', async (req, res) => {
 			// If the query fails, try with fewer columns
 			console.log('Retrying with minimal columns...');
 			result = await pool.query(
-				`SELECT id, name, price, category_id FROM products WHERE is_active = true AND is_deleted = false LIMIT $1 OFFSET $2`,
+				`SELECT p.id, p.name, p.price, p.category_id, p.main_image_url, p.description,
+						COALESCE(c.name, 'uncategorized') as category_name
+				 FROM products p
+				 LEFT JOIN categories c ON p.category_id = c.id AND c.is_deleted = false
+				 WHERE p.is_active = true AND p.is_deleted = false
+				 ORDER BY p.created_at DESC
+				 LIMIT $1 OFFSET $2`,
 				[limit, offset]
 			);
 		}
@@ -44,10 +50,10 @@ router.get('/', async (req, res) => {
 			description: p.description || '',
 			main_image_url: p.main_image_url || 'https://via.placeholder.com/500',
 			category: p.category_name ? p.category_name.toLowerCase() : 'uncategorized',
-			rating: p.rating || 4.5,
-			review_count: p.review_count || 0,
-			flash_sale_active: p.flash_sale_active || false,
-			flash_sale_discount: p.flash_sale_discount || 0
+			rating: 4.5,
+			review_count: 0,
+			flash_sale_active: false,
+			flash_sale_discount: 0
 		}));
 
 		res.json({
@@ -76,7 +82,7 @@ router.get('/:id', async (req, res) => {
 		try {
 			productResult = await pool.query(
 				`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
-						rating, review_count, is_active, 
+						is_active, category_id,
 						created_at, updated_at
 				 FROM products 
 				 WHERE id = $1 AND is_active = true AND is_deleted = false`,
@@ -86,7 +92,7 @@ router.get('/:id', async (req, res) => {
 			console.error('Product query error:', queryError.message);
 			// Fallback to minimal query
 			productResult = await pool.query(
-				`SELECT id, seller_id, name, price FROM products WHERE id = $1 LIMIT 1`,
+				`SELECT id, seller_id, name, price, main_image_url FROM products WHERE id = $1 LIMIT 1`,
 				[id]
 			);
 		}
@@ -129,7 +135,7 @@ router.get('/:id', async (req, res) => {
 		let relatedResult = { rows: [] };
 		try {
 			relatedResult = await pool.query(
-				`SELECT id, name, price, main_image_url, rating, review_count 
+				`SELECT id, name, price, main_image_url
 				 FROM products 
 				 WHERE id != $1 AND is_active = true AND is_deleted = false
 				 LIMIT 6`,
@@ -143,7 +149,7 @@ router.get('/:id', async (req, res) => {
 		let sellerProductsResult = { rows: [] };
 		try {
 			sellerProductsResult = await pool.query(
-				`SELECT id, name, price, main_image_url, rating, review_count 
+				`SELECT id, name, price, main_image_url
 				 FROM products 
 				 WHERE seller_id = $1 AND id != $2 AND is_active = true AND is_deleted = false
 				 LIMIT 10`,
@@ -159,10 +165,10 @@ router.get('/:id', async (req, res) => {
 				...product,
 				description: product.description || '',
 				main_image_url: product.main_image_url || 'https://via.placeholder.com/500',
-				rating: product.rating || 4.5,
-				review_count: product.review_count || 0,
-				flash_sale_active: product.flash_sale_active || false,
-				flash_sale_discount: product.flash_sale_discount || 0,
+				rating: 4.5,
+				review_count: 0,
+				flash_sale_active: false,
+				flash_sale_discount: 0,
 				seller: sellerResult.rows[0] || null,
 				reviews: reviewsResult.rows,
 				relatedProducts: relatedResult.rows,
@@ -195,7 +201,7 @@ router.get('/search/query', async (req, res) => {
 			// Try full query with all columns
 			result = await pool.query(
 				`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
-						rating, review_count, is_active, created_at
+						is_active, created_at, category_id
 				 FROM products 
 				 WHERE is_active = true AND is_deleted = false 
 				 AND (LOWER(name) LIKE $1 OR LOWER(description) LIKE $1)
@@ -207,7 +213,7 @@ router.get('/search/query', async (req, res) => {
 			console.error('Full query failed, trying minimal columns:', columnError.message);
 			// Fallback to minimal columns if some don't exist
 			result = await pool.query(
-				`SELECT id, name, price, main_image_url
+				`SELECT id, name, price, main_image_url, category_id
 				 FROM products 
 				 WHERE is_active = true AND is_deleted = false 
 				 AND (LOWER(name) LIKE $1 OR LOWER(description) LIKE $1)
@@ -224,8 +230,8 @@ router.get('/search/query', async (req, res) => {
 			main_image_url: p.main_image_url || 'https://via.placeholder.com/500',
 			price: p.price || 0,
 			stock_quantity: p.stock_quantity || 0,
-			rating: p.rating || 4.5,
-			review_count: p.review_count || 0,
+			rating: 4.5,
+			review_count: 0,
 			is_active: p.is_active !== false,
 			created_at: p.created_at || new Date().toISOString()
 		}));
