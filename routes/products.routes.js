@@ -12,12 +12,13 @@ router.get('/', async (req, res) => {
 		// Start with minimal query - just get what we know exists
 		let result;
 		try {
+			// Using COALESCE to handle NULL category names
 			result = await pool.query(
 				`SELECT p.id, p.seller_id, p.name, p.description, p.price, p.stock_quantity, p.main_image_url, 
 						p.rating, p.review_count, p.is_active, p.created_at, p.category_id,
-						c.name as category_name
+						COALESCE(c.name, 'uncategorized') as category_name
 				 FROM products p
-				 LEFT JOIN categories c ON p.category_id = c.id
+				 LEFT JOIN categories c ON p.category_id = c.id AND c.is_deleted = false
 				 WHERE p.is_active = true AND p.is_deleted = false
 				 ORDER BY p.created_at DESC
 				 LIMIT $1 OFFSET $2`,
@@ -28,7 +29,7 @@ router.get('/', async (req, res) => {
 			// If the query fails, try with fewer columns
 			console.log('Retrying with minimal columns...');
 			result = await pool.query(
-				`SELECT id, name, price, category_id FROM products LIMIT $1 OFFSET $2`,
+				`SELECT id, name, price, category_id FROM products WHERE is_active = true AND is_deleted = false LIMIT $1 OFFSET $2`,
 				[limit, offset]
 			);
 		}
@@ -42,7 +43,7 @@ router.get('/', async (req, res) => {
 			...p,
 			description: p.description || '',
 			main_image_url: p.main_image_url || 'https://via.placeholder.com/500',
-			category: p.category_name || 'uncategorized',
+			category: p.category_name ? p.category_name.toLowerCase() : 'uncategorized',
 			rating: p.rating || 4.5,
 			review_count: p.review_count || 0,
 			flash_sale_active: p.flash_sale_active || false,
