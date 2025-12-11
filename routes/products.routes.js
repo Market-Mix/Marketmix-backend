@@ -177,6 +177,9 @@ router.get('/:id', async (req, res) => {
 			console.warn('Could not fetch seller products:', err.message);
 		}
 
+		// Compute flash sale info using helper so single-product response matches list response
+		const flashInfo = formatFlashSaleInfo(product.flash_start, product.flash_end, product.price, product.flash_price || null);
+
 		res.json({
 			status: 'success',
 			data: {
@@ -187,8 +190,12 @@ router.get('/:id', async (req, res) => {
 				review_count: 0,
 				color: product.color || null,
 				size: product.size || null,
-				flash_sale_active: product.flash_start ? (new Date() < new Date(product.flash_end)) : false,
-				flash_sale_discount: 0,
+				// Flash sale fields (consistent with list endpoint)
+				flash_sale_active: flashInfo.isFlashSaleActive,
+				flash_sale_discount: flashInfo.savings || 0,
+				flash_sale_discount_percent: flashInfo.savingsPercent || 0,
+				effective_price: flashInfo.currentPrice,
+				time_remaining: flashInfo.timeRemaining,
 				flash_start: product.flash_start || null,
 				flash_end: product.flash_end || null,
 				seller: sellerResult.rows[0] || null,
