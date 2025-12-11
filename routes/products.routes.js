@@ -17,7 +17,8 @@ router.get('/', async (req, res) => {
 			// Also fetch flash_start and flash_end if available
 			result = await pool.query(
 				`SELECT p.id, p.seller_id, p.name, p.description, p.price, p.stock_quantity, p.main_image_url, 
-						p.is_active, p.created_at, p.category_id, p.flash_start, p.flash_end,
+						p.is_active, p.created_at, p.category_id, p.color, p.size,
+						p."flash start" as flash_start, p."flash end" as flash_end,
 						COALESCE(c.name, 'uncategorized') as category_name
 				 FROM products p
 				 LEFT JOIN categories c ON p.category_id = c.id
@@ -34,7 +35,8 @@ router.get('/', async (req, res) => {
 			console.log('Retrying with minimal columns...');
 			result = await pool.query(
 				`SELECT p.id, p.name, p.price, p.category_id, p.main_image_url, p.description,
-						p.flash_start, p.flash_end,
+						p.color, p.size,
+						p."flash start" as flash_start, p."flash end" as flash_end,
 						COALESCE(c.name, 'uncategorized') as category_name
 				 FROM products p
 				 LEFT JOIN categories c ON p.category_id = c.id
@@ -60,6 +62,8 @@ router.get('/', async (req, res) => {
 				category: p.category_name ? p.category_name.toLowerCase() : 'uncategorized',
 				rating: 4.5,
 				review_count: 0,
+								color: p.color || null,
+								size: p.size || null,
 				// Flash sale fields
 				flash_sale_active: flashInfo.isFlashSaleActive,
 				flash_sale_discount: flashInfo.savings || 0,
@@ -94,9 +98,10 @@ router.get('/:id', async (req, res) => {
 		let productResult;
 		try {
 			productResult = await pool.query(
-				`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
-						is_active, category_id,
-						created_at, updated_at
+					`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
+							is_active, category_id, color, size,
+							"flash start" as flash_start, "flash end" as flash_end,
+							created_at, updated_at
 				 FROM products 
 				 WHERE id = $1 AND is_active = true AND is_deleted = false`,
 				[id]
@@ -180,8 +185,12 @@ router.get('/:id', async (req, res) => {
 				main_image_url: product.main_image_url || 'https://via.placeholder.com/500',
 				rating: 4.5,
 				review_count: 0,
-				flash_sale_active: false,
+				color: product.color || null,
+				size: product.size || null,
+				flash_sale_active: product.flash_start ? (new Date() < new Date(product.flash_end)) : false,
 				flash_sale_discount: 0,
+				flash_start: product.flash_start || null,
+				flash_end: product.flash_end || null,
 				seller: sellerResult.rows[0] || null,
 				reviews: reviewsResult.rows,
 				relatedProducts: relatedResult.rows,
