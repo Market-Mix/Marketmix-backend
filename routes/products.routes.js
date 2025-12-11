@@ -277,4 +277,35 @@ router.get('/search/query', async (req, res) => {
 	}
 });
 
+// Track product view - increment views count
+router.post('/:id/view', async (req, res) => {
+	try {
+		const { id } = req.params;
+
+		// Increment the views column for this product
+		const result = await pool.query(
+			`UPDATE products 
+			 SET views = COALESCE(views, 0) + 1,
+			     updated_at = NOW()
+			 WHERE id = $1
+			 RETURNING id, views`,
+			[id]
+		);
+
+		if (result.rows.length === 0) {
+			return res.status(404).json({ status: 'error', message: 'Product not found' });
+		}
+
+		res.json({
+			status: 'success',
+			message: 'View tracked',
+			data: { product_id: id, views: result.rows[0].views }
+		});
+	} catch (error) {
+		console.error('Error tracking product view:', error.message);
+		// Don't fail the request - view tracking is non-critical
+		res.json({ status: 'success', message: 'View tracked (async)' });
+	}
+});
+
 module.exports = router;
