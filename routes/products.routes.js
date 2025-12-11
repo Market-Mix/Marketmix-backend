@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
+const { isFlashSaleActive, formatFlashSaleInfo } = require('../utils/flashSaleHelper');
 
 // Get all products (with pagination)
 router.get('/', async (req, res) => {
@@ -13,9 +14,10 @@ router.get('/', async (req, res) => {
 		let result;
 		try {
 			// Using COALESCE to handle NULL category names
+			// Also fetch flash_start and flash_end if available
 			result = await pool.query(
 				`SELECT p.id, p.seller_id, p.name, p.description, p.price, p.stock_quantity, p.main_image_url, 
-						p.is_active, p.created_at, p.category_id,
+						p.is_active, p.created_at, p.category_id, p.flash_start, p.flash_end,
 						COALESCE(c.name, 'uncategorized') as category_name
 				 FROM products p
 				 LEFT JOIN categories c ON p.category_id = c.id
@@ -32,6 +34,7 @@ router.get('/', async (req, res) => {
 			console.log('Retrying with minimal columns...');
 			result = await pool.query(
 				`SELECT p.id, p.name, p.price, p.category_id, p.main_image_url, p.description,
+						p.flash_start, p.flash_end,
 						COALESCE(c.name, 'uncategorized') as category_name
 				 FROM products p
 				 LEFT JOIN categories c ON p.category_id = c.id
@@ -46,17 +49,25 @@ router.get('/', async (req, res) => {
 			`SELECT COUNT(*) as total FROM products WHERE is_active = true AND is_deleted = false`
 		);
 
-		// Add default flash_sale fields to response
-		const productsWithDefaults = result.rows.map(p => ({
-			...p,
-			description: p.description || '',
-			main_image_url: p.main_image_url || 'https://via.placeholder.com/500',
-			category: p.category_name ? p.category_name.toLowerCase() : 'uncategorized',
-			rating: 4.5,
-			review_count: 0,
-			flash_sale_active: false,
-			flash_sale_discount: 0
-		}));
+		// Add flash sale and default fields to response
+		const productsWithDefaults = result.rows.map(p => {
+			const flashInfo = formatFlashSaleInfo(p.flash_start, p.flash_end, p.price);
+			
+			return {
+				...p,
+				description: p.description || '',
+				main_image_url: p.main_image_url || 'https://via.placeholder.com/500',
+				category: p.category_name ? p.category_name.toLowerCase() : 'uncategorized',
+				rating: 4.5,
+				review_count: 0,
+				// Flash sale fields
+				flash_sale_active: flashInfo.isFlashSaleActive,
+				flash_sale_discount: flashInfo.savings || 0,
+				flash_sale_discount_percent: flashInfo.savingsPercent || 0,
+				effective_price: flashInfo.currentPrice,
+				time_remaining: flashInfo.timeRemaining
+			};
+		});
 
 		res.json({
 			status: 'success',
