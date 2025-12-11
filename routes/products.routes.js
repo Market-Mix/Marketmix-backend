@@ -188,6 +188,7 @@ router.get('/:id', async (req, res) => {
 				main_image_url: product.main_image_url || 'https://via.placeholder.com/500',
 				rating: 4.5,
 				review_count: 0,
+				views: product.views || 0,
 				color: product.color || null,
 				size: product.size || null,
 				// Flash sale fields (consistent with list endpoint)
