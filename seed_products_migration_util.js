@@ -158,7 +158,7 @@ async function migrateProductsFromListings(pool, options = {}) {
     // Step 2: Fetch all product listings
     log.info('Fetching product_listings...');
     const listingsRes = await pool.query(
-      'SELECT id, name, description, price, stock_quantity, image, main_image_url, category, color, size, created_at FROM product_listings WHERE is_deleted = false ORDER BY created_at DESC'
+      'SELECT id, name, description, price, stock_quantity, image, main_image_url, category, color, size, created_at FROM product_listings ORDER BY created_at DESC'
     );
     const listings = listingsRes.rows;
     results.listings = listings;
@@ -192,8 +192,35 @@ async function migrateProductsFromListings(pool, options = {}) {
         // Prepare product data
         const productId = generateUUID();
         const variations = getVariationsForCategory(listing.category);
-        const flashSale = getFlashSaleTimestamps();
         
+        // Normalize color and size to arrays
+        function normalizeArrayField(fieldVal, fallbackJson) {
+          if (!fieldVal && !fallbackJson) return null;
+          try {
+            if (Array.isArray(fieldVal)) return fieldVal;
+            if (typeof fieldVal === 'string') {
+              if (fieldVal.trim().startsWith('[')) return JSON.parse(fieldVal);
+              return fieldVal.split(',').map(s => s.trim()).filter(Boolean);
+            }
+            return null;
+          } catch (e) {
+            return null;
+          }
+        }
+
+        const colorArray = normalizeArrayField(listing.color, variations.colors) || (variations.colors ? JSON.parse(variations.colors) : null);
+        const sizeArray = normalizeArrayField(listing.size, variations.sizes) || (variations.sizes ? JSON.parse(variations.sizes) : null);
+
+        // Randomly seed flash sales (30% chance)
+        let flashStart = null;
+        let flashEnd = null;
+        if (Math.random() < 0.3) {
+          const now = new Date();
+          flashStart = now.toISOString();
+          const endTime = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+          flashEnd = endTime.toISOString();
+        }
+
         const product = {
           id: productId,
           seller_id: assignSellerId,
@@ -202,11 +229,11 @@ async function migrateProductsFromListings(pool, options = {}) {
           price: parseFloat(listing.price) || 0,
           stock_quantity: parseInt(listing.stock_quantity) || 0,
           main_image_url: listing.image || listing.main_image_url || null,
-          category: listing.category || null,
-          color: listing.color || variations.colors,
-          size: listing.size || variations.sizes,
-          flash_start: flashSale.flash_start,
-          flash_end: flashSale.flash_end,
+          category_id: null,
+          color: colorArray,
+          size: sizeArray,
+          flash_start: flashStart,
+          flash_end: flashEnd,
           is_active: true,
           is_deleted: false,
           views: 0,
@@ -220,13 +247,13 @@ async function migrateProductsFromListings(pool, options = {}) {
         if (!dryRun) {
           await pool.query(
             `INSERT INTO products (
-              id, seller_id, category, name, description, price, stock_quantity,
-              main_image_url, is_active, is_deleted, views, color, size, flash_start, flash_end, created_at, updated_at
+              id, seller_id, category_id, name, description, price, stock_quantity,
+              main_image_url, is_active, is_deleted, views, color, size, "flash start", "flash end", created_at, updated_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
             [
               product.id,
               product.seller_id,
-              product.category,
+              product.category_id,
               product.name,
               product.description,
               product.price,

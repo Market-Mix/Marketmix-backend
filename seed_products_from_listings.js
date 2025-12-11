@@ -216,7 +216,18 @@ async function seedProductsFromListings() {
         const colorArray = normalizeArrayField(listing.color, variations.colors) || (variations.colors ? JSON.parse(variations.colors) : null);
         const sizeArray = normalizeArrayField(listing.size, variations.sizes) || (variations.sizes ? JSON.parse(variations.sizes) : null);
 
-        // Insert into products table (omit flash columns to match current DB schema)
+        // Randomly seed flash sales (30% chance)
+        let flashStart = null;
+        let flashEnd = null;
+        if (Math.random() < 0.3) {
+          const now = new Date();
+          flashStart = now.toISOString(); // Start now
+          // End 24 hours from now
+          const endTime = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+          flashEnd = endTime.toISOString();
+        }
+
+        // Insert into products table (using quoted column names for "flash start" and "flash end")
         await pool.query(
           `INSERT INTO products (
             id,
@@ -232,9 +243,11 @@ async function seedProductsFromListings() {
             views,
             color,
             size,
+            "flash start",
+            "flash end",
             created_at,
             updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())`,
           [
             productId,
             defaultSellerId,
@@ -249,11 +262,15 @@ async function seedProductsFromListings() {
             0, // views = 0
             colorArray,
             sizeArray,
-            // created_at and updated_at are set in the query with NOW()
+            flashStart,
+            flashEnd
           ]
         );
 
         log.success(`[${i + 1}/${listings.length}] Migrated: "${name}" (₦${price})`);
+        if (colorArray) log.data(`   Colors: ${JSON.stringify(colorArray)}`);
+        if (sizeArray) log.data(`   Sizes: ${JSON.stringify(sizeArray)}`);
+        if (flashStart) log.data(`   Flash Sale: ${flashStart} → ${flashEnd}`);
         log.data(`   ID: ${productId} | Stock: ${stockQuantity}`);
         migratedCount++;
 

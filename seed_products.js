@@ -148,9 +148,9 @@ async function seedProducts() {
       const flashSaleLabel = flashSale.flash_start ? ' 🔥 FLASH SALE' : '';
       
       await pool.query(
-        `INSERT INTO products (id, seller_id, category, name, description, price, stock_quantity, main_image_url, color, size, flash_start, flash_end, is_active, is_deleted, created_at, updated_at)
+        `INSERT INTO products (id, seller_id, category_id, name, description, price, stock_quantity, main_image_url, color, size, "flash start", "flash end", is_active, is_deleted, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, false, NOW(), NOW())`,
-        [generateUUID(), sellerId, product.category, product.name, product.description, product.price, product.stock_quantity, product.main_image_url, variations.colors, variations.sizes, flashSale.flash_start, flashSale.flash_end]
+        [generateUUID(), sellerId, null, product.name, product.description, product.price, product.stock_quantity, product.main_image_url, variations.colors ? JSON.parse(variations.colors) : null, variations.sizes ? JSON.parse(variations.sizes) : null, flashSale.flash_start, flashSale.flash_end]
       );
       console.log(`✅ Inserted: ${product.name} ($${product.price})${flashSaleLabel}`);
     }
