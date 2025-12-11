@@ -1,47 +1,31 @@
 require('dotenv').config();
 const { Pool } = require('pg');
 
-function getVariationsForCategory(name, categoryId) {
-  if (!name) return { colors: null, sizes: null };
+function getVariationsForCategory(text) {
+  if (!text) return { colors: null, sizes: null };
 
-  const nameLower = name.toLowerCase().trim();
+  const txt = text.toLowerCase();
 
-  const apparelCategories = [
-    'fashion', 'clothing', 'apparel', 'clothes', 'dress', 'dresses', 'shirt', 'shirts',
-    'tshirt', 't-shirt', 'tshirts', 'jeans', 'trousers', 'pants', 'shorts', 'skirt',
-    'hoodie', 'hoodies', 'sweatshirt', 'sweatshirts', 'jacket', 'jackets', 'coat', 'outerwear', 'cotton', 't-shirt'
-  ];
-  if (apparelCategories.some(cat => nameLower.includes(cat))) {
-    return {
-      colors: JSON.stringify(['Red', 'Blue', 'Black', 'White']),
-      sizes: JSON.stringify(['S', 'M', 'L', 'XL'])
-    };
+  // Broader keyword sets covering apparel, footwear, bags, accessories, jewelry
+  const apparelKeywords = ['fashion','clothing','apparel','clothes','dress','dresses','shirt','shirts','tshirt','t-shirt','tshirts','tee','cotton','hoodie','hoodies','sweatshirt','jacket','jeans','trousers','pants','shorts','skirt'];
+  const footwearKeywords = ['shoe','shoes','footwear','sneaker','sneakers','trainers','boots','sandals','flip','heel','heels','sock','socks'];
+  const bagsKeywords = ['bag','bags','backpack','purse','wallet','handbag','tote','clutch','satchel'];
+  const jewelryKeywords = ['jewelry','jewellery','necklace','bracelet','ring','earring','pendant','silver','gold','sterling'];
+
+  if (apparelKeywords.some(k => txt.includes(k))) {
+    return { colors: JSON.stringify(['Red','Blue','Black','White']), sizes: JSON.stringify(['S','M','L','XL']) };
   }
 
-  const shoesCategories = [
-    'shoes', 'footwear', 'sneakers', 'sneaker', 'trainers', 'boots', 'sandals', 'flip', 'heel', 'heels'
-  ];
-  if (shoesCategories.some(cat => nameLower.includes(cat))) {
-    return {
-      colors: JSON.stringify(['Red', 'Blue', 'Black', 'White']),
-      sizes: JSON.stringify(['S', 'M', 'L', 'XL'])
-    };
+  if (footwearKeywords.some(k => txt.includes(k))) {
+    return { colors: JSON.stringify(['Black','White','Brown','Navy']), sizes: JSON.stringify(['6','7','8','9','10','11','12']) };
   }
 
-  const bagsCategories = ['bags', 'bag', 'backpack', 'purse', 'wallet', 'handbag', 'tote', 'clutch'];
-  if (bagsCategories.some(cat => nameLower.includes(cat))) {
-    return {
-      colors: JSON.stringify(['Red', 'Blue', 'Black', 'White']),
-      sizes: JSON.stringify(['One Size'])
-    };
+  if (bagsKeywords.some(k => txt.includes(k))) {
+    return { colors: JSON.stringify(['Black','Brown','Tan','Blue','Red']), sizes: JSON.stringify(['One Size']) };
   }
 
-  const jewelryCategories = ['jewelry', 'jewellery', 'necklace', 'bracelet', 'ring', 'earring', 'pendant', 'silver', 'gold'];
-  if (jewelryCategories.some(cat => nameLower.includes(cat))) {
-    return {
-      colors: JSON.stringify(['Gold', 'Silver', 'Rose Gold', 'Platinum']),
-      sizes: JSON.stringify(['One Size'])
-    };
+  if (jewelryKeywords.some(k => txt.includes(k))) {
+    return { colors: JSON.stringify(['Gold','Silver','Rose Gold','Platinum']), sizes: JSON.stringify(['One Size']) };
   }
 
   return { colors: null, sizes: null };
@@ -56,8 +40,8 @@ function getVariationsForCategory(name, categoryId) {
   try {
     console.log('\n🔄 UPDATING EXISTING PRODUCTS WITH COLORS/SIZES AND FLASH SALES\n');
 
-    // Get all products
-    const productsRes = await pool.query('SELECT id, name, category_id FROM products ORDER BY name');
+    // Get all products (include existing color/size/flash fields so we don't overwrite present data)
+    const productsRes = await pool.query('SELECT id, name, category_id, color, size, "flash start" as flash_start, "flash end" as flash_end FROM products ORDER BY name');
     const products = productsRes.rows;
 
     console.log(`Found ${products.length} products to update\n`);
@@ -65,34 +49,74 @@ function getVariationsForCategory(name, categoryId) {
     let updatedCount = 0;
 
     for (const product of products) {
-      // Get variations based on name
-      const variations = getVariationsForCategory(product.name, product.category_id);
+      // If product already has both color and size, skip unless absent
+      const needsColor = !product.color || (Array.isArray(product.color) && product.color.length === 0);
+      const needsSize = !product.size || (Array.isArray(product.size) && product.size.length === 0);
+      const needsFlash = !product.flash_start;
 
-      // Randomly assign flash sale (30% chance)
-      let flashStart = null;
-      let flashEnd = null;
-      if (Math.random() < 0.3) {
+      if (!needsColor && !needsSize && !needsFlash) {
+        continue; // nothing to do
+      }
+
+      // Try to get category name if available to broaden detection
+      let categoryName = '';
+      if (product.category_id) {
+        try {
+          const catRes = await pool.query('SELECT name FROM categories WHERE id = $1 LIMIT 1', [product.category_id]);
+          if (catRes.rows.length > 0) categoryName = catRes.rows[0].name || '';
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      const detectText = `${product.name || ''} ${categoryName}`;
+      const variations = getVariationsForCategory(detectText);
+
+      // Parse JSON strings back to arrays for DB
+      const colorArray = needsColor ? (variations.colors ? JSON.parse(variations.colors) : null) : product.color;
+      const sizeArray = needsSize ? (variations.sizes ? JSON.parse(variations.sizes) : null) : product.size;
+
+      // Randomly assign flash sale (30% chance) only if missing
+      let flashStart = product.flash_start || null;
+      let flashEnd = product.flash_end || null;
+      if (needsFlash && Math.random() < 0.3) {
         const now = new Date();
         flashStart = now.toISOString();
         const endTime = new Date(now.getTime() + 24 * 60 * 60 * 1000);
         flashEnd = endTime.toISOString();
       }
 
-      // Parse JSON strings back to arrays for DB
-      const colorArray = variations.colors ? JSON.parse(variations.colors) : null;
-      const sizeArray = variations.sizes ? JSON.parse(variations.sizes) : null;
+      // Build update query dynamically (only update fields we changed)
+      const updates = [];
+      const params = [];
+      let idx = 1;
 
-      // Update product
-      await pool.query(
-        `UPDATE products 
-         SET color = $1, size = $2, "flash start" = $3, "flash end" = $4, updated_at = NOW()
-         WHERE id = $5`,
-        [colorArray, sizeArray, flashStart, flashEnd, product.id]
-      );
+      if (needsColor) {
+        updates.push(`color = $${idx++}`);
+        params.push(colorArray);
+      }
+      if (needsSize) {
+        updates.push(`size = $${idx++}`);
+        params.push(sizeArray);
+      }
+      if (needsFlash) {
+        updates.push(`"flash start" = $${idx++}`);
+        updates.push(`"flash end" = $${idx++}`);
+        params.push(flashStart);
+        params.push(flashEnd);
+      }
+
+      if (updates.length === 0) continue;
+
+      updates.push('updated_at = NOW()');
+      const sql = `UPDATE products SET ${updates.join(', ')} WHERE id = $${idx}`;
+      params.push(product.id);
+
+      await pool.query(sql, params);
 
       const hasFlash = flashStart ? ' 🔥' : '';
-      const hasColors = colorArray ? ` (colors: ${JSON.stringify(colorArray)})` : '';
-      const hasSizes = sizeArray ? ` (sizes: ${JSON.stringify(sizeArray)})` : '';
+      const hasColors = needsColor && colorArray ? ` (colors: ${JSON.stringify(colorArray)})` : '';
+      const hasSizes = needsSize && sizeArray ? ` (sizes: ${JSON.stringify(sizeArray)})` : '';
 
       console.log(`✅ Updated: "${product.name}"${hasColors}${hasSizes}${hasFlash}`);
       updatedCount++;
