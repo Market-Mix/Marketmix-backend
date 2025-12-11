@@ -40,37 +40,39 @@ function getVariationsForCategory(category) {
 
   const categoryLower = category.toLowerCase().trim();
 
-  // Fashion and apparel categories
-  const fashionCategories = ['fashion', 'clothing', 'apparel', 'clothes', 'dresses', 'shirts', 'pants', 'jackets'];
-  if (fashionCategories.some(cat => categoryLower.includes(cat))) {
+  const apparelCategories = [
+    'fashion', 'clothing', 'apparel', 'clothes', 'dress', 'dresses', 'shirt', 'shirts',
+    'tshirt', 't-shirt', 'tshirts', 'jeans', 'trousers', 'pants', 'shorts', 'skirt',
+    'hoodie', 'hoodies', 'sweatshirt', 'sweatshirts', 'jacket', 'jackets', 'coat', 'outerwear'
+  ];
+  if (apparelCategories.some(cat => categoryLower.includes(cat))) {
     return {
       needsVariations: true,
-      colors: JSON.stringify(['Black', 'Blue', 'White', 'Red', 'Gray']),
-      sizes: JSON.stringify(['XS', 'S', 'M', 'L', 'XL', 'XXL'])
+      colors: JSON.stringify(['Red', 'Blue', 'Black', 'White']),
+      sizes: JSON.stringify(['S', 'M', 'L', 'XL'])
     };
   }
 
-  // Shoes category
-  const shoesCategories = ['shoes', 'footwear', 'sneakers', 'boots', 'sandals'];
+  const shoesCategories = [
+    'shoes', 'footwear', 'sneakers', 'sneaker', 'trainers', 'boots', 'sandals', 'flip', 'heel', 'heels'
+  ];
   if (shoesCategories.some(cat => categoryLower.includes(cat))) {
     return {
       needsVariations: true,
-      colors: JSON.stringify(['Black', 'White', 'Brown', 'Gray', 'Navy']),
-      sizes: JSON.stringify(['6', '7', '8', '9', '10', '11', '12', '13'])
+      colors: JSON.stringify(['Red', 'Blue', 'Black', 'White']),
+      sizes: JSON.stringify(['S', 'M', 'L', 'XL'])
     };
   }
 
-  // Bags and accessories
-  const bagsCategories = ['bags', 'bag', 'backpack', 'purse', 'wallet', 'handbag', 'tote'];
+  const bagsCategories = ['bags', 'bag', 'backpack', 'purse', 'wallet', 'handbag', 'tote', 'clutch'];
   if (bagsCategories.some(cat => categoryLower.includes(cat))) {
     return {
       needsVariations: true,
-      colors: JSON.stringify(['Black', 'Brown', 'Tan', 'Blue', 'Red']),
+      colors: JSON.stringify(['Red', 'Blue', 'Black', 'White']),
       sizes: JSON.stringify(['One Size'])
     };
   }
 
-  // Jewelry
   const jewelryCategories = ['jewelry', 'jewellery', 'necklace', 'bracelet', 'ring', 'earring'];
   if (jewelryCategories.some(cat => categoryLower.includes(cat))) {
     return {
@@ -80,7 +82,7 @@ function getVariationsForCategory(category) {
     };
   }
 
-  // No variations needed (electronics, books, home, etc.)
+  // No variations needed (electronics, phones, furniture, kitchen items, etc.)
   return { needsVariations: false, colors: null, sizes: null };
 }
 

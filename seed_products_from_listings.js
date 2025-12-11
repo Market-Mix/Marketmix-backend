@@ -35,37 +35,39 @@ function getVariationsForCategory(category) {
 
   const categoryLower = category.toLowerCase().trim();
 
-  // Fashion and apparel categories
-  const fashionCategories = ['fashion', 'clothing', 'apparel', 'clothes', 'dresses', 'shirts', 'pants', 'jackets'];
-  if (fashionCategories.some(cat => categoryLower.includes(cat))) {
+  const apparelCategories = [
+    'fashion', 'clothing', 'apparel', 'clothes', 'dress', 'dresses', 'shirt', 'shirts',
+    'tshirt', 't-shirt', 'tshirts', 'jeans', 'trousers', 'pants', 'shorts', 'skirt',
+    'hoodie', 'hoodies', 'sweatshirt', 'sweatshirts', 'jacket', 'jackets', 'coat', 'outerwear'
+  ];
+  if (apparelCategories.some(cat => categoryLower.includes(cat))) {
     return {
       needsVariations: true,
-      colors: JSON.stringify(['Black', 'Blue', 'White', 'Red', 'Gray']),
-      sizes: JSON.stringify(['XS', 'S', 'M', 'L', 'XL', 'XXL'])
+      colors: JSON.stringify(['Red', 'Blue', 'Black', 'White']),
+      sizes: JSON.stringify(['S', 'M', 'L', 'XL'])
     };
   }
 
-  // Shoes category
-  const shoesCategories = ['shoes', 'footwear', 'sneakers', 'boots', 'sandals'];
+  const shoesCategories = [
+    'shoes', 'footwear', 'sneakers', 'sneaker', 'trainers', 'boots', 'sandals', 'flip', 'heel', 'heels'
+  ];
   if (shoesCategories.some(cat => categoryLower.includes(cat))) {
     return {
       needsVariations: true,
-      colors: JSON.stringify(['Black', 'White', 'Brown', 'Gray', 'Navy']),
-      sizes: JSON.stringify(['6', '7', '8', '9', '10', '11', '12', '13'])
+      colors: JSON.stringify(['Red', 'Blue', 'Black', 'White']),
+      sizes: JSON.stringify(['S', 'M', 'L', 'XL'])
     };
   }
 
-  // Bags and accessories
-  const bagsCategories = ['bags', 'bag', 'backpack', 'purse', 'wallet', 'handbag', 'tote'];
+  const bagsCategories = ['bags', 'bag', 'backpack', 'purse', 'wallet', 'handbag', 'tote', 'clutch'];
   if (bagsCategories.some(cat => categoryLower.includes(cat))) {
     return {
       needsVariations: true,
-      colors: JSON.stringify(['Black', 'Brown', 'Tan', 'Blue', 'Red']),
+      colors: JSON.stringify(['Red', 'Blue', 'Black', 'White']),
       sizes: JSON.stringify(['One Size'])
     };
   }
 
-  // Jewelry
   const jewelryCategories = ['jewelry', 'jewellery', 'necklace', 'bracelet', 'ring', 'earring'];
   if (jewelryCategories.some(cat => categoryLower.includes(cat))) {
     return {
@@ -75,7 +77,7 @@ function getVariationsForCategory(category) {
     };
   }
 
-  // No variations needed (electronics, books, home, etc.)
+  // No variations needed (electronics, phones, furniture, kitchen items, etc.)
   return { needsVariations: false, colors: null, sizes: null };
 }
 
@@ -139,12 +141,12 @@ async function seedProductsFromListings() {
     // Step 1: Get all product_listings
     log.info('📖 Reading product_listings table...');
     const listingsRes = await pool.query(
-      'SELECT * FROM product_listings WHERE is_deleted = false ORDER BY created_at DESC'
+      'SELECT * FROM product_listings ORDER BY created_at DESC'
     );
     const listings = listingsRes.rows;
 
     if (listings.length === 0) {
-      log.warning('No active product listings found');
+      log.warning('No product listings found');
       await pool.end();
       return;
     }
@@ -189,18 +191,37 @@ async function seedProductsFromListings() {
         const price = parseFloat(listing.price) || 0;
         const stockQuantity = parseInt(listing.stock_quantity) || 0;
         const mainImageUrl = listing.image || listing.main_image_url || null;
-        const category = listing.category || null;
-        const variations = getVariationsForCategory(category);
-        const color = listing.color || variations.colors;
-        const size = listing.size || variations.sizes;
-        const flashSale = getFlashSaleTimestamps();
+        // category_id is not always available in listings; set null to avoid schema mismatch
+        const categoryId = null;
 
-        // Insert into products table
+        const variations = getVariationsForCategory(listing.category || null);
+
+        // Normalize color and size to arrays to match products table ARRAY columns
+        function normalizeArrayField(fieldVal, fallbackJson) {
+          if (!fieldVal && !fallbackJson) return null;
+          try {
+            if (Array.isArray(fieldVal)) return fieldVal;
+            if (typeof fieldVal === 'string') {
+              // If it's a JSON string like '["Red","Blue"]', parse it
+              if (fieldVal.trim().startsWith('[')) return JSON.parse(fieldVal);
+              // If it's a comma-separated string, split and trim
+              return fieldVal.split(',').map(s => s.trim()).filter(Boolean);
+            }
+            return null;
+          } catch (e) {
+            return null;
+          }
+        }
+
+        const colorArray = normalizeArrayField(listing.color, variations.colors) || (variations.colors ? JSON.parse(variations.colors) : null);
+        const sizeArray = normalizeArrayField(listing.size, variations.sizes) || (variations.sizes ? JSON.parse(variations.sizes) : null);
+
+        // Insert into products table (omit flash columns to match current DB schema)
         await pool.query(
           `INSERT INTO products (
             id,
             seller_id,
-            category,
+            category_id,
             name,
             description,
             price,
@@ -211,15 +232,13 @@ async function seedProductsFromListings() {
             views,
             color,
             size,
-            flash_start,
-            flash_end,
             created_at,
             updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())`,
           [
             productId,
             defaultSellerId,
-            category,
+            categoryId,
             name,
             description,
             price,
@@ -228,10 +247,9 @@ async function seedProductsFromListings() {
             true, // is_active = true
             false, // is_deleted = false
             0, // views = 0
-            color,
-            size,
-            flashSale.flash_start,
-            flashSale.flash_end
+            colorArray,
+            sizeArray,
+            // created_at and updated_at are set in the query with NOW()
           ]
         );
 
@@ -255,9 +273,9 @@ async function seedProductsFromListings() {
     }
 
     const totalRes = await pool.query(
-      'SELECT COUNT(*) as count FROM products WHERE is_active = true AND is_deleted = false'
+      'SELECT COUNT(*) as count FROM products'
     );
-    log.info(`Total active products in database: ${totalRes.total_count || totalRes.rows[0].count}`);
+    log.info(`Total products in database: ${totalRes.rows[0].count}`);
 
     log.title('✨ MIGRATION COMPLETE');
     log.success('All product listings have been migrated to the products table!');
