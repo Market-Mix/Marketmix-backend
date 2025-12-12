@@ -99,7 +99,7 @@ router.get('/:id', async (req, res) => {
 		try {
 			productResult = await pool.query(
 					`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
-							is_active, category_id, color, size,
+							is_active, category_id, color, size, views,
 							"flash start" as flash_start, "flash end" as flash_end,
 							created_at, updated_at
 				 FROM products 
