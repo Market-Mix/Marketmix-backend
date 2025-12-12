@@ -7,16 +7,29 @@ const { sendSuccess, sendError } = require('../utils/response');
  */
 const addToWishlist = async (req, res) => {
   try {
-    const user_id = req.user.id;
+    const user_id = req.user && req.user.id;
     const { product_id } = req.body;
 
     if (!user_id) return sendError(res, 401, 'Not authenticated');
     if (!product_id) return sendError(res, 400, 'product_id required');
 
-    // Check if already exists
+    // Find or create a wishlist for this user
+    let wl = await db.query(`SELECT id FROM wishlists WHERE user_id = $1 LIMIT 1`, [user_id]);
+    let wishlist_id;
+    if (wl.rows.length > 0) {
+      wishlist_id = wl.rows[0].id;
+    } else {
+      const created = await db.query(
+        `INSERT INTO wishlists (user_id, created_at) VALUES ($1, NOW()) RETURNING id`,
+        [user_id]
+      );
+      wishlist_id = created.rows[0].id;
+    }
+
+    // Check if item already exists for this wishlist
     const exists = await db.query(
-      `SELECT id FROM wishlist_items WHERE user_id = $1 AND product_id = $2 LIMIT 1`,
-      [user_id, product_id]
+      `SELECT id FROM wishlist_items WHERE wishlist_id = $1 AND product_id = $2 LIMIT 1`,
+      [wishlist_id, product_id]
     );
 
     if (exists.rows.length > 0) {
@@ -24,8 +37,8 @@ const addToWishlist = async (req, res) => {
     }
 
     const insert = await db.query(
-      `INSERT INTO wishlist_items (user_id, product_id, created_at) VALUES ($1, $2, NOW()) RETURNING id, product_id, created_at`,
-      [user_id, product_id]
+      `INSERT INTO wishlist_items (wishlist_id, product_id, added_at) VALUES ($1, $2, NOW()) RETURNING id, wishlist_id, product_id, added_at`,
+      [wishlist_id, product_id]
     );
 
     return sendSuccess(res, 201, 'Added to wishlist', { item: insert.rows[0] });
@@ -41,15 +54,16 @@ const addToWishlist = async (req, res) => {
  */
 const getWishlist = async (req, res) => {
   try {
-    const user_id = req.user.id;
+    const user_id = req.user && req.user.id;
     if (!user_id) return sendError(res, 401, 'Not authenticated');
 
     const result = await db.query(
-      `SELECT wi.id, wi.product_id, p.name, p.price, p.main_image_url, wi.created_at
+      `SELECT wi.id, wi.product_id, p.name, p.price, p.main_image_url, wi.added_at
        FROM wishlist_items wi
+       JOIN wishlists w ON wi.wishlist_id = w.id
        JOIN products p ON wi.product_id = p.id
-       WHERE wi.user_id = $1
-       ORDER BY wi.created_at DESC`,
+       WHERE w.user_id = $1
+       ORDER BY wi.added_at DESC`,
       [user_id]
     );
 
