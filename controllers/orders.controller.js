@@ -284,55 +284,49 @@ const cancelOrder = async (req, res) => {
   }
 };
 
+
 /**
- * @desc    Get products from completed orders (for review)
+ * @desc    Get all purchased products for review (delivered orders only)
  * @route   GET /api/orders/purchased-products
  * @access  Private
  */
 const getPurchasedProducts = async (req, res) => {
   try {
-    const user_id = req.user.id;
+    const userId = req.user.id;
 
     const result = await db.query(
-      `SELECT DISTINCT 
+      `SELECT DISTINCT
         p.id,
         p.name,
-        p.main_image_url,
-        oi.order_id,
-        o.created_at as order_date,
-        CASE 
-          WHEN r.id IS NOT NULL THEN true 
-          ELSE false 
-        END as already_reviewed
-       FROM order_items oi
-       JOIN orders o ON oi.order_id = o.id
-       JOIN products p ON oi.product_id = p.id
-       LEFT JOIN reviews r ON r.product_id = p.id 
-         AND r.reviewer_id = $1 
-         AND r.review_type = 'product'
-         AND r.is_deleted = FALSE
-       WHERE o.user_id = $1 
-         AND o.status IN ('delivered', 'completed')
-       ORDER BY o.created_at DESC`,
-      [user_id]
+        p.images,
+        p.price,
+        oi.order_id AS "orderId",
+        o.delivered_at AS "deliveredAt",
+        EXISTS(
+          SELECT 1 FROM reviews r 
+          WHERE r.product_id = p.id 
+          AND r.user_id = $1 
+          AND r.is_deleted = FALSE
+        ) AS "alreadyReviewed"
+      FROM order_items oi
+      JOIN orders o ON oi.order_id = o.id
+      JOIN products p ON oi.product_id = p.id
+      WHERE o.user_id = $1 
+      AND o.status = 'delivered'
+      AND o.delivered_at IS NOT NULL
+      ORDER BY o.delivered_at DESC`,
+      [userId]
     );
 
     return sendSuccess(res, 200, 'Purchased products fetched successfully', {
-      products: result.rows.map(p => ({
-        id: p.id,
-        name: p.name,
-        imageUrl: p.main_image_url,
-        orderId: p.order_id,
-        orderDate: p.order_date,
-        alreadyReviewed: p.already_reviewed
-      }))
+      products: result.rows
     });
-
   } catch (error) {
-    console.error('❌ Get purchased products error:', error);
+    console.error('Get purchased products error:', error);
     return sendError(res, 500, 'Error fetching purchased products', error);
   }
 };
+
 
 module.exports = {
   createOrder,
