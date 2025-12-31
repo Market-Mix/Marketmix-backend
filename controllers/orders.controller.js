@@ -102,25 +102,22 @@ const getUserOrders = async (req, res) => {
     const offset = (page - 1) * limit;
     const statusFilter = status ? `AND o.status = '${status}'` : '';
 
+    // Read orders from `order_details` table using `buyer_id` and aggregate
+    // item quantities from `order_items` for total items. This is resilient
+    // if `order_details` does not carry per-item breakdown; it still returns
+    // total_items computed from `order_items` when present.
     const result = await db.query(
-      `SELECT 
-        o.id, o.total_amount, o.status, o.shipping_address, 
-        o.payment_method, o.created_at, o.updated_at,
-        COALESCE(
-          json_agg(
-            json_build_object(
-              'id', oi.id,
-              'product_id', oi.product_id,
-              'product_name', oi.product_name,
-              'quantity', oi.quantity,
-              'price', oi.price
-            )
-          ) FILTER (WHERE oi.id IS NOT NULL), '[]'
-        ) as items
-       FROM orders o
-       LEFT JOIN order_items oi ON o.id = oi.order_id
-       WHERE o.user_id = $1 ${statusFilter}
-       GROUP BY o.id
+      `SELECT
+        o.order_id as id,
+        o.total_amount,
+        o.status,
+        o.payment_method,
+        o.created_at,
+        COALESCE(SUM(oi.quantity), 0) as total_items
+       FROM order_details o
+       LEFT JOIN order_items oi ON o.order_id = oi.order_id
+       WHERE o.buyer_id = $1 ${statusFilter}
+       GROUP BY o.order_id, o.total_amount, o.status, o.payment_method, o.created_at
        ORDER BY o.created_at DESC
        LIMIT $2 OFFSET $3`,
       [user_id, limit, offset]
@@ -128,7 +125,7 @@ const getUserOrders = async (req, res) => {
 
     // Get total count
     const countResult = await db.query(
-      `SELECT COUNT(*) as total FROM orders WHERE user_id = $1 ${statusFilter}`,
+      `SELECT COUNT(*) as total FROM order_details WHERE buyer_id = $1 ${statusFilter}`,
       [user_id]
     );
 
