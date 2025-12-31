@@ -111,13 +111,12 @@ const getUserOrders = async (req, res) => {
         o.order_id as id,
         o.total_amount,
         o.status,
-        o.payment_method,
         o.created_at,
         COALESCE(SUM(oi.quantity), 0) as total_items
        FROM order_details o
        LEFT JOIN order_items oi ON o.order_id = oi.order_id
        WHERE o.buyer_id = $1 ${statusFilter}
-       GROUP BY o.order_id, o.total_amount, o.status, o.payment_method, o.created_at
+       GROUP BY o.order_id, o.total_amount, o.status, o.created_at
        ORDER BY o.created_at DESC
        LIMIT $2 OFFSET $3`,
       [user_id, limit, offset]
