@@ -163,7 +163,7 @@ const getOrderById = async (req, res) => {
             json_build_object(
               'id', oi.id,
               'product_id', oi.product_id,
-              'product_name', oi.product_name,
+              'product_name', p.name,
               'quantity', oi.quantity,
               'price', oi.price
             )
@@ -171,6 +171,7 @@ const getOrderById = async (req, res) => {
         ) as items
        FROM orders o
        LEFT JOIN order_items oi ON o.id = oi.order_id
+       LEFT JOIN products p ON oi.product_id = p.id
        WHERE o.id = $1 AND o.user_id = $2
        GROUP BY o.id`,
       [orderId, user_id]
