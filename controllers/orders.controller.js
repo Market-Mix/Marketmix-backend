@@ -100,7 +100,15 @@ const getUserOrders = async (req, res) => {
     const { status, page = 1, limit = 10 } = req.query;
 
     const offset = (page - 1) * limit;
-    const statusFilter = status ? `AND o.status = '${status}'` : '';
+    
+    // Build parameterized query safely (avoid SQL injection)
+    let whereClause = 'WHERE o.user_id = $1';
+    const queryParams = [user_id, limit, offset];
+    
+    if (status) {
+      whereClause += ' AND o.status = $' + (queryParams.length - 1); // position after limit/offset
+      queryParams.splice(-2, 0, status); // insert status before limit/offset
+    }
 
     // Read orders from `orders` table and aggregate item quantities from `order_items`.
     // Compute total_items via SUM(oi.quantity) (not stored on orders table).
@@ -113,17 +121,24 @@ const getUserOrders = async (req, res) => {
         COALESCE(SUM(oi.quantity), 0) as total_items
        FROM orders o
        LEFT JOIN order_items oi ON o.id = oi.order_id
-       WHERE o.user_id = $1 ${statusFilter}
+       ${whereClause}
        GROUP BY o.id, o.total_amount, o.status, o.created_at
        ORDER BY o.created_at DESC
-       LIMIT $2 OFFSET $3`,
-      [user_id, limit, offset]
+       LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`,
+      queryParams
     );
 
-    // Get total count from orders
+    // Get total count from orders (same where clause)
+    const countParams = [user_id];
+    let countWhere = 'WHERE o.user_id = $1';
+    if (status) {
+      countWhere += ' AND o.status = $2';
+      countParams.push(status);
+    }
+    
     const countResult = await db.query(
-      `SELECT COUNT(*) as total FROM orders o WHERE o.user_id = $1 ${statusFilter}`,
-      [user_id]
+      `SELECT COUNT(*) as total FROM orders o ${countWhere}`,
+      countParams
     );
 
     return sendSuccess(res, 200, 'Orders fetched successfully', {
