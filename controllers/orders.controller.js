@@ -24,7 +24,7 @@ const createOrder = async (req, res) => {
     let total_amount = 0;
     for (const item of items) {
       const product = await db.query(
-        'SELECT price, stock FROM products WHERE id = $1',
+        'SELECT price, stock_quantity, seller_id FROM products WHERE id = $1',
         [item.product_id]
       );
 
@@ -32,7 +32,7 @@ const createOrder = async (req, res) => {
         return sendError(res, 404, `Product ${item.product_id} not found`);
       }
 
-      if (product.rows[0].stock < item.quantity) {
+      if (product.rows[0].stock_quantity < item.quantity) {
         return sendError(res, 400, `Insufficient stock for product ${item.product_id}`);
       }
 
@@ -42,7 +42,7 @@ const createOrder = async (req, res) => {
     // Create order
     const orderResult = await db.query(
       `INSERT INTO orders (
-        user_id, total_amount, status, shipping_address, 
+        buyer_id, total_amount, status, shipping_address, 
         payment_method, notes, created_at
       ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
       RETURNING id, total_amount, status, created_at`,
@@ -54,20 +54,20 @@ const createOrder = async (req, res) => {
     // Create order items
     for (const item of items) {
       const product = await db.query(
-        'SELECT price, name FROM products WHERE id = $1',
+        'SELECT price, seller_id FROM products WHERE id = $1',
         [item.product_id]
       );
 
       await db.query(
         `INSERT INTO order_items (
-          order_id, product_id, quantity, price, product_name
+          order_id, product_id, seller_id, quantity, price_at_purchase
         ) VALUES ($1, $2, $3, $4, $5)`,
-        [order.id, item.product_id, item.quantity, product.rows[0].price, product.rows[0].name]
+        [order.id, item.product_id, product.rows[0].seller_id, item.quantity, product.rows[0].price]
       );
 
       // Update stock
       await db.query(
-        'UPDATE products SET stock = stock - $1 WHERE id = $2',
+        'UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2',
         [item.quantity, item.product_id]
       );
     }
@@ -103,7 +103,7 @@ const getUserOrders = async (req, res) => {
 
     const offset = (page - 1) * limit;
     
-    // Build query with items included
+    // Build query - join products table to get product names
     let sql = `SELECT
       o.id,
       o.total_amount,
@@ -115,14 +115,15 @@ const getUserOrders = async (req, res) => {
           json_build_object(
             'id', oi.id,
             'product_id', oi.product_id,
-            'product_name', oi.product_name,
+            'product_name', p.name,
             'quantity', oi.quantity,
-            'price', oi.price
-          ) ORDER BY oi.id
+            'price', oi.price_at_purchase
+          ) ORDER BY oi.created_at
         ) FILTER (WHERE oi.id IS NOT NULL), '[]'
       ) as items
      FROM orders o
      LEFT JOIN order_items oi ON o.id = oi.order_id
+     LEFT JOIN products p ON oi.product_id = p.id
      WHERE o.buyer_id = $1`;
     
     const params = [user_id];
@@ -139,7 +140,7 @@ const getUserOrders = async (req, res) => {
     
     params.push(limit, offset);
     
-    console.log(`🔍 [Orders] SQL Query executed`);
+    console.log(`🔍 [Orders] Executing query with params:`, params);
     
     // Execute main query
     const result = await db.query(sql, params);
@@ -155,6 +156,8 @@ const getUserOrders = async (req, res) => {
     
     const countResult = await db.query(countSql, countParams);
 
+    console.log(`✅ [Orders] Found ${result.rows.length} orders`);
+
     return sendSuccess(res, 200, 'Orders fetched successfully', {
       orders: result.rows,
       pagination: {
@@ -169,6 +172,7 @@ const getUserOrders = async (req, res) => {
     return sendError(res, 500, 'Error fetching orders', error);
   }
 };
+
 /**
  * @desc    Get order by ID
  * @route   GET /api/orders/:orderId
@@ -190,14 +194,14 @@ const getOrderById = async (req, res) => {
               'product_id', oi.product_id,
               'product_name', p.name,
               'quantity', oi.quantity,
-              'price', oi.price
+              'price', oi.price_at_purchase
             )
           ) FILTER (WHERE oi.id IS NOT NULL), '[]'
         ) as items
        FROM orders o
        LEFT JOIN order_items oi ON o.id = oi.order_id
        LEFT JOIN products p ON oi.product_id = p.id
-       WHERE o.id = $1 AND o.user_id = $2
+       WHERE o.id = $1 AND o.buyer_id = $2
        GROUP BY o.id`,
       [orderId, user_id]
     );
@@ -226,7 +230,7 @@ const updateOrderStatus = async (req, res) => {
     const { orderId } = req.params;
     const { status } = req.body;
 
-    const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'completed', 'cancelled'];
+    const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'returned'];
     if (!validStatuses.includes(status)) {
       return sendError(res, 400, 'Invalid status');
     }
@@ -266,7 +270,7 @@ const cancelOrder = async (req, res) => {
 
     // Get order
     const orderCheck = await db.query(
-      'SELECT id, status FROM orders WHERE id = $1 AND user_id = $2',
+      'SELECT id, status FROM orders WHERE id = $1 AND buyer_id = $2',
       [orderId, user_id]
     );
 
@@ -274,7 +278,7 @@ const cancelOrder = async (req, res) => {
       return sendError(res, 404, 'Order not found');
     }
 
-    if (!['pending', 'processing'].includes(orderCheck.rows[0].status)) {
+    if (!['pending', 'confirmed', 'processing'].includes(orderCheck.rows[0].status)) {
       return sendError(res, 400, 'Order cannot be cancelled at this stage');
     }
 
@@ -292,7 +296,7 @@ const cancelOrder = async (req, res) => {
 
     for (const item of items.rows) {
       await db.query(
-        'UPDATE products SET stock = stock + $1 WHERE id = $2',
+        'UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2',
         [item.quantity, item.product_id]
       );
     }
@@ -307,7 +311,6 @@ const cancelOrder = async (req, res) => {
   }
 };
 
-
 /**
  * @desc    Get all purchased products for review (delivered orders only)
  * @route   GET /api/orders/purchased-products
@@ -321,10 +324,10 @@ const getPurchasedProducts = async (req, res) => {
       `SELECT DISTINCT
         p.id,
         p.name,
-        p.images,
+        p.main_image_url as image,
         p.price,
         oi.order_id AS "orderId",
-        o.delivered_at AS "deliveredAt",
+        o.updated_at AS "deliveredAt",
         EXISTS(
           SELECT 1 FROM reviews r 
           WHERE r.product_id = p.id 
@@ -334,10 +337,9 @@ const getPurchasedProducts = async (req, res) => {
       FROM order_items oi
       JOIN orders o ON oi.order_id = o.id
       JOIN products p ON oi.product_id = p.id
-      WHERE o.user_id = $1 
+      WHERE o.buyer_id = $1 
       AND o.status = 'delivered'
-      AND o.delivered_at IS NOT NULL
-      ORDER BY o.delivered_at DESC`,
+      ORDER BY o.updated_at DESC`,
       [userId]
     );
 
@@ -349,7 +351,6 @@ const getPurchasedProducts = async (req, res) => {
     return sendError(res, 500, 'Error fetching purchased products', error);
   }
 };
-
 
 module.exports = {
   createOrder,
