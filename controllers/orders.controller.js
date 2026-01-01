@@ -101,45 +101,44 @@ const getUserOrders = async (req, res) => {
 
     const offset = (page - 1) * limit;
     
-    // Build parameterized query safely (avoid SQL injection)
-    let whereClause = 'WHERE o.user_id = $1';
-    const queryParams = [user_id, limit, offset];
+    // Build query with safe parameterized queries
+    let sql = `SELECT
+      o.id as id,
+      o.total_amount,
+      o.status,
+      o.created_at,
+      COALESCE(SUM(oi.quantity), 0) as total_items
+     FROM orders o
+     LEFT JOIN order_items oi ON o.id = oi.order_id
+     WHERE o.user_id = $1`;
+    
+    const params = [user_id];
+    
+    // Add status filter if provided (parameterized)
+    if (status) {
+      sql += ` AND o.status = $2`;
+      params.push(status);
+    }
+    
+    sql += ` GROUP BY o.id, o.total_amount, o.status, o.created_at
+             ORDER BY o.created_at DESC
+             LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    
+    params.push(limit, offset);
+    
+    // Execute main query
+    const result = await db.query(sql, params);
+
+    // Build count query with same logic
+    let countSql = `SELECT COUNT(*) as total FROM orders o WHERE o.user_id = $1`;
+    const countParams = [user_id];
     
     if (status) {
-      whereClause += ' AND o.status = $' + (queryParams.length - 1); // position after limit/offset
-      queryParams.splice(-2, 0, status); // insert status before limit/offset
-    }
-
-    // Read orders from `orders` table and aggregate item quantities from `order_items`.
-    // Compute total_items via SUM(oi.quantity) (not stored on orders table).
-    const result = await db.query(
-      `SELECT
-        o.id as id,
-        o.total_amount,
-        o.status,
-        o.created_at,
-        COALESCE(SUM(oi.quantity), 0) as total_items
-       FROM orders o
-       LEFT JOIN order_items oi ON o.id = oi.order_id
-       ${whereClause}
-       GROUP BY o.id, o.total_amount, o.status, o.created_at
-       ORDER BY o.created_at DESC
-       LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`,
-      queryParams
-    );
-
-    // Get total count from orders (same where clause)
-    const countParams = [user_id];
-    let countWhere = 'WHERE o.user_id = $1';
-    if (status) {
-      countWhere += ' AND o.status = $2';
+      countSql += ` AND o.status = $2`;
       countParams.push(status);
     }
     
-    const countResult = await db.query(
-      `SELECT COUNT(*) as total FROM orders o ${countWhere}`,
-      countParams
-    );
+    const countResult = await db.query(countSql, countParams);
 
     return sendSuccess(res, 200, 'Orders fetched successfully', {
       orders: result.rows,
