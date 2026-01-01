@@ -98,6 +98,8 @@ const getUserOrders = async (req, res) => {
   try {
     const user_id = req.user.id;
     const { status, page = 1, limit = 10 } = req.query;
+    
+    console.log(`📋 [Orders] Fetching orders for user_id=${user_id}, status=${status || 'all'}, page=${page}`);
 
     const offset = (page - 1) * limit;
     
@@ -125,6 +127,8 @@ const getUserOrders = async (req, res) => {
              LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     
     params.push(limit, offset);
+    
+    console.log(`🔍 [Orders] SQL Query: ${sql.substring(0, 150)}... | Params: [${params.map((p, i) => `$${i + 1}=${p}`).join(', ')}]`);
     
     // Execute main query
     const result = await db.query(sql, params);
