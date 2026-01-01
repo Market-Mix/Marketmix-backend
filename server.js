@@ -53,7 +53,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/buyer', buyerRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/products', productsRoutes);
+app.use('/api/products', productsRoutes);bit 
 app.use('/api/categories', categoryRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/orders', ordersRoutes);

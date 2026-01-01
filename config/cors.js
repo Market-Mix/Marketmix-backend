@@ -5,7 +5,7 @@ const allowedOrigins = [
   'http://localhost:5500', // Live Server
   'http://127.0.0.1:5500', // Live Server alternative
   'https://marketmix.vercel.app', // your correct frontend domain
-  'https://marketmix-backend-production.up.railway.app', // Your Railway backend
+  'https://marketmix-backend.onrender.com', // Your render backend
   process.env.CLIENT_URL
 ].filter(Boolean);
 

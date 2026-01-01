@@ -103,20 +103,31 @@ const getUserOrders = async (req, res) => {
 
     const offset = (page - 1) * limit;
     
-    // Build query with safe parameterized queries
+    // Build query with items included
     let sql = `SELECT
-      o.id as id,
+      o.id,
       o.total_amount,
       o.status,
       o.created_at,
-      COALESCE(SUM(oi.quantity), 0) as total_items
+      COALESCE(SUM(oi.quantity), 0) as total_items,
+      COALESCE(
+        json_agg(
+          json_build_object(
+            'id', oi.id,
+            'product_id', oi.product_id,
+            'product_name', oi.product_name,
+            'quantity', oi.quantity,
+            'price', oi.price
+          ) ORDER BY oi.id
+        ) FILTER (WHERE oi.id IS NOT NULL), '[]'
+      ) as items
      FROM orders o
      LEFT JOIN order_items oi ON o.id = oi.order_id
      WHERE o.buyer_id = $1`;
     
     const params = [user_id];
     
-    // Add status filter if provided (parameterized)
+    // Add status filter if provided
     if (status) {
       sql += ` AND o.status = $2`;
       params.push(status);
@@ -128,12 +139,12 @@ const getUserOrders = async (req, res) => {
     
     params.push(limit, offset);
     
-    console.log(`🔍 [Orders] SQL Query: ${sql.substring(0, 150)}... | Params: [${params.map((p, i) => `$${i + 1}=${p}`).join(', ')}]`);
+    console.log(`🔍 [Orders] SQL Query executed`);
     
     // Execute main query
     const result = await db.query(sql, params);
 
-    // Build count query with same logic
+    // Build count query
     let countSql = `SELECT COUNT(*) as total FROM orders o WHERE o.buyer_id = $1`;
     const countParams = [user_id];
     
@@ -158,7 +169,6 @@ const getUserOrders = async (req, res) => {
     return sendError(res, 500, 'Error fetching orders', error);
   }
 };
-
 /**
  * @desc    Get order by ID
  * @route   GET /api/orders/:orderId
