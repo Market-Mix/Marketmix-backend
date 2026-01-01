@@ -122,7 +122,7 @@ const getUserOrders = async (req, res) => {
 
     // Get total count from orders
     const countResult = await db.query(
-      `SELECT COUNT(*) as total FROM orders WHERE user_id = $1 ${statusFilter}`,
+      `SELECT COUNT(*) as total FROM orders o WHERE o.user_id = $1 ${statusFilter}`,
       [user_id]
     );
 
