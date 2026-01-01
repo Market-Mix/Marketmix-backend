@@ -99,7 +99,7 @@ const getUserOrders = async (req, res) => {
     const user_id = req.user.id;
     const { status, page = 1, limit = 10 } = req.query;
     
-    console.log(`📋 [Orders] Fetching orders for user_id=${user_id}, status=${status || 'all'}, page=${page}`);
+    console.log(`📋 [Orders] Fetching orders for buyer_id=${user_id}, status=${status || 'all'}, page=${page}`);
 
     const offset = (page - 1) * limit;
     
@@ -112,7 +112,7 @@ const getUserOrders = async (req, res) => {
       COALESCE(SUM(oi.quantity), 0) as total_items
      FROM orders o
      LEFT JOIN order_items oi ON o.id = oi.order_id
-     WHERE o.user_id = $1`;
+     WHERE o.buyer_id = $1`;
     
     const params = [user_id];
     
@@ -134,7 +134,7 @@ const getUserOrders = async (req, res) => {
     const result = await db.query(sql, params);
 
     // Build count query with same logic
-    let countSql = `SELECT COUNT(*) as total FROM orders o WHERE o.user_id = $1`;
+    let countSql = `SELECT COUNT(*) as total FROM orders o WHERE o.buyer_id = $1`;
     const countParams = [user_id];
     
     if (status) {
