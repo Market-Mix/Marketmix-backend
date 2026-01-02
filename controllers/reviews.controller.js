@@ -10,6 +10,7 @@ const getMyReviews = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    // Simplified query without complex json_agg to avoid errors
     const result = await db.query(
       `SELECT 
         r.id,
@@ -20,31 +21,31 @@ const getMyReviews = async (req, res) => {
         r.created_at AS "createdAt",
         r.updated_at AS "updatedAt",
         r.is_approved AS "isApproved",
-        p.name AS "productName",
+        COALESCE(p.name, 'Product') AS "productName",
         p.images AS "productImages",
         CASE WHEN r.order_id IS NOT NULL THEN true ELSE false END AS "verifiedPurchase",
         (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id AND vote_type = 'helpful') AS "helpfulCount",
-        (SELECT json_agg(
+        COALESCE((SELECT json_agg(
           json_build_object(
             'id', rm.id,
             'type', rm.media_type,
             'url', rm.media_url,
             'thumbnail', rm.thumbnail_url
           )
-        ) FROM review_media rm WHERE rm.review_id = r.id) AS media,
-        (SELECT json_agg(
+        ) FROM review_media rm WHERE rm.review_id = r.id), '[]'::json) AS media,
+        COALESCE((SELECT json_agg(
           json_build_object(
             'id', rr.id,
             'text', rr.reply_text,
             'createdAt', rr.created_at
           )
-        ) FROM review_replies rr WHERE rr.review_id = r.id) AS replies,
+        ) FROM review_replies rr WHERE rr.review_id = r.id), '[]'::json) AS replies,
         CASE WHEN EXISTS(
           SELECT 1 FROM review_reports rp 
           WHERE rp.review_id = r.id AND rp.status IN ('pending', 'reviewed')
         ) THEN 'flagged' ELSE 'active' END AS status
       FROM reviews r
-      JOIN products p ON r.product_id = p.id
+      LEFT JOIN products p ON r.product_id = p.id
       WHERE r.user_id = $1 AND r.is_deleted = FALSE
       ORDER BY r.created_at DESC`,
       [userId]
