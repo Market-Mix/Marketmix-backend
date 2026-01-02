@@ -22,7 +22,6 @@ const getMyReviews = async (req, res) => {
         r.updated_at AS "updatedAt",
         r.is_approved AS "isApproved",
         COALESCE(p.name, 'Product') AS "productName",
-        p.images AS "productImages",
         CASE WHEN r.order_id IS NOT NULL THEN true ELSE false END AS "verifiedPurchase",
         (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id AND vote_type = 'helpful') AS "helpfulCount",
         COALESCE((SELECT json_agg(
