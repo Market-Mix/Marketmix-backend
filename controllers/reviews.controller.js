@@ -28,8 +28,7 @@ const getMyReviews = async (req, res) => {
           json_build_object(
             'id', rm.id,
             'type', rm.media_type,
-            'url', rm.media_url,
-            'thumbnail', rm.thumbnail_url
+            'url', rm.media_url
           )
         ) FROM review_media rm WHERE rm.review_id = r.id), '[]'::json) AS media,
         COALESCE((SELECT json_agg(
@@ -118,38 +117,50 @@ const createReview = async (req, res) => {
       }
     }
 
-    // Create review
-    const reviewResult = await db.query(
-      `INSERT INTO reviews (product_id, user_id, order_id, rating, comment)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, product_id, user_id, order_id, rating, comment AS body, created_at AS "createdAt"`,
-      [product_id, userId, order_id || null, rating, body]
-    );
+    // Use a transaction to create review and optional media rows atomically
+    const result = await db.transaction(async (client) => {
+      const reviewRes = await client.query(
+        `INSERT INTO reviews (product_id, user_id, order_id, rating, comment)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, product_id, user_id, order_id, rating, comment AS body, created_at AS "createdAt"`,
+        [product_id, userId, order_id || null, rating, body]
+      );
 
-    const review = reviewResult.rows[0];
+      const created = reviewRes.rows[0];
 
-    // Handle media uploads if provided
-    if (media && Array.isArray(media) && media.length > 0) {
-      for (let i = 0; i < Math.min(media.length, 5); i++) {
-        const item = media[i];
-        if (item.data && item.type) {
-          // In production, upload to cloud storage (S3, Cloudinary, etc.)
-          // For now, store base64 directly (not recommended for production)
-          const mediaType = item.type.startsWith('image/') ? 'image' : 'video';
-          
-          await db.query(
-            `INSERT INTO review_media (review_id, media_type, media_url)
-             VALUES ($1, $2, $3)`,
-            [review.id, mediaType, item.data]
-          );
+      // Only insert media rows when media array exists and has items
+      if (media && Array.isArray(media) && media.length > 0) {
+        // Limit to 5 items maximum
+        const toInsert = media.slice(0, 5);
+        for (const item of toInsert) {
+          // Support either simple URL strings or objects with { data, type } from the frontend
+          let mediaUrl = null;
+          let mediaType = 'image';
+
+          if (typeof item === 'string') {
+            mediaUrl = item;
+          } else if (item && typeof item === 'object') {
+            if (item.data) mediaUrl = item.data;
+            if (item.type) mediaType = item.type.startsWith('image/') ? 'image' : 'video';
+          }
+
+          if (mediaUrl) {
+            await client.query(
+              `INSERT INTO review_media (review_id, media_type, media_url)
+               VALUES ($1, $2, $3)`,
+              [created.id, mediaType, mediaUrl]
+            );
+          }
         }
       }
-    }
+
+      return created;
+    });
 
     console.log(`✅ Review created by user ${userId} for product ${product_id}`);
 
     return sendSuccess(res, 201, 'Review created successfully', {
-      review
+      review: result
     });
   } catch (error) {
     console.error('Create review error:', error);
@@ -301,10 +312,9 @@ const getProductReviews = async (req, res) => {
         (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id AND vote_type = 'helpful') AS "helpfulCount",
         (SELECT json_agg(
           json_build_object(
-            'type', rm.media_type,
-            'url', rm.media_url,
-            'thumbnail', rm.thumbnail_url
-          )
+              'type', rm.media_type,
+              'url', rm.media_url
+            )
         ) FROM review_media rm WHERE rm.review_id = r.id) AS media,
         (SELECT json_agg(
           json_build_object(
