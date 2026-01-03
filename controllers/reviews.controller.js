@@ -108,7 +108,7 @@ const createReview = async (req, res) => {
       const orderCheck = await db.query(
         `SELECT 1 FROM orders o
          JOIN order_items oi ON o.id = oi.order_id
-         WHERE o.id = $1 AND o.user_id = $2 AND oi.product_id = $3 AND o.status = 'delivered'`,
+         WHERE o.id = $1 AND o.buyer_id = $2 AND oi.product_id = $3 AND o.status = 'delivered'`,
         [order_id, userId, product_id]
       );
 
