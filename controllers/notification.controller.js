@@ -6,11 +6,11 @@ const { sendSuccess, sendError } = require('../utils/response');
  * @route   POST /api/notifications
  * @access  Private (Admin/System)
  *
- * Body: { user_id, title, message, type, data }
+ * Body: { user_id, title, message, type, link }
  */
 const createNotification = async (req, res) => {
   try {
-    const { user_id, title, message, type = 'info', data } = req.body;
+    const { user_id, title, message, type = 'info', link } = req.body;
 
     // Validate required fields
     if (!user_id || !title || !message) {
@@ -19,7 +19,7 @@ const createNotification = async (req, res) => {
 
     // Check if user exists
     const userResult = await db.query(
-      'SELECT id FROM users WHERE id = $1 AND is_deleted = FALSE',
+      'SELECT id FROM users WHERE id = $1',
       [user_id]
     );
 
@@ -29,10 +29,10 @@ const createNotification = async (req, res) => {
 
     // Insert notification
     const result = await db.query(
-      `INSERT INTO notifications (user_id, title, message, type, data, created_at, updated_at)
+      `INSERT INTO notifications (user_id, title, message, type, link, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-       RETURNING id, user_id, title, message, type, is_read, created_at`,
-      [user_id, title, message, type, data ? JSON.stringify(data) : null]
+       RETURNING id, user_id, title, message, type, is_read, link, created_at`,
+      [user_id, title, message, type, link]
     );
 
     const notification = result.rows[0];
@@ -45,6 +45,7 @@ const createNotification = async (req, res) => {
         message: notification.message,
         type: notification.type,
         isRead: notification.is_read,
+        link: notification.link,
         createdAt: notification.created_at
       }
     });
@@ -66,7 +67,7 @@ const getNotifications = async (req, res) => {
     const { unread } = req.query;
 
     let query = `
-      SELECT id, user_id, title, message, type, data, is_read, created_at, updated_at
+      SELECT id, user_id, title, message, type, link, is_read, created_at, updated_at
       FROM notifications
       WHERE user_id = $1 AND is_deleted = FALSE
     `;
@@ -88,7 +89,7 @@ const getNotifications = async (req, res) => {
       title: notif.title,
       message: notif.message,
       type: notif.type,
-      data: notif.data ? JSON.parse(notif.data) : null,
+      link: notif.link,
       isRead: notif.is_read,
       createdAt: notif.created_at,
       updatedAt: notif.updated_at
