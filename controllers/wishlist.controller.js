@@ -127,4 +127,27 @@ const addToGuestWishlist = async (req, res) => {
   }
 };
 
-module.exports = { addToWishlist, getWishlist, createGuestWishlist, addToGuestWishlist };
+
+// Add this to your wishlist.controller.js
+const removeFromWishlist = async (req, res) => {
+  try {
+    const user_id = req.user && req.user.id;
+    const { id } = req.params; // wishlist_item id
+    
+    if (!user_id) return sendError(res, 401, 'Not authenticated');
+    
+    await db.query(
+      `DELETE FROM wishlist_items 
+       WHERE id = $1 
+       AND wishlist_id IN (SELECT id FROM wishlists WHERE user_id = $2)`,
+      [id, user_id]
+    );
+    
+    return sendSuccess(res, 200, 'Item removed from wishlist');
+  } catch (error) {
+    console.error('Remove from wishlist error:', error);
+    return sendError(res, 500, 'Error removing from wishlist');
+  }
+};
+
+module.exports = { addToWishlist, getWishlist, createGuestWishlist, addToGuestWishlist, removeFromWishlist };
