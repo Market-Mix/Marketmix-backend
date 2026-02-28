@@ -35,7 +35,7 @@ app.get('/', (req, res) => {
 // Import routes
 const authRoutes = require('./routes/auth.routes');
 const buyerRoutes = require('./routes/buyer.routes');
-const sellerRoutes = require('./routes/seller.routes');
+const sellerRoutes = require('./routes/sellers.routes');
 const adminRoutes = require('./routes/admin.routes');
 const productsRoutes = require('./routes/products.routes');
 const cartRoutes = require('./routes/cart.routes');
@@ -51,7 +51,7 @@ const wishlistRoutes = require('./routes/wishlist.routes');
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/buyer', buyerRoutes);
-app.use('/api/seller', sellerRoutes);
+app.use('/api/sellers', sellerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/categories', categoryRoutes);
