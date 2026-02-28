@@ -51,7 +51,7 @@ const wishlistRoutes = require('./routes/wishlist.routes');
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/buyer', buyerRoutes);
-app.use('/api/sellers', sellerRoutes);
+app.use('/api/seller', sellerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/categories', categoryRoutes);
