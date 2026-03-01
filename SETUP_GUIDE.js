@@ -400,6 +400,12 @@ console.log(`
   ☐ Push to GitHub: git push
   ☐ Monitor Railway deployment
   ☐ Test in production
+
+  ☐ Configure SMTP environment variables for email OTP
+      • SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_SECURE (true/false)
+      • Optionally EMAIL_FROM for the sender address
+      • If not set, the server will fall back to an Ethereal test account and log a preview URL.
+
 `);
 
 log.title('📚 DOCUMENTATION FILES');

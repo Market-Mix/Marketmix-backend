@@ -25,6 +25,10 @@ router.post('/login', login);
 router.post('/google-register', googleRegister);
 router.post('/google-login', googleLogin);
 
+// Public OTP helpers
+router.post('/send-otp', sendOtp);
+router.post('/verify-otp', protect, verifyOtp);
+
 // Protected routes
 router.get('/me', protect, getMe);
 router.put('/password', protect, updatePassword);

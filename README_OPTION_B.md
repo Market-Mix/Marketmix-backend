@@ -119,6 +119,8 @@ DELETE /api/notifications              # Delete all
 ### Auth (1 endpoint updated)
 ```bash
 POST   /api/auth/logout                # Logout with cart persistence
+POST   /api/auth/send-otp              # Public; send email verification code
+POST   /api/auth/verify-otp            # Protected; verify code, mark email_verified
 ```
 
 ### Cart (1 endpoint existing)
@@ -126,7 +128,7 @@ POST   /api/auth/logout                # Logout with cart persistence
 POST   /api/cart/merge                 # Merge guest cart on login
 ```
 
-**Total New Endpoints:** 6 (all authenticated)
+**Total New Endpoints:** 8 (notifications + OTP helpers; OTP verify is authenticated)
 
 ---
 
