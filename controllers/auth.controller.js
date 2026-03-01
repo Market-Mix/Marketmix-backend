@@ -611,7 +611,10 @@ const sendOtp = async (req, res) => {
       console.log('Preview URL:', info.previewURL);
     }
 
-    return sendSuccess(res, 200, 'OTP sent to email');
+    // include code in response outside production for easier testing
+    const resp = { email };
+    if (process.env.NODE_ENV !== 'production') resp.code = code;
+    return sendSuccess(res, 200, 'OTP sent to email', resp);
   } catch (error) {
     console.error('sendOtp error:', error);
     return sendError(res, 500, 'Unable to send OTP');
