@@ -35,7 +35,7 @@ app.get('/', (req, res) => {
 // Import routes
 const authRoutes = require('./routes/auth.routes');
 const buyerRoutes = require('./routes/buyer.routes');
-const sellerRoutes = require('./routes/seller.routes');
+const sellerRoutes = require('./routes/sellers.routes');
 const adminRoutes = require('./routes/admin.routes');
 const productsRoutes = require('./routes/products.routes');
 const cartRoutes = require('./routes/cart.routes');
