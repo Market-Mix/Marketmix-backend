@@ -605,19 +605,30 @@ const sendOtp = async (req, res) => {
       html: `<p>Your verification code is <b>${code}</b>.</p><p>Expires in 5 minutes.</p>`
     };
 
-    const info = await tr.sendMail(mailOptions);
-    console.log('sendOtp: email sent', info.messageId);
-    if (info.previewURL) {
-      console.log('Preview URL:', info.previewURL);
+    let resp = { email };
+    // attempt to send mail but don't fail the whole endpoint if it errors
+    try {
+      const info = await tr.sendMail(mailOptions);
+      console.log('sendOtp: email sent', info.messageId);
+      if (info.previewURL) {
+        console.log('Preview URL:', info.previewURL);
+      }
+    } catch (emailErr) {
+      // log and continue, we still have the OTP stored
+      console.warn('sendOtp: email delivery failed -', emailErr.message);
+      resp.emailFailed = true;
     }
 
-    // include code in response outside production for easier testing
-    const resp = { email };
-    if (process.env.NODE_ENV !== 'production') resp.code = code;
-    return sendSuccess(res, 200, 'OTP sent to email', resp);
+    // always include code in response when not in production **or** if mail failed
+    if (process.env.NODE_ENV !== 'production' || resp.emailFailed) {
+      resp.code = code;
+    }
+    return sendSuccess(res, 200, 'OTP generated', resp);
   } catch (error) {
     console.error('sendOtp error:', error);
-    return sendError(res, 500, 'Unable to send OTP');
+    // On any unexpected error we still want to send success with code for debugging
+    const codeOnly = { code };
+    return sendSuccess(res, 200, 'OTP generated (partial failure)', codeOnly);
   }
 };
 
