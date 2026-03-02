@@ -15,7 +15,7 @@ const { sendSuccess, sendError } = require('../utils/response');
  */
 const setupSellerProfile = async (req, res) => {
   try {
-    const { storeName, businessType, productCategory, address } = req.body;
+    const { storeName, businessType, productCategory, address, isVerified } = req.body;
     const userId = req.user.id;
 
     if (!storeName) {
@@ -54,15 +54,17 @@ const setupSellerProfile = async (req, res) => {
           business_address,
           business_phone,
           business_email,
+          is_verified,
           updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
        ON CONFLICT (user_id) DO UPDATE SET
           business_name        = EXCLUDED.business_name,
           business_description = EXCLUDED.business_description,
           business_address     = EXCLUDED.business_address,
           business_phone       = EXCLUDED.business_phone,
           business_email       = EXCLUDED.business_email,
+          is_verified          = COALESCE(EXCLUDED.is_verified, seller_profiles.is_verified),
           updated_at           = NOW()
        RETURNING
           id,
@@ -81,7 +83,8 @@ const setupSellerProfile = async (req, res) => {
         businessDescription,
         address || null,
         userPhone || null,   // use the phone they gave at registration
-        userEmail || null
+        userEmail || null,
+        isVerified === true // allow explicit flag from caller
       ]
     );
 

@@ -2,41 +2,6 @@ const bcrypt = require('bcrypt');
 const db = require('../config/db');
 const { generateToken } = require('../utils/jwt');
 const { sendSuccess, sendError } = require('../utils/response');
-const nodemailer = require('nodemailer');
-
-// In-memory OTP store: email -> { code, expiresAt }
-// WARNING: this is volatile; restarting the server will clear OTPs.
-const otpStore = new Map();
-let transporter; // lazily initialized
-
-async function getTransporter() {
-  if (transporter) return transporter;
-  // Prefer explicit SMTP settings if provided via env vars
-  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-    transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587', 10),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-      }
-    });
-  } else {
-    // fallback to ethereal test account for development
-    const testAccount = await nodemailer.createTestAccount();
-    transporter = nodemailer.createTransport({
-      host: 'smtp.ethereal.email',
-      port: 587,
-      auth: {
-        user: testAccount.user,
-        pass: testAccount.pass
-      }
-    });
-    console.log('🧪 Ethereal test account created. Visit https://ethereal.email with credentials:', testAccount);
-  }
-  return transporter;
-}
 
 /**
  * @desc    Register new user
@@ -581,100 +546,7 @@ const updatePhone = async (req, res) => {
 
 
 /**
- * @desc    Send OTP code to email for verification
- * @route   POST /api/auth/send-otp
- * @access  Public
- */
-const sendOtp = async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return sendError(res, 400, 'Email is required');
-
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
-
-    otpStore.set(email, { code, expiresAt });
-
-    // send email
-    const tr = await getTransporter();
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || '"MarketMix" <no-reply@marketmix.com>',
-      to: email,
-      subject: 'Your MarketMix verification code',
-      text: `Your verification code is ${code}. It expires in 5 minutes.`,
-      html: `<p>Your verification code is <b>${code}</b>.</p><p>Expires in 5 minutes.</p>`
-    };
-
-    let resp = { email };
-    // attempt to send mail but don't fail the whole endpoint if it errors
-    try {
-      const info = await tr.sendMail(mailOptions);
-      console.log('sendOtp: email sent', info.messageId);
-      if (info.previewURL) {
-        console.log('Preview URL:', info.previewURL);
-      }
-    } catch (emailErr) {
-      // log and continue, we still have the OTP stored
-      console.warn('sendOtp: email delivery failed -', emailErr.message);
-      resp.emailFailed = true;
-    }
-
-    // always include code in response when not in production **or** if mail failed
-    if (process.env.NODE_ENV !== 'production' || resp.emailFailed) {
-      resp.code = code;
-    }
-    return sendSuccess(res, 200, 'OTP generated', resp);
-  } catch (error) {
-    console.error('sendOtp error:', error);
-    // On any unexpected error we still want to send success with code for debugging
-    const codeOnly = { code };
-    return sendSuccess(res, 200, 'OTP generated (partial failure)', codeOnly);
-  }
-};
-
 /**
- * @desc    Verify OTP code previously sent
- * @route   POST /api/auth/verify-otp
- * @access  Public
- */
-const verifyOtp = async (req, res) => {
-  try {
-    const { email, code } = req.body;
-    if (!email || !code) return sendError(res, 400, 'Email and code required');
-
-    const entry = otpStore.get(email);
-    if (!entry) return sendError(res, 400, 'No OTP requested for this email');
-
-    if (Date.now() > entry.expiresAt) {
-      otpStore.delete(email);
-      return sendError(res, 400, 'OTP expired');
-    }
-
-    if (String(code) !== entry.code) {
-      return sendError(res, 400, 'Invalid OTP');
-    }
-
-    otpStore.delete(email);
-
-    // if user is authenticated update seller_profiles email_verified flag
-    if (req.user && req.user.id) {
-      try {
-        await db.query(
-          'UPDATE seller_profiles SET email_verified = TRUE WHERE user_id = $1',
-          [req.user.id]
-        );
-      } catch (dbErr) {
-        console.warn('verifyOtp: could not update seller_profiles email_verified', dbErr);
-      }
-    }
-
-    return sendSuccess(res, 200, 'OTP verified');
-  } catch (error) {
-    console.error('verifyOtp error:', error);
-    return sendError(res, 500, 'Error verifying OTP');
-  }
-};
-
 // Add these functions to your auth.controller.js
 
 /**
@@ -949,8 +821,6 @@ module.exports = {
   changePassword,
   updateAddress,
   updateNotificationPreferences,
-  deleteAccount,
-  sendOtp,
-  verifyOtp
+  deleteAccount
 };
 

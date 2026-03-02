@@ -13,9 +13,7 @@ const {
   changePassword,
   updateAddress,
   updateNotificationPreferences,
-  deleteAccount,
-  sendOtp,
-  verifyOtp
+  deleteAccount
 } = require('../controllers/auth.controller');
 const { protect } = require('../middlewares/auth.middleware');
 
@@ -27,9 +25,7 @@ router.post('/login', login);
 router.post('/google-register', googleRegister);
 router.post('/google-login', googleLogin);
 
-// Public OTP helpers
-router.post('/send-otp', sendOtp);
-router.post('/verify-otp', verifyOtp);  // OTP code is sufficient verification, no auth required
+// OTP routes removed - email verification now handled via Supabase
 
 // Protected routes
 router.get('/me', protect, getMe);
