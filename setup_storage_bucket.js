@@ -15,13 +15,41 @@
 require('dotenv').config();
 
 async function setupStorageBucket() {
-  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_URL = process.env.SUPABASE_URL || extractSupabaseUrl();
   const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-    console.error('❌ Error: SUPABASE_URL and SUPABASE_SERVICE_KEY environment variables are required');
-    console.error('Please set them in your .env file');
+  if (!SUPABASE_URL) {
+    console.error('❌ Error: Could not determine SUPABASE_URL');
+    console.error('Please set SUPABASE_URL in your .env file');
     process.exit(1);
+  }
+
+  if (!SUPABASE_SERVICE_KEY) {
+    console.error('\n❌ SUPABASE_SERVICE_KEY not found in .env file');
+    console.error('\n📋 To get your Service Role Key:');
+    console.error('   1. Go to https://app.supabase.com');
+    console.error('   2. Select your project: "marketmix"');
+    console.error('   3. Go to Settings → API');
+    console.error('   4. Copy the "Service Role" secret key (labeled as "service_role secret" or with warning icon)');
+    console.error('\n📝 Add to your .env file:');
+    console.error('   SUPABASE_SERVICE_KEY=your_service_role_key_here');
+    console.error('\n📚 Alternatively, create the bucket manually in Supabase Dashboard:');
+    console.error('   1. Go to Storage → Create a new bucket');
+    console.error('   2. Name: store-logos');
+    console.error('   3. Set to Public');
+    console.error('   4. File size limit: 5MB');
+    process.exit(1);
+  }
+
+  function extractSupabaseUrl() {
+    const dbUrl = process.env.DATABASE_URL;
+    if (dbUrl && dbUrl.includes('supabase.com')) {
+      const match = dbUrl.match(/postgres\.([^:]+)/);
+      if (match) {
+        return `https://${match[1]}.supabase.co`;
+      }
+    }
+    return null;
   }
 
   try {
