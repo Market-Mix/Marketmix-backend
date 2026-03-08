@@ -187,4 +187,202 @@ router.post('/setup-profile', protect, isSeller, async (req, res) => {
   }
 });
 
+// ─── POST /api/seller/send-otp ────────────────────────────────────────────────
+// Generates a 6-digit OTP, stores it in seller_profiles, sends via SendGrid
+router.post('/send-otp', protect, isSeller, async (req, res) => {
+  try {
+    const { email } = req.body;
+    const userId = req.user.id;
+
+    if (!email) return sendError(res, 400, 'Email is required');
+
+    // Validate email format
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return sendError(res, 400, 'Invalid email address');
+    }
+
+    // Confirm seller_profiles row exists
+    const profileCheck = await db.query(
+      'SELECT id FROM seller_profiles WHERE user_id = $1 AND is_deleted = false',
+      [userId]
+    );
+    if (profileCheck.rows.length === 0) {
+      return sendError(res, 404, 'Seller profile not found. Please complete signup first.');
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Store OTP + expiry in seller_profiles
+    // Uses kyc_document_urls (jsonb) column to store OTP data without schema changes
+    await db.query(
+      `UPDATE seller_profiles
+       SET kyc_document_urls = COALESCE(kyc_document_urls, '{}'::jsonb) ||
+           jsonb_build_object(
+             'otp_code', $1::text,
+             'otp_expires_at', $2::text,
+             'otp_email', $3::text
+           ),
+           business_email = $3,
+           updated_at = NOW()
+       WHERE user_id = $4`,
+      [otp, expiresAt.toISOString(), email, userId]
+    );
+
+    // Send OTP via SendGrid
+    const sgMail = require('@sendgrid/mail');
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+    await sgMail.send({
+      to: email,
+      from: process.env.SENDGRID_FROM_EMAIL || 'noreply@marketmix.com',
+      subject: 'MarketMix — Your Email Verification Code',
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;border:1px solid #eee;border-radius:8px;">
+          <h2 style="color:#667eea;">MarketMix</h2>
+          <p>Hi there,</p>
+          <p>Use the code below to verify your email address. It expires in <strong>10 minutes</strong>.</p>
+          <div style="text-align:center;margin:32px 0;">
+            <span style="font-size:2.5rem;font-weight:bold;letter-spacing:12px;color:#333;">${otp}</span>
+          </div>
+          <p style="color:#888;font-size:0.85rem;">If you didn't request this, you can safely ignore this email.</p>
+        </div>
+      `
+    });
+
+    console.log(`✅ OTP sent to ${email} for user_id: ${userId}`);
+    return sendSuccess(res, 200, 'Verification code sent to your email');
+
+  } catch (error) {
+    console.error('Send OTP error:', error);
+    // Surface SendGrid-specific errors clearly
+    if (error.response?.body?.errors) {
+      console.error('SendGrid errors:', error.response.body.errors);
+    }
+    return sendError(res, 500, 'Failed to send verification email. Please try again.', error);
+  }
+});
+
+// ─── POST /api/seller/verify-otp ──────────────────────────────────────────────
+router.post('/verify-otp', protect, isSeller, async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    const userId = req.user.id;
+
+    if (!email || !otp) return sendError(res, 400, 'Email and OTP code are required');
+
+    // Fetch stored OTP data from seller_profiles
+    const result = await db.query(
+      `SELECT kyc_document_urls, is_verified
+       FROM seller_profiles
+       WHERE user_id = $1 AND is_deleted = false`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return sendError(res, 404, 'Seller profile not found');
+    }
+
+    const { kyc_document_urls, is_verified } = result.rows[0];
+
+    if (is_verified) {
+      return sendSuccess(res, 200, 'Email already verified');
+    }
+
+    const storedOtp      = kyc_document_urls?.otp_code;
+    const storedExpiry   = kyc_document_urls?.otp_expires_at;
+    const storedEmail    = kyc_document_urls?.otp_email;
+
+    if (!storedOtp || !storedExpiry) {
+      return sendError(res, 400, 'No verification code found. Please request a new one.');
+    }
+
+    // Check email matches
+    if (storedEmail !== email) {
+      return sendError(res, 400, 'Email does not match the one the code was sent to.');
+    }
+
+    // Check expiry
+    if (new Date() > new Date(storedExpiry)) {
+      return sendError(res, 400, 'Verification code has expired. Please request a new one.');
+    }
+
+    // Check OTP matches
+    if (storedOtp !== otp.toString().trim()) {
+      return sendError(res, 400, 'Invalid verification code. Please try again.');
+    }
+
+    // Mark as verified — clear OTP data from kyc_document_urls
+    await db.query(
+      `UPDATE seller_profiles
+       SET is_verified = true,
+           kyc_document_urls = kyc_document_urls - 'otp_code' - 'otp_expires_at' - 'otp_email',
+           updated_at = NOW()
+       WHERE user_id = $1`,
+      [userId]
+    );
+
+    console.log(`✅ Email verified for user_id: ${userId}`);
+    return sendSuccess(res, 200, 'Email verified successfully! ✅');
+
+  } catch (error) {
+    console.error('Verify OTP error:', error);
+    return sendError(res, 500, 'Error verifying code', error);
+  }
+});
+
+// ─── POST /api/seller/update-store ────────────────────────────────────────────
+// Save full store setup form data
+router.post('/update-store', protect, isSeller, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const {
+      storeName, storeDescription, businessEmail, businessPhone,
+      businessAddress, website, category,
+      facebook, twitter, tiktok, instagram, telegram
+    } = req.body;
+
+    if (!storeName) return sendError(res, 400, 'Store name is required');
+
+    // Build social links as jsonb
+    const socialLinks = { facebook, twitter, tiktok, instagram, telegram };
+
+    await db.query(
+      `UPDATE seller_profiles SET
+          business_name        = $1,
+          business_description = $2,
+          business_email       = $3,
+          business_phone       = $4,
+          business_address     = $5,
+          kyc_document_urls    = COALESCE(kyc_document_urls, '{}'::jsonb) ||
+                                 jsonb_build_object(
+                                   'website', $6::text,
+                                   'category', $7::text,
+                                   'social_links', $8::jsonb
+                                 ),
+          updated_at           = NOW()
+       WHERE user_id = $9`,
+      [
+        storeName,
+        storeDescription || null,
+        businessEmail || null,
+        businessPhone || null,
+        businessAddress || null,
+        website || '',
+        category || '',
+        JSON.stringify(socialLinks),
+        userId
+      ]
+    );
+
+    console.log(`✅ Store updated for user_id: ${userId}`);
+    return sendSuccess(res, 200, 'Store setup saved successfully');
+
+  } catch (error) {
+    console.error('Update store error:', error);
+    return sendError(res, 500, 'Error saving store setup', error);
+  }
+});
+
 module.exports = router;
