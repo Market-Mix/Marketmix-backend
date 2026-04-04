@@ -188,7 +188,7 @@ router.post('/setup-profile', protect, isSeller, async (req, res) => {
 });
 
 // ─── POST /api/seller/send-otp ────────────────────────────────────────────────
-// Generates a 6-digit OTP, stores it in seller_profiles, sends via Nodemailer/Gmail
+// Generates a 6-digit OTP, stores it in seller_profiles, sends via SendGrid
 router.post('/send-otp', protect, isSeller, async (req, res) => {
   try {
     const { email } = req.body;
@@ -196,7 +196,6 @@ router.post('/send-otp', protect, isSeller, async (req, res) => {
 
     if (!email) return sendError(res, 400, 'Email is required');
 
-    // Validate email format
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return sendError(res, 400, 'Invalid email address');
     }
@@ -214,7 +213,7 @@ router.post('/send-otp', protect, isSeller, async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    // Store OTP + expiry in seller_profiles using kyc_document_urls jsonb column
+    // Store OTP in seller_profiles kyc_document_urls jsonb column
     await db.query(
       `UPDATE seller_profiles
        SET kyc_document_urls = COALESCE(kyc_document_urls, '{}'::jsonb) ||
@@ -229,20 +228,13 @@ router.post('/send-otp', protect, isSeller, async (req, res) => {
       [otp, expiresAt.toISOString(), email, userId]
     );
 
-    // Send OTP via Nodemailer + Gmail
-    const nodemailer = require('nodemailer');
+    // Send via SendGrid HTTP API (works on Render free tier — no SMTP ports needed)
+    const sgMail = require('@sendgrid/mail');
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS  // Gmail App Password (not your login password)
-      }
-    });
-
-    await transporter.sendMail({
-      from: `"MarketMix" <${process.env.EMAIL_USER}>`,
+    await sgMail.send({
       to: email,
+      from: process.env.SENDGRID_FROM_EMAIL,
       subject: 'MarketMix — Your Email Verification Code',
       html: `
         <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;border:1px solid #eee;border-radius:8px;">
@@ -262,6 +254,9 @@ router.post('/send-otp', protect, isSeller, async (req, res) => {
 
   } catch (error) {
     console.error('Send OTP error:', error);
+    if (error.response?.body?.errors) {
+      console.error('SendGrid errors:', JSON.stringify(error.response.body.errors));
+    }
     return sendError(res, 500, 'Failed to send verification email. Please try again.');
   }
 });
