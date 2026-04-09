@@ -332,13 +332,13 @@ router.post('/verify-otp', protect, isSeller, async (req, res) => {
 });
 
 // ─── POST /api/seller/update-store ────────────────────────────────────────────
-// Save full store setup form data
+// Save full store setup form data including store logo URL
 router.post('/update-store', protect, isSeller, async (req, res) => {
   try {
     const userId = req.user.id;
     const {
       storeName, storeDescription, businessEmail, businessPhone,
-      businessAddress, website, category,
+      businessAddress, website, category, storeLogoUrl,
       facebook, twitter, tiktok, instagram, telegram
     } = req.body;
 
@@ -354,20 +354,22 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
           business_email       = $3,
           business_phone       = $4,
           business_address     = $5,
+          store_logo_url       = $6,
           kyc_document_urls    = COALESCE(kyc_document_urls, '{}'::jsonb) ||
                                  jsonb_build_object(
-                                   'website', $6::text,
-                                   'category', $7::text,
-                                   'social_links', $8::jsonb
+                                   'website', $7::text,
+                                   'category', $8::text,
+                                   'social_links', $9::jsonb
                                  ),
           updated_at           = NOW()
-       WHERE user_id = $9`,
+       WHERE user_id = $10`,
       [
         storeName,
         storeDescription || null,
         businessEmail || null,
         businessPhone || null,
         businessAddress || null,
+        storeLogoUrl || null,
         website || '',
         category || '',
         JSON.stringify(socialLinks),
@@ -375,8 +377,8 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
       ]
     );
 
-    console.log(`✅ Store updated for user_id: ${userId}`);
-    return sendSuccess(res, 200, 'Store setup saved successfully');
+    console.log(`✅ Store updated for user_id: ${userId} | Logo: ${storeLogoUrl ? '✓' : '—'}`);
+    return sendSuccess(res, 200, 'Store setup saved successfully', { storeLogoUrl });
 
   } catch (error) {
     console.error('Update store error:', error);
