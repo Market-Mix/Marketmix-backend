@@ -39,6 +39,7 @@ router.get('/profile', protect, isSeller, async (req, res) => {
           sp.total_reviews,
           sp.is_verified,
           sp.kyc_document_urls,
+          sp.store_logo_url,
           sp.created_at
        FROM users u
        LEFT JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
@@ -86,6 +87,7 @@ router.get('/profile', protect, isSeller, async (req, res) => {
           totalReviews: row.total_reviews || 0,
           isVerified: row.is_verified,
           kycDocumentUrls: row.kyc_document_urls,
+          storeLogo: row.store_logo_url,
           createdAt: row.created_at
         } : null,
         productCount
