@@ -6,6 +6,8 @@ const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // ─── GET /api/seller/ping — no auth, confirms file loaded ─────────────────────
 router.get('/ping', (req, res) => {
@@ -383,6 +385,223 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
   } catch (error) {
     console.error('Update store error:', error);
     return sendError(res, 500, 'Error saving store setup', error);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KYC ROUTES — paste into routes/sellers.routes.js
+//
+// STEP 1: Add multer to package.json dependencies and run npm install
+//   "multer": "^1.4.5-lts.1"
+//
+// STEP 2: Add these two lines near the top of sellers.routes.js
+//   (after the existing require statements):
+//
+//   const multer = require('multer');
+//   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+//
+// STEP 3: Add SUPABASE_URL and SUPABASE_SERVICE_KEY to Render env vars
+//
+// STEP 4: Create a private bucket called "kyc-documents" in Supabase Storage
+//
+// STEP 5: Paste the three routes below before module.exports
+// ─────────────────────────────────────────────────────────────────────────────
+
+
+// ─── POST /api/seller/kyc/upload ──────────────────────────────────────────────
+// Receives a file from the frontend, uploads it to Supabase Storage
+// using the service key (server-side only), returns a signed URL.
+router.post('/kyc/upload', protect, isSeller, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return sendError(res, 400, 'No file provided');
+    }
+
+    const pathPrefix = req.body.pathPrefix || 'misc';
+    const timestamp  = Date.now();
+    const safeName   = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `${pathPrefix}-${timestamp}-${safeName}`;
+
+    const SUPABASE_URL         = process.env.SUPABASE_URL;
+    const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+      console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY');
+      return sendError(res, 500, 'Storage service not configured');
+    }
+
+    // Upload file to Supabase Storage
+    const uploadRes = await fetch(
+      `${SUPABASE_URL}/storage/v1/object/kyc-documents/${storagePath}`,
+      {
+        method:  'POST',
+        headers: {
+          Authorization:  `Bearer ${SUPABASE_SERVICE_KEY}`,
+          'Content-Type': req.file.mimetype,
+          'x-upsert':     'true',
+        },
+        body: req.file.buffer,
+      }
+    );
+
+    if (!uploadRes.ok) {
+      const errText = await uploadRes.text();
+      console.error('Supabase Storage upload error:', errText);
+      return sendError(res, 500, 'Failed to upload file');
+    }
+
+    // Generate a long-lived signed URL (10 years) for admin review later
+    const signedRes = await fetch(
+      `${SUPABASE_URL}/storage/v1/object/sign/kyc-documents/${storagePath}`,
+      {
+        method:  'POST',
+        headers: {
+          Authorization:  `Bearer ${SUPABASE_SERVICE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ expiresIn: 315360000 }), // 10 years in seconds
+      }
+    );
+
+    let fileUrl;
+    if (signedRes.ok) {
+      const signedData = await signedRes.json();
+      fileUrl = `${SUPABASE_URL}/storage/v1${signedData.signedURL}`;
+    } else {
+      // Fallback: store the path so admin can generate URLs later
+      fileUrl = `kyc-documents/${storagePath}`;
+    }
+
+    console.log(`✅ KYC file uploaded: ${storagePath}`);
+    return sendSuccess(res, 200, 'File uploaded successfully', { url: fileUrl });
+
+  } catch (error) {
+    console.error('KYC upload error:', error);
+    return sendError(res, 500, 'Error uploading file', error);
+  }
+});
+
+
+// ─── POST /api/seller/kyc ─────────────────────────────────────────────────────
+// Saves KYC form data + Supabase Storage file URLs into
+// seller_profiles.kyc_document_urls JSONB.
+// Sets kyc_status = 'pending' for manual admin review.
+router.post('/kyc', protect, isSeller, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const {
+      fullName,
+      dob,
+      businessName,
+      businessAddress,
+      email,
+      phone,
+      idType,
+      idDocumentUrl,
+      selfiePhotoUrl,
+    } = req.body;
+
+    // Validation
+    if (!fullName || !fullName.trim()) {
+      return sendError(res, 400, 'Full name is required');
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      return sendError(res, 400, 'A valid email address is required');
+    }
+    if (!idType) {
+      return sendError(res, 400, 'ID type is required');
+    }
+    if (!idDocumentUrl) {
+      return sendError(res, 400, 'ID document URL is required');
+    }
+    if (!selfiePhotoUrl) {
+      return sendError(res, 400, 'Selfie photo URL is required');
+    }
+
+    // Ensure seller_profiles row exists
+    const profileCheck = await db.query(
+      'SELECT id, kyc_document_urls FROM seller_profiles WHERE user_id = $1 AND is_deleted = false',
+      [userId]
+    );
+    if (profileCheck.rows.length === 0) {
+      return sendError(res, 404, 'Seller profile not found. Please complete store setup first.');
+    }
+
+    // Block re-submission if already approved
+    const existingKyc = profileCheck.rows[0].kyc_document_urls || {};
+    if (existingKyc.kyc_status === 'approved') {
+      return sendError(res, 409, 'Your KYC has already been approved.');
+    }
+
+    // Build KYC payload — spread existing JSONB so we don't wipe other stored data
+    // (e.g. OTP fields, social links stored by /update-store)
+    const kycData = {
+      ...existingKyc,
+      kyc_status:           'pending',
+      kyc_submitted_at:     new Date().toISOString(),
+      kyc_full_name:        fullName.trim(),
+      kyc_dob:              dob || null,
+      kyc_business_name:    businessName || null,
+      kyc_business_address: businessAddress || null,
+      kyc_email:            email.trim(),
+      kyc_phone:            phone || null,
+      kyc_id_type:          idType,
+      kyc_id_document_url:  idDocumentUrl,
+      kyc_selfie_url:       selfiePhotoUrl,
+    };
+
+    await db.query(
+      `UPDATE seller_profiles
+       SET kyc_document_urls = $1::jsonb,
+           business_email    = COALESCE(NULLIF($2, ''), business_email),
+           updated_at        = NOW()
+       WHERE user_id = $3`,
+      [JSON.stringify(kycData), email.trim(), userId]
+    );
+
+    console.log(`✅ KYC submitted for user_id: ${userId} | status: pending`);
+
+    return sendSuccess(res, 200, 'KYC submitted successfully. We will review your documents and notify you.', {
+      kycStatus: 'pending',
+    });
+
+  } catch (error) {
+    console.error('KYC submission error:', error);
+    return sendError(res, 500, 'Error submitting KYC', error);
+  }
+});
+
+
+// ─── GET /api/seller/kyc/status ──────────────────────────────────────────────
+// Returns the current KYC status for the logged-in seller.
+// Used by the frontend on page load to show the correct UI state.
+router.get('/kyc/status', protect, isSeller, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const result = await db.query(
+      `SELECT is_verified, kyc_document_urls
+       FROM seller_profiles
+       WHERE user_id = $1 AND is_deleted = false`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return sendError(res, 404, 'Seller profile not found');
+    }
+
+    const { is_verified, kyc_document_urls } = result.rows[0];
+    const kyc = kyc_document_urls || {};
+
+    return sendSuccess(res, 200, 'KYC status fetched', {
+      isVerified:     is_verified,
+      kycStatus:      kyc.kyc_status || 'not_submitted',
+      kycSubmittedAt: kyc.kyc_submitted_at || null,
+    });
+
+  } catch (error) {
+    console.error('KYC status error:', error);
+    return sendError(res, 500, 'Error fetching KYC status', error);
   }
 });
 
