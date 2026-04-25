@@ -47,6 +47,7 @@ const withdrawalRoutes = require('./routes/withdrawal.routes');
 const notificationRoutes = require('./routes/notification.routes');
 const paymentMethodsRoutes = require('./routes/paymentMethods.routes');
 const wishlistRoutes = require('./routes/wishlist.routes');
+const sellerProductsRoutes = require('./routes/sellers_products.routes');
 
 // Mount routes
 app.use('/api/auth', authRoutes);
@@ -63,7 +64,7 @@ app.use('/api/withdrawals', withdrawalRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/payment-methods', paymentMethodsRoutes);
 app.use('/api/wishlist', wishlistRoutes);
-
+app.use('/api/seller/products', sellerProductsRoutes);
 
 // 404 handler
 app.use((req, res) => {
