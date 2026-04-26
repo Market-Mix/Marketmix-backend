@@ -388,25 +388,6 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// KYC ROUTES — paste into routes/sellers.routes.js
-//
-// STEP 1: Add multer to package.json dependencies and run npm install
-//   "multer": "^1.4.5-lts.1"
-//
-// STEP 2: Add these two lines near the top of sellers.routes.js
-//   (after the existing require statements):
-//
-//   const multer = require('multer');
-//   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-//
-// STEP 3: Add SUPABASE_URL and SUPABASE_SERVICE_KEY to Render env vars
-//
-// STEP 4: Create a private bucket called "kyc-documents" in Supabase Storage
-//
-// STEP 5: Paste the three routes below before module.exports
-// ─────────────────────────────────────────────────────────────────────────────
-
 
 // ─── POST /api/seller/kyc/upload ──────────────────────────────────────────────
 // Receives a file from the frontend, uploads it to Supabase Storage
@@ -477,6 +458,80 @@ router.post('/kyc/upload', protect, isSeller, upload.single('file'), async (req,
 
   } catch (error) {
     console.error('KYC upload error:', error);
+    return sendError(res, 500, 'Error uploading file', error);
+  }
+});
+
+
+// ─── POST /api/seller/logo/upload ─────────────────────────────────────────────
+// Receives a file from the frontend, uploads it to Supabase Storage
+// in the 'store-logos' bucket using the service key (server-side only),
+// returns a signed URL.
+router.post('/logo/upload', protect, isSeller, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return sendError(res, 400, 'No file provided');
+    }
+
+    const timestamp  = Date.now();
+    const safeName   = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `${req.user.id}-${timestamp}-${safeName}`;
+
+    const SUPABASE_URL         = process.env.SUPABASE_URL;
+    const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+      console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY');
+      return sendError(res, 500, 'Storage service not configured');
+    }
+
+    // Upload file to Supabase Storage
+    const uploadRes = await fetch(
+      `${SUPABASE_URL}/storage/v1/object/store-logos/${storagePath}`,
+      {
+        method:  'POST',
+        headers: {
+          Authorization:  `Bearer ${SUPABASE_SERVICE_KEY}`,
+          'Content-Type': req.file.mimetype,
+          'x-upsert':     'true',
+        },
+        body: req.file.buffer,
+      }
+    );
+
+    if (!uploadRes.ok) {
+      const errText = await uploadRes.text();
+      console.error('Supabase Storage upload error:', errText);
+      return sendError(res, 500, 'Failed to upload file');
+    }
+
+    // Generate a long-lived signed URL (10 years) for the store logo
+    const signedRes = await fetch(
+      `${SUPABASE_URL}/storage/v1/object/sign/store-logos/${storagePath}`,
+      {
+        method:  'POST',
+        headers: {
+          Authorization:  `Bearer ${SUPABASE_SERVICE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ expiresIn: 315360000 }), // 10 years in seconds
+      }
+    );
+
+    let fileUrl;
+    if (signedRes.ok) {
+      const signedData = await signedRes.json();
+      fileUrl = `${SUPABASE_URL}/storage/v1${signedData.signedURL}`;
+    } else {
+      // Fallback: store the path so admin can generate URLs later
+      fileUrl = `store-logos/${storagePath}`;
+    }
+
+    console.log(`✅ Store logo uploaded: ${storagePath}`);
+    return sendSuccess(res, 200, 'Logo uploaded successfully', { url: fileUrl });
+
+  } catch (error) {
+    console.error('Logo upload error:', error);
     return sendError(res, 500, 'Error uploading file', error);
   }
 });
