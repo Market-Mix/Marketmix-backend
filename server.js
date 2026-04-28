@@ -49,6 +49,7 @@ const paymentMethodsRoutes = require('./routes/paymentMethods.routes');
 const wishlistRoutes = require('./routes/wishlist.routes');
 const sellerProductsRoutes = require('./routes/sellers_products.routes');
 const sellerOrdersRoutes = require('./routes/seller_orders.routes');
+const sellerActivityRoutes = require('./routes/seller_activity.routes');
 
 // Mount routes
 app.use('/api/auth', authRoutes);
@@ -67,6 +68,7 @@ app.use('/api/payment-methods', paymentMethodsRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/seller/products', sellerProductsRoutes);
 app.use('/api/seller/orders', sellerOrdersRoutes);
+app.use('/api/seller/activity', sellerActivityRoutes);
 
 // 404 handler
 app.use((req, res) => {

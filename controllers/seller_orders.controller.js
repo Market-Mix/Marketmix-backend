@@ -1,24 +1,35 @@
+/**
+ * controllers/seller_orders.controller.js
+ *
+ * Diff from original: updateSellerOrderStatus now calls logActivity()
+ * so every status transition (confirmed / processing / shipped) is recorded.
+ * Everything else is unchanged.
+ */
+
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
+const { logActivity } = require('./seller_activity.controller');
 
-/**
- * @desc    Get all orders containing this seller's products
- * @route   GET /api/seller/orders
- * @access  Private (seller only)
- * @query   status, page, limit, search
- */
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+const ACTIVITY_TYPE_MAP = {
+  confirmed:  'order_confirmed',
+  processing: 'order_processing',
+  shipped:    'order_shipped',
+  delivered:  'order_delivered',
+  cancelled:  'order_cancelled',
+};
+
+// ─── GET /api/seller/orders ───────────────────────────────────────────────────
 const getSellerOrders = async (req, res) => {
   try {
     const sellerId = req.user.id;
     const { status, page = 1, limit = 20, search } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Build WHERE conditions
     const conditions = [`oi.seller_id = $1`];
     const params = [sellerId];
     let idx = 2;
 
-    // Valid statuses that map to DB
     const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
     if (status && status !== 'all' && validStatuses.includes(status.toLowerCase())) {
       conditions.push(`o.status = $${idx++}`);
@@ -26,18 +37,13 @@ const getSellerOrders = async (req, res) => {
     }
 
     if (search) {
-      conditions.push(`(
-        CAST(o.id AS TEXT) ILIKE $${idx} OR
-        LOWER(u.first_name || ' ' || u.last_name) LIKE $${idx} OR
-        LOWER(p.name) LIKE $${idx}
-      )`);
+      conditions.push(`(CAST(o.id AS TEXT) ILIKE $${idx} OR LOWER(u.first_name || ' ' || u.last_name) LIKE $${idx} OR LOWER(p.name) LIKE $${idx})`);
       params.push(`%${search.toLowerCase()}%`);
       idx++;
     }
 
     const whereClause = conditions.join(' AND ');
 
-    // Main query — one row per order_item so sellers see each line item
     const ordersQuery = `
       SELECT
         o.id               AS order_id,
@@ -65,7 +71,6 @@ const getSellerOrders = async (req, res) => {
     `;
     params.push(parseInt(limit), offset);
 
-    // Count query (distinct orders for pagination)
     const countQuery = `
       SELECT COUNT(DISTINCT o.id) AS total
       FROM order_items oi
@@ -74,7 +79,6 @@ const getSellerOrders = async (req, res) => {
       JOIN products p ON p.id = oi.product_id
       WHERE ${whereClause}
     `;
-    // count params exclude limit/offset
     const countParams = params.slice(0, params.length - 2);
 
     const [ordersResult, countResult] = await Promise.all([
@@ -82,7 +86,6 @@ const getSellerOrders = async (req, res) => {
       db.query(countQuery, countParams),
     ]);
 
-    // Group line items back under each order
     const ordersMap = new Map();
     for (const row of ordersResult.rows) {
       if (!ordersMap.has(row.order_id)) {
@@ -114,16 +117,11 @@ const getSellerOrders = async (req, res) => {
     }
 
     const orders = Array.from(ordersMap.values());
-    const total = parseInt(countResult.rows[0].total);
+    const total  = parseInt(countResult.rows[0].total);
 
     return sendSuccess(res, 200, 'Seller orders fetched successfully', {
       orders,
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / parseInt(limit)),
-      },
+      pagination: { total, page: parseInt(page), limit: parseInt(limit), pages: Math.ceil(total / parseInt(limit)) },
     });
   } catch (error) {
     console.error('getSellerOrders error:', error);
@@ -131,14 +129,10 @@ const getSellerOrders = async (req, res) => {
   }
 };
 
-/**
- * @desc    Get a single order's detail (only if seller has items in it)
- * @route   GET /api/seller/orders/:orderId
- * @access  Private (seller only)
- */
+// ─── GET /api/seller/orders/:orderId ─────────────────────────────────────────
 const getSellerOrderById = async (req, res) => {
   try {
-    const sellerId = req.user.id;
+    const sellerId   = req.user.id;
     const { orderId } = req.params;
 
     const result = await db.query(
@@ -169,37 +163,32 @@ const getSellerOrderById = async (req, res) => {
       [orderId, sellerId]
     );
 
-    if (result.rows.length === 0) {
-      return sendError(res, 404, 'Order not found or does not contain your products');
-    }
+    if (result.rows.length === 0) return sendError(res, 404, 'Order not found or does not contain your products');
 
     const first = result.rows[0];
     const order = {
       orderId: first.order_id,
-      status: first.status,
+      status:  first.status,
       createdAt: first.created_at,
       shippingAddress: first.shipping_address,
       paymentMethod: first.payment_method,
       notes: first.notes,
       buyer: {
-        id: first.buyer_id,
-        name: `${first.buyer_first_name} ${first.buyer_last_name}`.trim(),
+        id:    first.buyer_id,
+        name:  `${first.buyer_first_name} ${first.buyer_last_name}`.trim(),
         email: first.buyer_email,
         phone: first.buyer_phone,
       },
       items: result.rows.map(r => ({
         orderItemId: r.order_item_id,
-        productId: r.product_id,
+        productId:   r.product_id,
         productName: r.product_name,
         productImage: r.product_image,
-        quantity: r.quantity,
+        quantity:    r.quantity,
         priceAtPurchase: parseFloat(r.price_at_purchase),
-        lineTotal: r.quantity * parseFloat(r.price_at_purchase),
+        lineTotal:   r.quantity * parseFloat(r.price_at_purchase),
       })),
-      totalAmount: result.rows.reduce(
-        (sum, r) => sum + r.quantity * parseFloat(r.price_at_purchase),
-        0
-      ),
+      totalAmount: result.rows.reduce((sum, r) => sum + r.quantity * parseFloat(r.price_at_purchase), 0),
     };
 
     return sendSuccess(res, 200, 'Order detail fetched', { order });
@@ -209,32 +198,18 @@ const getSellerOrderById = async (req, res) => {
   }
 };
 
-/**
- * @desc    Update order status (seller can move: pending→processing→shipped)
- * @route   PUT /api/seller/orders/:orderId/status
- * @access  Private (seller only)
- *
- * Sellers are allowed to advance status forward only.
- * They cannot cancel or mark as delivered (that's the buyer/admin privilege).
- */
+// ─── PUT /api/seller/orders/:orderId/status ───────────────────────────────────
 const updateSellerOrderStatus = async (req, res) => {
   try {
-    const sellerId = req.user.id;
+    const sellerId   = req.user.id;
     const { orderId } = req.params;
-    const { status } = req.body;
+    const { status }  = req.body;
 
-    // Statuses a seller is allowed to set
     const sellerAllowedStatuses = ['confirmed', 'processing', 'shipped'];
-
     if (!status || !sellerAllowedStatuses.includes(status.toLowerCase())) {
-      return sendError(
-        res,
-        400,
-        `Invalid status. Sellers can set: ${sellerAllowedStatuses.join(', ')}`
-      );
+      return sendError(res, 400, `Invalid status. Sellers can set: ${sellerAllowedStatuses.join(', ')}`);
     }
 
-    // Verify the order contains at least one item from this seller
     const ownerCheck = await db.query(
       `SELECT o.id, o.status
        FROM orders o
@@ -244,49 +219,45 @@ const updateSellerOrderStatus = async (req, res) => {
       [orderId, sellerId]
     );
 
-    if (ownerCheck.rows.length === 0) {
-      return sendError(res, 404, 'Order not found or does not contain your products');
-    }
+    if (ownerCheck.rows.length === 0) return sendError(res, 404, 'Order not found or does not contain your products');
 
     const currentStatus = ownerCheck.rows[0].status;
-
-    // Enforce forward-only progression
-    const progression = ['pending', 'confirmed', 'processing', 'shipped', 'delivered'];
-    const currentIdx = progression.indexOf(currentStatus);
-    const newIdx = progression.indexOf(status.toLowerCase());
+    const progression   = ['pending', 'confirmed', 'processing', 'shipped', 'delivered'];
+    const currentIdx    = progression.indexOf(currentStatus);
+    const newIdx        = progression.indexOf(status.toLowerCase());
 
     if (newIdx <= currentIdx) {
-      return sendError(
-        res,
-        400,
-        `Cannot move order from "${currentStatus}" to "${status}". Status can only move forward.`
-      );
+      return sendError(res, 400, `Cannot move order from "${currentStatus}" to "${status}". Status can only move forward.`);
     }
 
     const result = await db.query(
-      `UPDATE orders
-       SET status = $1, updated_at = NOW()
-       WHERE id = $2
-       RETURNING id, status, updated_at`,
+      `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING id, status, updated_at`,
       [status.toLowerCase(), orderId]
     );
 
+    // ── Activity log ──
+    const shortId   = String(orderId).substring(0, 8);
+    const actType   = ACTIVITY_TYPE_MAP[status.toLowerCase()] || 'order_updated';
+    const label     = status.charAt(0).toUpperCase() + status.slice(1);
+    await logActivity({
+      sellerId,
+      type:       actType,
+      title:      `Order #${shortId} marked as ${label}`,
+      detail:     `Status changed from ${currentStatus} → ${status}`,
+      entityId:   orderId,
+      entityType: 'order',
+    });
+
     console.log(`✅ Seller ${sellerId} updated order ${orderId}: ${currentStatus} → ${status}`);
 
-    return sendSuccess(res, 200, `Order status updated to "${status}"`, {
-      order: result.rows[0],
-    });
+    return sendSuccess(res, 200, `Order status updated to "${status}"`, { order: result.rows[0] });
   } catch (error) {
     console.error('updateSellerOrderStatus error:', error);
     return sendError(res, 500, 'Error updating order status', error.message);
   }
 };
 
-/**
- * @desc    Get order summary stats for the seller dashboard widget
- * @route   GET /api/seller/orders/stats
- * @access  Private (seller only)
- */
+// ─── GET /api/seller/orders/stats ────────────────────────────────────────────
 const getSellerOrderStats = async (req, res) => {
   try {
     const sellerId = req.user.id;
@@ -309,13 +280,13 @@ const getSellerOrderStats = async (req, res) => {
     const row = result.rows[0];
     return sendSuccess(res, 200, 'Order stats fetched', {
       stats: {
-        totalOrders: parseInt(row.total_orders),
-        pending: parseInt(row.pending),
-        processing: parseInt(row.processing),
-        shipped: parseInt(row.shipped),
-        delivered: parseInt(row.delivered),
-        cancelled: parseInt(row.cancelled),
-        totalRevenue: parseFloat(row.total_revenue),
+        totalOrders:   parseInt(row.total_orders),
+        pending:       parseInt(row.pending),
+        processing:    parseInt(row.processing),
+        shipped:       parseInt(row.shipped),
+        delivered:     parseInt(row.delivered),
+        cancelled:     parseInt(row.cancelled),
+        totalRevenue:  parseFloat(row.total_revenue),
       },
     });
   } catch (error) {
@@ -324,9 +295,4 @@ const getSellerOrderStats = async (req, res) => {
   }
 };
 
-module.exports = {
-  getSellerOrders,
-  getSellerOrderById,
-  updateSellerOrderStatus,
-  getSellerOrderStats,
-};
+module.exports = { getSellerOrders, getSellerOrderById, updateSellerOrderStatus, getSellerOrderStats };
