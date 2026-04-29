@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const db = require('../config/db');                          // ADD THIS
+const { sendSuccess, sendError } = require('../utils/response'); // ADD THIS
 const {
   getMyReviews,
   createReview,
