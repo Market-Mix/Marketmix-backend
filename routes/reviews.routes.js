@@ -73,4 +73,67 @@ router.post('/:id/report', protect, reportReview);
  */
 router.get('/product/:productId', getProductReviews);
 
+// GET /api/reviews/seller/:sellerId — public seller reviews
+router.get('/seller/:sellerId', async (req, res) => {
+  try {
+    const { sellerId } = req.params;
+    const { page = 1, limit = 10 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    const result = await db.query(
+      `SELECT
+          r.id,
+          r.rating,
+          r.comment AS body,
+          r.created_at,
+          u.first_name,
+          u.last_name,
+          p.name AS product_name,
+          p.main_image_url AS product_image
+       FROM reviews r
+       JOIN users u ON r.user_id = u.id
+       JOIN products p ON r.product_id = p.id
+       WHERE p.seller_id = $1 AND r.is_deleted = false AND r.is_approved = true
+       ORDER BY r.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [sellerId, parseInt(limit), offset]
+    );
+
+    const countRes = await db.query(
+      `SELECT
+          COUNT(*) AS total,
+          AVG(r.rating)::numeric(10,1) AS avg_rating,
+          COUNT(*) FILTER (WHERE r.rating = 5) AS five_star,
+          COUNT(*) FILTER (WHERE r.rating = 4) AS four_star,
+          COUNT(*) FILTER (WHERE r.rating = 3) AS three_star,
+          COUNT(*) FILTER (WHERE r.rating = 2) AS two_star,
+          COUNT(*) FILTER (WHERE r.rating = 1) AS one_star
+       FROM reviews r
+       JOIN products p ON r.product_id = p.id
+       WHERE p.seller_id = $1 AND r.is_deleted = false AND r.is_approved = true`,
+      [sellerId]
+    );
+
+    const stats = countRes.rows[0];
+    return sendSuccess(res, 200, 'Seller reviews fetched', {
+      reviews: result.rows,
+      summary: {
+        total: parseInt(stats.total),
+        avgRating: parseFloat(stats.avg_rating) || 0,
+        fiveStar: parseInt(stats.five_star),
+        fourStar: parseInt(stats.four_star),
+        threeStar: parseInt(stats.three_star),
+        twoStar: parseInt(stats.two_star),
+        oneStar: parseInt(stats.one_star)
+      },
+      page: parseInt(page),
+      limit: parseInt(limit)
+    });
+  } catch (error) {
+    console.error('Seller reviews error:', error);
+    return sendError(res, 500, 'Error fetching seller reviews', error);
+  }
+});
+
+
 module.exports = router;
