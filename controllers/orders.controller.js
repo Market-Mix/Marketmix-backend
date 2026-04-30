@@ -352,11 +352,222 @@ const getPurchasedProducts = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Confirm delivery of an order
+ * @route   POST /api/orders/:orderId/confirm-delivery
+ * @access  Private (Buyer)
+ */
+const confirmDelivery = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const user_id = req.user.id;
+
+    // Check if order exists and belongs to user
+    const orderCheck = await db.query(
+      'SELECT id, status FROM orders WHERE id = $1 AND buyer_id = $2',
+      [orderId, user_id]
+    );
+
+    if (orderCheck.rows.length === 0) {
+      return sendError(res, 404, 'Order not found');
+    }
+
+    // Update order status and set delivery_confirmed_at timestamp
+    const result = await db.query(
+      `UPDATE orders 
+       SET status = 'delivered', delivery_confirmed_at = NOW(), updated_at = NOW() 
+       WHERE id = $1 
+       RETURNING id, status, delivery_confirmed_at`,
+      [orderId]
+    );
+
+    console.log(`✅ Delivery confirmed for order ${orderId} by user ${user_id}`);
+
+    return sendSuccess(res, 200, 'Delivery confirmed successfully', {
+      order: result.rows[0],
+      message: 'You now have 24 hours to report any issues with this order'
+    });
+
+  } catch (error) {
+    console.error('❌ Confirm delivery error:', error);
+    return sendError(res, 500, 'Error confirming delivery', error);
+  }
+};
+
+/**
+ * @desc    Submit a return/refund report
+ * @route   POST /api/orders/:orderId/report
+ * @access  Private (Buyer)
+ */
+const submitReport = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { reason, description } = req.body;
+    const user_id = req.user.id;
+    const evidenceFile = req.file;
+
+    // Validation
+    if (!reason || !description) {
+      return sendError(res, 400, 'Reason and description are required');
+    }
+
+    if (!evidenceFile) {
+      return sendError(res, 400, 'Evidence file (image or video) is required');
+    }
+
+    // Check if order exists and belongs to user
+    const orderCheck = await db.query(
+      'SELECT id, status, delivery_confirmed_at FROM orders WHERE id = $1 AND buyer_id = $2',
+      [orderId, user_id]
+    );
+
+    if (orderCheck.rows.length === 0) {
+      return sendError(res, 404, 'Order not found');
+    }
+
+    const order = orderCheck.rows[0];
+
+    // Check if order is in delivered status
+    if (order.status !== 'delivered') {
+      return sendError(res, 400, 'Reports can only be submitted for delivered orders');
+    }
+
+    // Check if report is submitted within 24 hours of delivery confirmation
+    const now = new Date();
+    const deliveryTime = order.delivery_confirmed_at ? new Date(order.delivery_confirmed_at) : null;
+    
+    if (!deliveryTime) {
+      return sendError(res, 400, 'Please confirm delivery first before submitting a report');
+    }
+
+    const hoursDiff = (now - deliveryTime) / (1000 * 60 * 60);
+    if (hoursDiff > 24) {
+      return sendError(res, 400, 'Reports can only be submitted within 24 hours of delivery confirmation');
+    }
+
+    // Store evidence file (you'll need to set up file storage - cloud storage like AWS S3 or local storage)
+    let evidenceUrl = null;
+    if (evidenceFile) {
+      // For now, store the file path or URL
+      // In production, upload to S3 or another cloud service
+      evidenceUrl = `/uploads/reports/${orderId}-${Date.now()}-${evidenceFile.originalname}`;
+    }
+
+    // Insert report into database
+    const reportResult = await db.query(
+      `INSERT INTO order_reports (
+        order_id, buyer_id, reason, description, evidence_url, status, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      RETURNING id, order_id, reason, description, evidence_url, status, created_at`,
+      [orderId, user_id, reason, description, evidenceUrl, 'pending']
+    );
+
+    const report = reportResult.rows[0];
+
+    console.log(`✅ Report submitted for order ${orderId} by user ${user_id}, Report ID: ${report.id}`);
+
+    // Send auto-reply notification (this could be a job queue in production)
+    // For now, we'll just send the response
+    notify('Report submitted', `Your report has been received. Case ID: ${report.id}`);
+
+    return sendSuccess(res, 201, 'Report submitted successfully', {
+      report: {
+        id: report.id,
+        orderId: report.order_id,
+        reason: report.reason,
+        status: report.status,
+        createdAt: report.created_at
+      },
+      autoReply: {
+        message: '📧 Auto Reply from MarketMix: Thank you for reporting this issue. Please be patient while the seller reviews and responds to your case. We will keep you updated on the progress.',
+        caseId: report.id
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Submit report error:', error);
+    return sendError(res, 500, 'Error submitting report', error);
+  }
+};
+
+/**
+ * @desc    Get all reports for a buyer
+ * @route   GET /api/orders/reports
+ * @access  Private (Buyer)
+ */
+const getBuyerReports = async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const { page = 1, limit = 10, status } = req.query;
+
+    const offset = (page - 1) * limit;
+
+    let sql = `SELECT 
+      r.id,
+      r.order_id,
+      r.reason,
+      r.description,
+      r.evidence_url,
+      r.status,
+      r.created_at,
+      o.total_amount,
+      o.shipping_address
+    FROM order_reports r
+    JOIN orders o ON r.order_id = o.id
+    WHERE r.buyer_id = $1`;
+
+    const params = [user_id];
+
+    if (status) {
+      sql += ` AND r.status = $${params.length + 1}`;
+      params.push(status);
+    }
+
+    sql += ` ORDER BY r.created_at DESC
+             LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+
+    params.push(limit, offset);
+
+    const result = await db.query(sql, params);
+
+    // Get total count
+    let countSql = `SELECT COUNT(*) as total FROM order_reports WHERE buyer_id = $1`;
+    const countParams = [user_id];
+    if (status) {
+      countSql += ` AND status = $2`;
+      countParams.push(status);
+    }
+
+    const countResult = await db.query(countSql, countParams);
+
+    return sendSuccess(res, 200, 'Reports fetched successfully', {
+      reports: result.rows,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(countResult.rows[0].total / limit),
+        totalItems: parseInt(countResult.rows[0].total)
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Get buyer reports error:', error);
+    return sendError(res, 500, 'Error fetching reports', error);
+  }
+};
+
+const notify = (title, message) => {
+  // This is a placeholder for notification logic
+  console.log(`📧 Notification: ${title} - ${message}`);
+};
+
 module.exports = {
   createOrder,
   getUserOrders,
   getOrderById,
   updateOrderStatus,
   cancelOrder,
-  getPurchasedProducts
+  getPurchasedProducts,
+  confirmDelivery,
+  submitReport,
+  getBuyerReports
 };
