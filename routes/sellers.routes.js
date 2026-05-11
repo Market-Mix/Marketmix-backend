@@ -661,34 +661,45 @@ router.get('/kyc/status', protect, isSeller, async (req, res) => {
 });
 
 
-// ─── GET /api/seller/public/:sellerId ─────────────────────────────────────
+// ─── GET /api/seller/stores/public/:storeId ───────────────────────────────
 // Public store profile — no auth required
-router.get('/public/:sellerId', async (req, res) => {
+router.get('/stores/public/:storeId', async (req, res) => {
   try {
-    const { sellerId } = req.params;
+    const { storeId } = req.params;
 
     const result = await db.query(
       `SELECT
-          u.id             AS user_id,
+          s.id             AS store_id,
+          s.user_id        AS seller_id,
+          s.store_number,
+          s.business_name,
+          s.business_description,
+          s.business_address,
+          s.business_email,
+          s.business_phone,
+          s.store_logo_url,
+          s.website,
+          s.facebook,
+          s.twitter,
+          s.instagram,
+          s.tiktok,
+          s.telegram,
+          s.category,
+          s.rating,
+          s.total_reviews,
+          s.total_sales,
+          s.is_verified,
+          s.created_at,
           u.first_name,
           u.last_name,
-          u.avatar_url,
-          sp.business_name,
-          sp.business_description,
-          sp.business_address,
-          sp.business_email,
-          sp.business_phone,
-          sp.rating,
-          sp.total_reviews,
-          sp.total_sales,
-          sp.is_verified,
-          sp.store_logo_url,
-          sp.kyc_document_urls,
-          sp.created_at
-       FROM users u
-       JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
-       WHERE u.id = $1 AND u.is_deleted = false`,
-      [sellerId]
+          u.avatar_url
+       FROM stores s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.id = $1
+         AND s.is_active = true
+         AND s.is_deleted = false
+         AND u.is_deleted = false`,
+      [storeId]
     );
 
     if (result.rows.length === 0) {
@@ -697,18 +708,17 @@ router.get('/public/:sellerId', async (req, res) => {
 
     const row = result.rows[0];
 
-    // Pull website/category/social from kyc_document_urls jsonb
-    const kyc = row.kyc_document_urls || {};
-
     // Product count
     const countRes = await db.query(
-      'SELECT COUNT(*) FROM products WHERE seller_id = $1 AND is_active = true AND is_deleted = false',
-      [sellerId]
+      'SELECT COUNT(*) FROM products WHERE store_id = $1 AND is_active = true AND is_deleted = false',
+      [storeId]
     );
 
     return sendSuccess(res, 200, 'Store profile fetched', {
       store: {
-        sellerId: row.user_id,
+        storeId: row.store_id,
+        sellerId: row.seller_id,
+        storeNumber: row.store_number,
         businessName: row.business_name || `${row.first_name} ${row.last_name}`,
         businessDescription: row.business_description,
         businessAddress: row.business_address,
@@ -720,11 +730,22 @@ router.get('/public/:sellerId', async (req, res) => {
         totalReviews: row.total_reviews || 0,
         totalSales: row.total_sales || 0,
         isVerified: row.is_verified,
-        website: kyc.website || null,
-        category: kyc.category || null,
-        socialLinks: kyc.social_links || {},
+        website: row.website,
+        category: row.category,
+        socialLinks: {
+          facebook: row.facebook,
+          twitter: row.twitter,
+          instagram: row.instagram,
+          tiktok: row.tiktok,
+          telegram: row.telegram
+        },
         productCount: parseInt(countRes.rows[0].count),
-        memberSince: row.created_at
+        memberSince: row.created_at,
+        seller: {
+          firstName: row.first_name,
+          lastName: row.last_name,
+          avatarUrl: row.avatar_url
+        }
       }
     });
   } catch (error) {
@@ -733,16 +754,16 @@ router.get('/public/:sellerId', async (req, res) => {
   }
 });
 
-// ─── GET /api/seller/public/:sellerId/products ─────────────────────────────
+// ─── GET /api/seller/stores/public/:storeId/products ───────────────────────
 // Public store products — no auth required
-router.get('/public/:sellerId/products', async (req, res) => {
+router.get('/stores/public/:storeId/products', async (req, res) => {
   try {
-    const { sellerId } = req.params;
+    const { storeId } = req.params;
     const { category, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    let where = `WHERE p.seller_id = $1 AND p.is_active = true AND p.is_deleted = false`;
-    const params = [sellerId];
+    let where = `WHERE p.store_id = $1 AND p.is_active = true AND p.is_deleted = false`;
+    const params = [storeId];
     let idx = 2;
 
     if (category && category !== 'all') {
@@ -786,9 +807,9 @@ router.get('/public/:sellerId/products', async (req, res) => {
       `SELECT DISTINCT COALESCE(c.name, 'Uncategorized') AS name
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
-       WHERE p.seller_id = $1 AND p.is_active = true AND p.is_deleted = false
+       WHERE p.store_id = $1 AND p.is_active = true AND p.is_deleted = false
        ORDER BY name`,
-      [sellerId]
+      [storeId]
     );
 
     return sendSuccess(res, 200, 'Store products fetched', {
