@@ -857,6 +857,101 @@ router.get('/stores/public/:storeId/products', async (req, res) => {
   }
 });
 
+// ─── GET /api/seller/public/:id ───────────────────────────────────────────────
+// Public store/seller detail alias. Accepts either a store id or a seller user id.
+router.get('/public/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await db.query(
+      `SELECT
+          s.id             AS store_id,
+          s.user_id        AS seller_id,
+          s.store_number,
+          s.business_name,
+          s.business_description,
+          s.business_address,
+          s.business_email,
+          s.business_phone,
+          s.store_logo_url,
+          s.website,
+          s.facebook,
+          s.twitter,
+          s.instagram,
+          s.tiktok,
+          s.telegram,
+          s.category,
+          s.rating,
+          s.total_reviews,
+          s.total_sales,
+          s.is_verified,
+          s.created_at,
+          u.first_name,
+          u.last_name,
+          u.avatar_url,
+          (
+            SELECT COUNT(*) FROM products p
+            WHERE p.store_id = s.id AND p.is_active = true AND p.is_deleted = false
+          ) AS product_count
+       FROM stores s
+       JOIN users u ON u.id = s.user_id
+       WHERE (s.id = $1 OR s.user_id = $1)
+         AND s.is_active = true
+         AND s.is_deleted = false
+         AND u.is_deleted = false
+       ORDER BY
+         CASE WHEN s.id = $1 THEN 0 ELSE 1 END,
+         s.store_number ASC
+       LIMIT 1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    const row = result.rows[0];
+
+    return sendSuccess(res, 200, 'Store profile fetched', {
+      store: {
+        storeId: row.store_id,
+        sellerId: row.seller_id,
+        storeNumber: row.store_number,
+        businessName: row.business_name || `${row.first_name} ${row.last_name}`,
+        businessDescription: row.business_description,
+        businessAddress: row.business_address,
+        businessEmail: row.business_email,
+        businessPhone: row.business_phone,
+        storeLogo: row.store_logo_url,
+        avatarUrl: row.avatar_url,
+        rating: parseFloat(row.rating) || 0,
+        totalReviews: row.total_reviews || 0,
+        totalSales: row.total_sales || 0,
+        isVerified: row.is_verified,
+        website: row.website,
+        category: row.category,
+        socialLinks: {
+          facebook: row.facebook,
+          twitter: row.twitter,
+          instagram: row.instagram,
+          tiktok: row.tiktok,
+          telegram: row.telegram
+        },
+        productCount: parseInt(row.product_count) || 0,
+        memberSince: row.created_at,
+        seller: {
+          firstName: row.first_name,
+          lastName: row.last_name,
+          avatarUrl: row.avatar_url
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Public seller/store detail error:', error);
+    return sendError(res, 500, 'Error fetching store profile', error);
+  }
+});
+
 // ─── GET /api/seller/public — list all active sellers with profiles ───────────
 // Public endpoint — no auth required
 router.get('/public', async (req, res) => {
