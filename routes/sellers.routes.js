@@ -334,7 +334,8 @@ router.post('/verify-otp', protect, isSeller, async (req, res) => {
 });
 
 // ─── POST /api/seller/update-store ────────────────────────────────────────────
-// Save full store setup form data including store logo URL
+// Replaces the old seller_profiles-based store setup.
+// Upserts store #1 into the `stores` table and sets it as the seller's active store.
 router.post('/update-store', protect, isSeller, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -346,41 +347,67 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
 
     if (!storeName) return sendError(res, 400, 'Store name is required');
 
-    // Build social links as jsonb
-    const socialLinks = { facebook, twitter, tiktok, instagram, telegram };
-
-    await db.query(
-      `UPDATE seller_profiles SET
-          business_name        = $1,
-          business_description = $2,
-          business_email       = $3,
-          business_phone       = $4,
-          business_address     = $5,
-          store_logo_url       = $6,
-          kyc_document_urls    = COALESCE(kyc_document_urls, '{}'::jsonb) ||
-                                 jsonb_build_object(
-                                   'website', $7::text,
-                                   'category', $8::text,
-                                   'social_links', $9::jsonb
-                                 ),
-          updated_at           = NOW()
-       WHERE user_id = $10`,
-      [
-        storeName,
-        storeDescription || null,
-        businessEmail || null,
-        businessPhone || null,
-        businessAddress || null,
-        storeLogoUrl || null,
-        website || '',
-        category || '',
-        JSON.stringify(socialLinks),
-        userId
-      ]
+    // Check if store #1 already exists for this user
+    const existing = await db.query(
+      `SELECT id FROM stores WHERE user_id = $1 AND store_number = 1 AND is_deleted = false`,
+      [userId]
     );
 
-    console.log(`✅ Store updated for user_id: ${userId} | Logo: ${storeLogoUrl ? '✓' : '—'}`);
-    return sendSuccess(res, 200, 'Store setup saved successfully', { storeLogoUrl });
+    let result;
+
+    if (existing.rows.length > 0) {
+      // Update existing store #1
+      result = await db.query(
+        `UPDATE stores SET
+           business_name        = $1,
+           business_description = $2,
+           business_email       = $3,
+           business_phone       = $4,
+           business_address     = $5,
+           store_logo_url       = COALESCE($6, store_logo_url),
+           website              = $7,
+           facebook             = $8,
+           twitter              = $9,
+           instagram            = $10,
+           tiktok               = $11,
+           telegram             = $12,
+           category             = $13,
+           updated_at           = NOW()
+         WHERE user_id = $14 AND store_number = 1
+         RETURNING id, store_number, business_name, store_logo_url, is_verified, created_at`,
+        [
+          storeName, storeDescription || null, businessEmail || null,
+          businessPhone || null, businessAddress || null,
+          storeLogoUrl || null, website || null,
+          facebook || null, twitter || null, instagram || null,
+          tiktok || null, telegram || null, category || null,
+          userId
+        ]
+      );
+    } else {
+      // Create store #1
+      result = await db.query(
+        `INSERT INTO stores (
+           user_id, store_number, business_name, business_description,
+           business_address, business_phone, business_email,
+           store_logo_url, website, facebook, twitter, instagram,
+           tiktok, telegram, category
+         ) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         RETURNING id, store_number, business_name, store_logo_url, is_verified, created_at`,
+        [
+          userId, storeName, storeDescription || null,
+          businessAddress || null, businessPhone || null, businessEmail || null,
+          storeLogoUrl || null, website || null,
+          facebook || null, twitter || null, instagram || null,
+          tiktok || null, telegram || null, category || null
+        ]
+      );
+    }
+
+    const store = result.rows[0];
+    console.log(`✅ Store #1 upserted for user_id: ${userId} | store id: ${store.id}`);
+
+    return sendSuccess(res, 200, 'Store setup saved successfully', { store });
 
   } catch (error) {
     console.error('Update store error:', error);
