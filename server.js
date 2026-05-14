@@ -35,7 +35,6 @@ app.get('/', (req, res) => {
 // Import routes
 const authRoutes = require('./routes/auth.routes');
 const buyerRoutes = require('./routes/buyer.routes');
-const sellerRoutes = require('./routes/sellers.routes');
 const adminRoutes = require('./routes/admin.routes');
 const productsRoutes = require('./routes/products.routes');
 const cartRoutes = require('./routes/cart.routes');
@@ -52,11 +51,11 @@ const sellerProductsRoutes = require('./routes/sellers_products.routes');
 const sellerOrdersRoutes = require('./routes/seller_orders.routes');
 const sellerActivityRoutes = require('./routes/seller_activity.routes');
 const shopFollowsRoutes = require('./routes/shop_follows.routes');
+const sellerRoutes = require('./routes/sellers.routes');
 
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/buyer', buyerRoutes);
-app.use('/api/seller', sellerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -73,6 +72,7 @@ app.use('/api/seller/products', sellerProductsRoutes);
 app.use('/api/seller/orders', sellerOrdersRoutes);
 app.use('/api/seller/activity', sellerActivityRoutes);
 app.use('/api/shops/following', shopFollowsRoutes);
+app.use('/api/seller', sellerRoutes);
 
 
 // 404 handler
