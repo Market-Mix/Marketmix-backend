@@ -688,12 +688,12 @@ router.get('/kyc/status', protect, isSeller, async (req, res) => {
 });
 
 
-// ─── GET /api/seller/stores/public/:storeId ───────────────────────────────
-// Public store profile — no auth required
+// ─── FIX 2: GET /api/seller/stores/public/:storeId ───────────────────────────
+// Also fix product count to use seller_id fallback
 router.get('/stores/public/:storeId', async (req, res) => {
   try {
     const { storeId } = req.params;
-
+ 
     const result = await db.query(
       `SELECT
           s.id             AS store_id,
@@ -728,94 +728,99 @@ router.get('/stores/public/:storeId', async (req, res) => {
          AND u.is_deleted = false`,
       [storeId]
     );
-
+ 
     if (result.rows.length === 0) {
       return sendError(res, 404, 'Store not found');
     }
-
+ 
     const row = result.rows[0];
-
-    // Product count
+ 
+    // Count products by store_id OR seller_id (legacy)
     const countRes = await db.query(
-      'SELECT COUNT(*) FROM products WHERE store_id = $1 AND is_active = true AND is_deleted = false',
-      [storeId]
+      `SELECT COUNT(*) FROM products
+       WHERE (store_id = $1 OR (store_id IS NULL AND seller_id = $2))
+         AND is_active = true AND is_deleted = false`,
+      [storeId, row.seller_id]
     );
-
+ 
     return sendSuccess(res, 200, 'Store profile fetched', {
       store: {
-        storeId: row.store_id,
-        sellerId: row.seller_id,
-        storeNumber: row.store_number,
-        businessName: row.business_name || `${row.first_name} ${row.last_name}`,
+        storeId:             row.store_id,
+        sellerId:            row.seller_id,
+        storeNumber:         row.store_number,
+        businessName:        row.business_name,
         businessDescription: row.business_description,
-        businessAddress: row.business_address,
-        businessEmail: row.business_email,
-        businessPhone: row.business_phone,
-        storeLogo: row.store_logo_url,
-        avatarUrl: row.avatar_url,
-        rating: parseFloat(row.rating) || 0,
-        totalReviews: row.total_reviews || 0,
-        totalSales: row.total_sales || 0,
-        isVerified: row.is_verified,
-        website: row.website,
-        category: row.category,
+        businessAddress:     row.business_address,
+        businessEmail:       row.business_email,
+        businessPhone:       row.business_phone,
+        storeLogo:           row.store_logo_url,
+        avatarUrl:           row.avatar_url,
+        rating:              parseFloat(row.rating) || 0,
+        totalReviews:        row.total_reviews || 0,
+        totalSales:          row.total_sales || 0,
+        isVerified:          row.is_verified,
+        website:             row.website,
+        category:            row.category,
         socialLinks: {
-          facebook: row.facebook,
-          twitter: row.twitter,
+          facebook:  row.facebook,
+          twitter:   row.twitter,
           instagram: row.instagram,
-          tiktok: row.tiktok,
-          telegram: row.telegram
+          tiktok:    row.tiktok,
+          telegram:  row.telegram,
         },
         productCount: parseInt(countRes.rows[0].count),
-        memberSince: row.created_at,
+        memberSince:  row.created_at,
         seller: {
           firstName: row.first_name,
-          lastName: row.last_name,
-          avatarUrl: row.avatar_url
-        }
-      }
+          lastName:  row.last_name,
+          avatarUrl: row.avatar_url,
+        },
+      },
     });
   } catch (error) {
     console.error('Public store profile error:', error);
     return sendError(res, 500, 'Error fetching store profile', error);
   }
 });
-
-// ─── GET /api/seller/stores/public/:storeId/products ───────────────────────
-// Public store products — no auth required
+ 
+// GET /api/seller/stores/public/:storeId/products ──────────────────
+// Falls back to seller_id when products don't have store_id set
 router.get('/stores/public/:storeId/products', async (req, res) => {
   try {
     const { storeId } = req.params;
     const { category, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
-
-    let where = `WHERE p.store_id = $1 AND p.is_active = true AND p.is_deleted = false`;
-    const params = [storeId];
-    let idx = 2;
-
+ 
+    // First resolve the seller_id for this store (needed for fallback query)
+    const storeRow = await db.query(
+      `SELECT user_id FROM stores WHERE id = $1 AND is_deleted = false`,
+      [storeId]
+    );
+    const sellerId = storeRow.rows[0]?.user_id;
+ 
+    // Products may be linked by store_id (new) OR seller_id (legacy)
+    let where = `WHERE (p.store_id = $1 OR (p.store_id IS NULL AND p.seller_id = $2))
+                 AND p.is_active = true AND p.is_deleted = false`;
+    const params = [storeId, sellerId || storeId];
+    let idx = 3;
+ 
     if (category && category !== 'all') {
-      where += ` AND LOWER(c.name) = $${idx++}`;
+      where += ` AND LOWER(COALESCE(c.name, 'uncategorized')) = $${idx++}`;
       params.push(category.toLowerCase());
     }
-
+ 
     const result = await db.query(
       `SELECT
-          p.id,
-          p.name,
-          p.description,
-          p.price,
-          p.stock_quantity,
-          p.main_image_url,
-          p.color,
-          p.size,
-          p."flash start" as flash_start,
-          p."flash end" as flash_end,
+          p.id, p.name, p.description, p.price, p.stock_quantity,
+          p.main_image_url, p.color, p.size,
+          p."flash start" as flash_start, p."flash end" as flash_end,
           COALESCE(c.name, 'Uncategorized') AS category_name,
           COALESCE(
-            (SELECT AVG(r.rating)::numeric(10,1) FROM reviews r WHERE r.product_id = p.id AND r.is_deleted = false),
-            0
+            (SELECT AVG(r.rating)::numeric(10,1) FROM reviews r
+             WHERE r.product_id = p.id AND r.is_deleted = false), 0
           ) AS avg_rating,
-          (SELECT COUNT(*) FROM reviews r WHERE r.product_id = p.id AND r.is_deleted = false) AS review_count
+          (SELECT COUNT(*) FROM reviews r
+           WHERE r.product_id = p.id AND r.is_deleted = false) AS review_count
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
        ${where}
@@ -823,33 +828,35 @@ router.get('/stores/public/:storeId/products', async (req, res) => {
        LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, parseInt(limit), offset]
     );
-
+ 
     const countRes = await db.query(
-      `SELECT COUNT(*) FROM products p LEFT JOIN categories c ON c.id = p.category_id ${where}`,
+      `SELECT COUNT(*) FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id
+       ${where}`,
       params
     );
-
-    // Get distinct categories for this seller (for the filter dropdown)
+ 
     const categoriesRes = await db.query(
       `SELECT DISTINCT COALESCE(c.name, 'Uncategorized') AS name
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
-       WHERE p.store_id = $1 AND p.is_active = true AND p.is_deleted = false
+       WHERE (p.store_id = $1 OR (p.store_id IS NULL AND p.seller_id = $2))
+         AND p.is_active = true AND p.is_deleted = false
        ORDER BY name`,
-      [storeId]
+      [storeId, sellerId || storeId]
     );
-
+ 
     return sendSuccess(res, 200, 'Store products fetched', {
       products: result.rows.map(p => ({
         ...p,
-        price: parseFloat(p.price),
-        avgRating: parseFloat(p.avg_rating),
-        reviewCount: parseInt(p.review_count)
+        price:       parseFloat(p.price),
+        avgRating:   parseFloat(p.avg_rating),
+        reviewCount: parseInt(p.review_count),
       })),
-      categories: categoriesRes.rows.map(r => r.name),
-      total: parseInt(countRes.rows[0].count),
-      page: parseInt(page),
-      limit: parseInt(limit)
+      categories:  categoriesRes.rows.map(r => r.name),
+      total:       parseInt(countRes.rows[0].count),
+      page:        parseInt(page),
+      limit:       parseInt(limit),
     });
   } catch (error) {
     console.error('Public store products error:', error);
@@ -857,12 +864,13 @@ router.get('/stores/public/:storeId/products', async (req, res) => {
   }
 });
 
-// ─── GET /api/seller/public/:id ───────────────────────────────────────────────
-// Public store/seller detail alias. Accepts either a store id or a seller user id.
+
+//  GET /api/seller/public/:id ───────────────────────────────────────
+// Fix product count fallback
 router.get('/public/:id', async (req, res) => {
   try {
     const { id } = req.params;
-
+ 
     const result = await db.query(
       `SELECT
           s.id             AS store_id,
@@ -888,11 +896,7 @@ router.get('/public/:id', async (req, res) => {
           s.created_at,
           u.first_name,
           u.last_name,
-          u.avatar_url,
-          (
-            SELECT COUNT(*) FROM products p
-            WHERE p.store_id = s.id AND p.is_active = true AND p.is_deleted = false
-          ) AS product_count
+          u.avatar_url
        FROM stores s
        JOIN users u ON u.id = s.user_id
        WHERE (s.id = $1 OR s.user_id = $1)
@@ -905,52 +909,61 @@ router.get('/public/:id', async (req, res) => {
        LIMIT 1`,
       [id]
     );
-
+ 
     if (result.rows.length === 0) {
       return sendError(res, 404, 'Store not found');
     }
-
+ 
     const row = result.rows[0];
-
+ 
+    const countRes = await db.query(
+      `SELECT COUNT(*) FROM products
+       WHERE (store_id = $1 OR (store_id IS NULL AND seller_id = $2))
+         AND is_active = true AND is_deleted = false`,
+      [row.store_id, row.seller_id]
+    );
+ 
     return sendSuccess(res, 200, 'Store profile fetched', {
       store: {
-        storeId: row.store_id,
-        sellerId: row.seller_id,
-        storeNumber: row.store_number,
-        businessName: row.business_name || `${row.first_name} ${row.last_name}`,
+        storeId:             row.store_id,
+        sellerId:            row.seller_id,
+        storeNumber:         row.store_number,
+        businessName:        row.business_name || `${row.first_name} ${row.last_name}`,
         businessDescription: row.business_description,
-        businessAddress: row.business_address,
-        businessEmail: row.business_email,
-        businessPhone: row.business_phone,
-        storeLogo: row.store_logo_url,
-        avatarUrl: row.avatar_url,
-        rating: parseFloat(row.rating) || 0,
-        totalReviews: row.total_reviews || 0,
-        totalSales: row.total_sales || 0,
-        isVerified: row.is_verified,
-        website: row.website,
-        category: row.category,
+        businessAddress:     row.business_address,
+        businessEmail:       row.business_email,
+        businessPhone:       row.business_phone,
+        storeLogo:           row.store_logo_url,
+        avatarUrl:           row.avatar_url,
+        rating:              parseFloat(row.rating) || 0,
+        totalReviews:        row.total_reviews || 0,
+        totalSales:          row.total_sales || 0,
+        isVerified:          row.is_verified,
+        website:             row.website,
+        category:            row.category,
         socialLinks: {
-          facebook: row.facebook,
-          twitter: row.twitter,
+          facebook:  row.facebook,
+          twitter:   row.twitter,
           instagram: row.instagram,
-          tiktok: row.tiktok,
-          telegram: row.telegram
+          tiktok:    row.tiktok,
+          telegram:  row.telegram,
         },
-        productCount: parseInt(row.product_count) || 0,
-        memberSince: row.created_at,
+        productCount: parseInt(countRes.rows[0].count),
+        memberSince:  row.created_at,
         seller: {
           firstName: row.first_name,
-          lastName: row.last_name,
-          avatarUrl: row.avatar_url
-        }
-      }
+          lastName:  row.last_name,
+          avatarUrl: row.avatar_url,
+        },
+      },
     });
   } catch (error) {
     console.error('Public seller/store detail error:', error);
     return sendError(res, 500, 'Error fetching store profile', error);
   }
 });
+ 
+
 
 // ─── GET /api/seller/public — list all active sellers with profiles ───────────
 // Public endpoint — no auth required
