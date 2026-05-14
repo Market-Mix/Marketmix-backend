@@ -9,6 +9,9 @@ const { isSeller } = require('../middlewares/role.middleware');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+
+router.get('/stores/public/test', (req, res) => res.json({ ok: true }));
+
 // ─── GET /api/seller/ping — no auth, confirms file loaded ─────────────────────
 router.get('/ping', (req, res) => {
   res.json({ status: 'success', message: 'Seller routes loaded ✅' });
@@ -688,6 +691,88 @@ router.get('/kyc/status', protect, isSeller, async (req, res) => {
 });
 
 
+// GET /api/seller/stores/public/:storeId/products ──────────────────
+// Falls back to seller_id when products don't have store_id set
+router.get('/stores/public/:storeId/products', async (req, res) => {
+  try {
+    const { storeId } = req.params;
+    const { category, page = 1, limit = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+ 
+    // First resolve the seller_id for this store (needed for fallback query)
+    const storeRow = await db.query(
+      `SELECT user_id FROM stores WHERE id = $1 AND is_deleted = false`,
+      [storeId]
+    );
+    const sellerId = storeRow.rows[0]?.user_id;
+ 
+    // Products may be linked by store_id (new) OR seller_id (legacy)
+    let where = `WHERE (p.store_id = $1 OR (p.store_id IS NULL AND p.seller_id = $2))
+                 AND p.is_active = true AND p.is_deleted = false`;
+    const params = [storeId, sellerId || storeId];
+    let idx = 3;
+ 
+    if (category && category !== 'all') {
+      where += ` AND LOWER(COALESCE(c.name, 'uncategorized')) = $${idx++}`;
+      params.push(category.toLowerCase());
+    }
+ 
+    const result = await db.query(
+      `SELECT
+          p.id, p.name, p.description, p.price, p.stock_quantity,
+          p.main_image_url, p.color, p.size,
+          p."flash start" as flash_start, p."flash end" as flash_end,
+          COALESCE(c.name, 'Uncategorized') AS category_name,
+          COALESCE(
+            (SELECT AVG(r.rating)::numeric(10,1) FROM reviews r
+             WHERE r.product_id = p.id AND r.is_deleted = false), 0
+          ) AS avg_rating,
+          (SELECT COUNT(*) FROM reviews r
+           WHERE r.product_id = p.id AND r.is_deleted = false) AS review_count
+       FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id
+       ${where}
+       ORDER BY p.created_at DESC
+       LIMIT $${idx++} OFFSET $${idx++}`,
+      [...params, parseInt(limit), offset]
+    );
+ 
+    const countRes = await db.query(
+      `SELECT COUNT(*) FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id
+       ${where}`,
+      params
+    );
+ 
+    const categoriesRes = await db.query(
+      `SELECT DISTINCT COALESCE(c.name, 'Uncategorized') AS name
+       FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id
+       WHERE (p.store_id = $1 OR (p.store_id IS NULL AND p.seller_id = $2))
+         AND p.is_active = true AND p.is_deleted = false
+       ORDER BY name`,
+      [storeId, sellerId || storeId]
+    );
+ 
+    return sendSuccess(res, 200, 'Store products fetched', {
+      products: result.rows.map(p => ({
+        ...p,
+        price:       parseFloat(p.price),
+        avgRating:   parseFloat(p.avg_rating),
+        reviewCount: parseInt(p.review_count),
+      })),
+      categories:  categoriesRes.rows.map(r => r.name),
+      total:       parseInt(countRes.rows[0].count),
+      page:        parseInt(page),
+      limit:       parseInt(limit),
+    });
+  } catch (error) {
+    console.error('Public store products error:', error);
+    return sendError(res, 500, 'Error fetching store products', error);
+  }
+});
+
+
 // ─── FIX 2: GET /api/seller/stores/public/:storeId ───────────────────────────
 // Also fix product count to use seller_id fallback
 router.get('/stores/public/:storeId', async (req, res) => {
@@ -782,87 +867,79 @@ router.get('/stores/public/:storeId', async (req, res) => {
     return sendError(res, 500, 'Error fetching store profile', error);
   }
 });
- 
-// GET /api/seller/stores/public/:storeId/products ──────────────────
-// Falls back to seller_id when products don't have store_id set
-router.get('/stores/public/:storeId/products', async (req, res) => {
+
+
+// ─── GET /api/seller/public — list all active sellers with profiles ───────────
+// Public endpoint — no auth required
+router.get('/public', async (req, res) => {
   try {
-    const { storeId } = req.params;
-    const { category, page = 1, limit = 20 } = req.query;
+    const { limit = 12, page = 1 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
- 
-    // First resolve the seller_id for this store (needed for fallback query)
-    const storeRow = await db.query(
-      `SELECT user_id FROM stores WHERE id = $1 AND is_deleted = false`,
-      [storeId]
-    );
-    const sellerId = storeRow.rows[0]?.user_id;
- 
-    // Products may be linked by store_id (new) OR seller_id (legacy)
-    let where = `WHERE (p.store_id = $1 OR (p.store_id IS NULL AND p.seller_id = $2))
-                 AND p.is_active = true AND p.is_deleted = false`;
-    const params = [storeId, sellerId || storeId];
-    let idx = 3;
- 
-    if (category && category !== 'all') {
-      where += ` AND LOWER(COALESCE(c.name, 'uncategorized')) = $${idx++}`;
-      params.push(category.toLowerCase());
-    }
- 
+
     const result = await db.query(
       `SELECT
-          p.id, p.name, p.description, p.price, p.stock_quantity,
-          p.main_image_url, p.color, p.size,
-          p."flash start" as flash_start, p."flash end" as flash_end,
-          COALESCE(c.name, 'Uncategorized') AS category_name,
-          COALESCE(
-            (SELECT AVG(r.rating)::numeric(10,1) FROM reviews r
-             WHERE r.product_id = p.id AND r.is_deleted = false), 0
-          ) AS avg_rating,
-          (SELECT COUNT(*) FROM reviews r
-           WHERE r.product_id = p.id AND r.is_deleted = false) AS review_count
-       FROM products p
-       LEFT JOIN categories c ON c.id = p.category_id
-       ${where}
-       ORDER BY p.created_at DESC
-       LIMIT $${idx++} OFFSET $${idx++}`,
-      [...params, parseInt(limit), offset]
+          u.id             AS seller_id,
+          u.first_name,
+          u.last_name,
+          sp.business_name,
+          sp.business_description,
+          sp.rating,
+          sp.total_reviews,
+          sp.total_sales,
+          sp.is_verified,
+          sp.store_logo_url,
+          sp.kyc_document_urls,
+          (
+            SELECT COUNT(*) FROM products p
+            WHERE p.seller_id = u.id AND p.is_active = true AND p.is_deleted = false
+          ) AS product_count,
+          (
+            SELECT main_image_url FROM products p
+            WHERE p.seller_id = u.id AND p.is_active = true AND p.is_deleted = false
+            ORDER BY p.created_at DESC LIMIT 1
+          ) AS featured_product_image
+       FROM users u
+       JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
+       WHERE u.is_deleted = false
+         AND u.role = 'seller'
+         AND sp.business_name IS NOT NULL
+       ORDER BY sp.total_sales DESC NULLS LAST, sp.rating DESC NULLS LAST, u.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [parseInt(limit), offset]
     );
- 
+
     const countRes = await db.query(
-      `SELECT COUNT(*) FROM products p
-       LEFT JOIN categories c ON c.id = p.category_id
-       ${where}`,
-      params
+      `SELECT COUNT(*) FROM users u
+       JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
+       WHERE u.is_deleted = false AND u.role = 'seller' AND sp.business_name IS NOT NULL`
     );
- 
-    const categoriesRes = await db.query(
-      `SELECT DISTINCT COALESCE(c.name, 'Uncategorized') AS name
-       FROM products p
-       LEFT JOIN categories c ON c.id = p.category_id
-       WHERE (p.store_id = $1 OR (p.store_id IS NULL AND p.seller_id = $2))
-         AND p.is_active = true AND p.is_deleted = false
-       ORDER BY name`,
-      [storeId, sellerId || storeId]
-    );
- 
-    return sendSuccess(res, 200, 'Store products fetched', {
-      products: result.rows.map(p => ({
-        ...p,
-        price:       parseFloat(p.price),
-        avgRating:   parseFloat(p.avg_rating),
-        reviewCount: parseInt(p.review_count),
+
+    return sendSuccess(res, 200, 'Sellers fetched', {
+      sellers: result.rows.map(s => ({
+        sellerId: s.seller_id,
+        businessName: s.business_name || `${s.first_name} ${s.last_name}`,
+        businessDescription: s.business_description,
+        storeLogo: s.store_logo_url,
+        featuredProductImage: s.featured_product_image,
+        rating: parseFloat(s.rating) || 0,
+        totalReviews: s.total_reviews || 0,
+        totalSales: s.total_sales || 0,
+        isVerified: s.is_verified,
+        productCount: parseInt(s.product_count) || 0,
+        category: s.kyc_document_urls?.category || null
       })),
-      categories:  categoriesRes.rows.map(r => r.name),
-      total:       parseInt(countRes.rows[0].count),
-      page:        parseInt(page),
-      limit:       parseInt(limit),
+      total: parseInt(countRes.rows[0].count),
+      page: parseInt(page),
+      limit: parseInt(limit)
     });
   } catch (error) {
-    console.error('Public store products error:', error);
-    return sendError(res, 500, 'Error fetching store products', error);
+    console.error('List sellers error:', error);
+    return sendError(res, 500, 'Error fetching sellers', error);
   }
 });
+
+
+
 
 
 //  GET /api/seller/public/:id ───────────────────────────────────────
@@ -963,75 +1040,5 @@ router.get('/public/:id', async (req, res) => {
   }
 });
  
-
-
-// ─── GET /api/seller/public — list all active sellers with profiles ───────────
-// Public endpoint — no auth required
-router.get('/public', async (req, res) => {
-  try {
-    const { limit = 12, page = 1 } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-
-    const result = await db.query(
-      `SELECT
-          u.id             AS seller_id,
-          u.first_name,
-          u.last_name,
-          sp.business_name,
-          sp.business_description,
-          sp.rating,
-          sp.total_reviews,
-          sp.total_sales,
-          sp.is_verified,
-          sp.store_logo_url,
-          sp.kyc_document_urls,
-          (
-            SELECT COUNT(*) FROM products p
-            WHERE p.seller_id = u.id AND p.is_active = true AND p.is_deleted = false
-          ) AS product_count,
-          (
-            SELECT main_image_url FROM products p
-            WHERE p.seller_id = u.id AND p.is_active = true AND p.is_deleted = false
-            ORDER BY p.created_at DESC LIMIT 1
-          ) AS featured_product_image
-       FROM users u
-       JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
-       WHERE u.is_deleted = false
-         AND u.role = 'seller'
-         AND sp.business_name IS NOT NULL
-       ORDER BY sp.total_sales DESC NULLS LAST, sp.rating DESC NULLS LAST, u.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [parseInt(limit), offset]
-    );
-
-    const countRes = await db.query(
-      `SELECT COUNT(*) FROM users u
-       JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
-       WHERE u.is_deleted = false AND u.role = 'seller' AND sp.business_name IS NOT NULL`
-    );
-
-    return sendSuccess(res, 200, 'Sellers fetched', {
-      sellers: result.rows.map(s => ({
-        sellerId: s.seller_id,
-        businessName: s.business_name || `${s.first_name} ${s.last_name}`,
-        businessDescription: s.business_description,
-        storeLogo: s.store_logo_url,
-        featuredProductImage: s.featured_product_image,
-        rating: parseFloat(s.rating) || 0,
-        totalReviews: s.total_reviews || 0,
-        totalSales: s.total_sales || 0,
-        isVerified: s.is_verified,
-        productCount: parseInt(s.product_count) || 0,
-        category: s.kyc_document_urls?.category || null
-      })),
-      total: parseInt(countRes.rows[0].count),
-      page: parseInt(page),
-      limit: parseInt(limit)
-    });
-  } catch (error) {
-    console.error('List sellers error:', error);
-    return sendError(res, 500, 'Error fetching sellers', error);
-  }
-});
 
 module.exports = router;

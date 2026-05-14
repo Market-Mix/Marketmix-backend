@@ -56,7 +56,6 @@ const shopFollowsRoutes = require('./routes/shop_follows.routes');
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/buyer', buyerRoutes);
-app.use('/api/seller', sellerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -68,6 +67,7 @@ app.use('/api/withdrawals', withdrawalRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/payment-methods', paymentMethodsRoutes);
 app.use('/api/seller/stores', storesRoutes);
+app.use('/api/seller', sellerRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/seller/products', sellerProductsRoutes);
 app.use('/api/seller/orders', sellerOrdersRoutes);
