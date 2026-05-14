@@ -772,7 +772,6 @@ router.get('/stores/public/:storeId/products', async (req, res) => {
   }
 });
 
-
 // ─── FIX 2: GET /api/seller/stores/public/:storeId ───────────────────────────
 // Also fix product count to use seller_id fallback
 router.get('/stores/public/:storeId', async (req, res) => {
@@ -937,10 +936,6 @@ router.get('/public', async (req, res) => {
     return sendError(res, 500, 'Error fetching sellers', error);
   }
 });
-
-
-
-
 
 //  GET /api/seller/public/:id ───────────────────────────────────────
 // Fix product count fallback
