@@ -32,7 +32,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// Import routes
+// Import routes (keep your existing imports)
 const authRoutes = require('./routes/auth.routes');
 const buyerRoutes = require('./routes/buyer.routes');
 const adminRoutes = require('./routes/admin.routes');
@@ -45,15 +45,15 @@ const categoryRoutes = require('./routes/category.routes');
 const withdrawalRoutes = require('./routes/withdrawal.routes');
 const notificationRoutes = require('./routes/notification.routes');
 const paymentMethodsRoutes = require('./routes/paymentMethods.routes');
-const storesRoutes = require('./routes/stores.routes');
 const wishlistRoutes = require('./routes/wishlist.routes');
 const sellerProductsRoutes = require('./routes/sellers_products.routes');
 const sellerOrdersRoutes = require('./routes/seller_orders.routes');
 const sellerActivityRoutes = require('./routes/seller_activity.routes');
 const shopFollowsRoutes = require('./routes/shop_follows.routes');
-const sellerRoutes = require('./routes/sellers.routes');
+const storesRoutes = require('./routes/stores.routes');
+const sellerRoutes = require('./routes/sellers.routes');  // ← keep last
 
-// Mount routes
+// Mount routes — ORDER MATTERS
 app.use('/api/auth', authRoutes);
 app.use('/api/buyer', buyerRoutes);
 app.use('/api/admin', adminRoutes);
@@ -66,14 +66,13 @@ app.use('/api/reviews', reviewsRoutes);
 app.use('/api/withdrawals', withdrawalRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/payment-methods', paymentMethodsRoutes);
-app.use('/api/seller/stores', storesRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/seller/products', sellerProductsRoutes);
 app.use('/api/seller/orders', sellerOrdersRoutes);
 app.use('/api/seller/activity', sellerActivityRoutes);
+app.use('/api/seller/stores', storesRoutes);   // ← BEFORE /api/seller
+app.use('/api/seller', sellerRoutes);           // ← AFTER /api/seller/stores
 app.use('/api/shops/following', shopFollowsRoutes);
-app.use('/api/seller', sellerRoutes);
-
 
 // 404 handler
 app.use((req, res) => {
