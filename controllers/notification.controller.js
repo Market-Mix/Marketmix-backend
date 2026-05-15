@@ -47,9 +47,19 @@ const createNotification = async (req, res) => {
       return sendError(res, 404, 'User not found');
     }
 
+<<<<<<< HEAD
     const hasLink = await notificationHasLinkColumn();
     let insertQuery;
     let params;
+=======
+    // Insert notification
+    const result = await db.query(
+      `INSERT INTO notifications (user_id, title, message, type, link, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+       RETURNING id, user_id, title, message, type, is_read, link, created_at`,
+      [user_id, title, message, type, link]
+    );
+>>>>>>> parent of e729bdf (huhuh)
 
     if (hasLink) {
       insertQuery = `
@@ -81,10 +91,15 @@ const createNotification = async (req, res) => {
         message: notification.message,
         type: notification.type,
         isRead: notification.is_read,
+<<<<<<< HEAD
         link: notification.link || null,
         createdAt: notification.created_at,
         updatedAt: notification.updated_at,
         isDeleted: notification.is_deleted
+=======
+        link: notification.link,
+        createdAt: notification.created_at
+>>>>>>> parent of e729bdf (huhuh)
       }
     });
   } catch (error) {
