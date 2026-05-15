@@ -29,9 +29,9 @@ const createNotification = async (req, res) => {
 
     // Insert notification
     const result = await db.query(
-      `INSERT INTO notifications (user_id, title, message, type, link, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-       RETURNING id, user_id, title, message, type, is_read, link, created_at`,
+      `INSERT INTO notifications (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, NOW(), NOW())
+       RETURNING id, user_id, title, message, type, is_read, link, created_at, updated_at, is_deleted`,
       [user_id, title, message, type, link]
     );
 
@@ -46,7 +46,9 @@ const createNotification = async (req, res) => {
         type: notification.type,
         isRead: notification.is_read,
         link: notification.link,
-        createdAt: notification.created_at
+        createdAt: notification.created_at,
+        updatedAt: notification.updated_at,
+        isDeleted: notification.is_deleted
       }
     });
   } catch (error) {
