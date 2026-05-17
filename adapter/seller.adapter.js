@@ -4,7 +4,7 @@
  * Interface: getQuote(sessionId, items, address, sellerId) → QuoteResult
  */
 
-const db = require('../../../config/db');
+const db = require('../config/db');
 
 /**
  * @param {string} sessionId
