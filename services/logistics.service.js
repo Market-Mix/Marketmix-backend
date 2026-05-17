@@ -7,7 +7,7 @@
  *   const chosen  = await logistics.applyDelivery(session, method, providerId);
  */
 
-const db             = require('../../config/db');
+const db             = require('../config/db');
 const sellerAdapter  = require('../adapter/seller.adapter');
 const marketmixAdapter = require('../adapter/marketmix.adapter');
 
