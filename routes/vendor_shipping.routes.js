@@ -5,7 +5,7 @@ const {
   upsertShippingSettings,
   updateShippingSettings,
   deactivateShippingSettings,
-} = require('../controllers/vendor_shipping.controller');
+} = require('../controllers/Vendor_shipping.controller');
 const { protect }  = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 

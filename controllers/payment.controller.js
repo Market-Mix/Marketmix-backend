@@ -15,7 +15,7 @@
  */
 
 const db         = require('../config/db');
-const marketpay  = require('../marketpay/marketpay.service');
+const marketpay  = require('../services/marketpay.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET /api/payments/methods ─────────────────────────────────────────────────

@@ -100,33 +100,23 @@ const selectDelivery = async (req, res) => {
 
 async function _getSession(sessionId, userId) {
   const res = await db.query(
-    `SELECT * FROM checkout_sessions WHERE id = $1 AND user_id = $2 AND is_active = true LIMIT 1`,
+    `SELECT * FROM checkout_sessions
+     WHERE id = $1
+       AND user_id = $2
+       AND status NOT IN ('completed', 'expired', 'abandoned')
+       AND expires_at > NOW()
+     LIMIT 1`,
     [sessionId, userId]
   );
   return res.rows[0] || null;
 }
 
 async function _getSessionItems(sessionId, session) {
-  // Try vendor_orders first (created during session init)
-  const voRes = await db.query(
-    `SELECT vo.seller_id, vo.subtotal AS price, 1 AS quantity
-     FROM vendor_orders vo WHERE vo.session_id = $1`,
-    [sessionId]
-  );
+  const snapshot = typeof session.items_snapshot === 'string'
+    ? JSON.parse(session.items_snapshot)
+    : session.items_snapshot;
 
-  if (voRes.rows.length) return voRes.rows;
-
-  // Fallback: cart items joined with products
-  const cartRes = await db.query(
-    `SELECT ci.product_id, ci.quantity, p.price, p.seller_id
-     FROM cart_items ci
-     JOIN cart c ON ci.cart_id = c.id
-     JOIN products p ON ci.product_id = p.id
-     WHERE c.user_id = $1 AND p.is_active = true AND p.is_deleted = false`,
-    [session.user_id]
-  );
-
-  return cartRes.rows;
+  return Array.isArray(snapshot) ? snapshot : [];
 }
 
 function _sanitizeSession(s) {

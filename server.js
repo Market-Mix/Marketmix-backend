@@ -39,6 +39,7 @@ const adminRoutes = require('./routes/admin.routes');
 const productsRoutes = require('./routes/products.routes');
 const cartRoutes = require('./routes/cart.routes');
 const checkoutRoutes = require('./routes/checkout.routes');
+const vendorRoutes = require('./routes/vendor_shipping.routes');
 const deliveryRoutes = require('./routes/checkout_delivery.routes');
 const ordersRoutes = require('./routes/orders.routes');
 const earningsRoutes = require('./routes/earnings.routes');
@@ -75,6 +76,7 @@ app.use('/api/seller/products', sellerProductsRoutes);
 app.use('/api/seller/orders', sellerOrdersRoutes);
 app.use('/api/seller/activity', sellerActivityRoutes);
 app.use('/api/seller/stores', storesRoutes);   // ← BEFORE /api/seller
+app.use('/api/seller/shipping', vendorRoutes);
 app.use('/api/seller', sellerRoutes);           // ← AFTER /api/seller/stores
 app.use('/api/shops/following', shopFollowsRoutes);
 
