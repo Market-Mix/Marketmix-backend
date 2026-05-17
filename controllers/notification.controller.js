@@ -26,18 +26,16 @@ async function notificationHasLinkColumn() {
  *
  * Body: { user_id, title, message, type, link }
  */
-const createNotification = async (req, res) => {
+    const createNotification = async (req, res) => {
   try {
     const { user_id, title, message, type = 'info', link } = req.body;
 
     console.log('📩 createNotification request body:', req.body);
 
-    // Validate required fields
     if (!user_id || !title || !message) {
       return sendError(res, 400, 'Please provide user_id, title, and message');
     }
 
-    // Check if user exists
     const userResult = await db.query(
       'SELECT id FROM users WHERE id = $1',
       [user_id]
@@ -48,32 +46,25 @@ const createNotification = async (req, res) => {
     }
 
     const hasLink = await notificationHasLinkColumn();
+
     let insertQuery;
     let params;
-    // Insert notification
-    const result = await db.query(
-      `INSERT INTO notifications (user_id, title, message, type, link, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-       RETURNING id, user_id, title, message, type, is_read, link, created_at`,
-      [user_id, title, message, type, link]
-    );
 
     if (hasLink) {
       insertQuery = `
         INSERT INTO notifications (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, NOW(), NOW())
-        RETURNING id, user_id, title, message, type, is_read, link, created_at, updated_at, is_deleted`;
+        RETURNING id, user_id, title, message, type, is_read, link, created_at, updated_at, is_deleted
+      `;
       params = [user_id, title, message, type, link || null];
     } else {
       insertQuery = `
         INSERT INTO notifications (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
         VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5), FALSE, FALSE, NOW(), NOW())
-        RETURNING id, user_id, title, message, type, is_read, data->>'link' AS link, created_at, updated_at, is_deleted`;
+        RETURNING id, user_id, title, message, type, is_read, data->>'link' AS link, created_at, updated_at, is_deleted
+      `;
       params = [user_id, title, message, type, link || null];
     }
-
-    console.log('📩 createNotification insert SQL:', insertQuery.trim());
-    console.log('📩 createNotification params:', params);
 
     const result = await db.query(insertQuery, params);
     const notification = result.rows[0];
@@ -91,11 +82,10 @@ const createNotification = async (req, res) => {
         link: notification.link || null,
         createdAt: notification.created_at,
         updatedAt: notification.updated_at,
-        isDeleted: notification.is_deleted,
-        link: notification.link,
-        createdAt: notification.created_at
+        isDeleted: notification.is_deleted
       }
     });
+
   } catch (error) {
     console.error('Create notification error:', error);
     return sendError(res, 500, 'Error creating notification', error);
