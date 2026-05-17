@@ -193,6 +193,9 @@ const getSession = async (req, res) => {
       return sendError(res, 404, 'Checkout session not found');
     }
 
+
+
+    
     const session = result.rows[0];
 
     if (session.expires_at < new Date()) {
