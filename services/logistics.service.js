@@ -69,7 +69,7 @@ async function applyDelivery(session, method, providerId) {
   const quote = quoteRes.rows[0];
   const shippingFee = parseFloat(quote.fee);
   const subtotal    = parseFloat(session.subtotal || session.total_amount || 0);
-  const discount    = parseFloat(session.discount_amount || 0);
+  const discount    = parseFloat(session.coupon_discount || session.discount_amount || 0);
   const newTotal    = subtotal - discount + shippingFee;
 
   const updated = await db.query(
@@ -77,7 +77,7 @@ async function applyDelivery(session, method, providerId) {
        delivery_method    = $1,
        delivery_provider  = $2,
        shipping_fee       = $3,
-       total_amount       = $4,
+       total              = $4,
        estimated_delivery = $5,
        status             = 'delivery_set',
        updated_at         = NOW()

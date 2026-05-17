@@ -8,6 +8,9 @@ const {
   applyCoupon,
   removeCoupon,
 } = require('../controllers/checkout.controller');
+const {
+  confirmCheckout,
+} = require('../controllers/order_creation.controller');
 
 const {
   getAddresses,
@@ -25,6 +28,7 @@ router.use(protect);
 // GET    /api/checkout/session/:sessionId   → get full session
 router.post('/session',                     createOrResumeSession);
 router.get('/session/:sessionId',           getSession);
+router.post('/session/:sessionId/confirm',  confirmCheckout);
 
 // ─── Coupon ──────────────────────────────────────────────────────────────────
 // POST   /api/checkout/session/:sessionId/coupon   → apply
