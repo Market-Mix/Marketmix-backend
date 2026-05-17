@@ -3,6 +3,25 @@ const db = require('../config/db');
 const { generateToken } = require('../utils/jwt');
 const { sendSuccess, sendError } = require('../utils/response');
 
+const createSellerWelcomeNotification = async (userId) => {
+  try {
+    await db.query(
+      `INSERT INTO notifications (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5), FALSE, FALSE, NOW(), NOW())`,
+      [
+        userId,
+        'Seller account created',
+        'Welcome to MarketMix! Your seller account has been successfully created. Visit your notifications page to get started.',
+        'account',
+        '/sellers/sellers notification page.html'
+      ]
+    );
+    console.log(`✅ Seller welcome notification created for user_id: ${userId}`);
+  } catch (error) {
+    console.error('❌ Failed to create seller welcome notification:', error);
+  }
+};
+
 /**
  * @desc    Register new user
  * @route   POST /api/auth/register
@@ -62,6 +81,10 @@ const register = async (req, res) => {
     );
 
     const user = result.rows[0];
+
+    if (user.role === 'seller') {
+      await createSellerWelcomeNotification(user.id);
+    }
 
     // Generate token
     const token = generateToken({
@@ -189,6 +212,10 @@ const googleRegister = async (req, res) => {
     );
 
     const user = result.rows[0];
+
+    if (user.role === 'seller') {
+      await createSellerWelcomeNotification(user.id);
+    }
 
     // Generate token
     const token = generateToken({
