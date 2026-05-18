@@ -356,7 +356,7 @@ function formatSession(s) {
     shippingFee:     parseFloat(s.shipping_fee || 0),
     couponCode:      s.coupon_code   || null,
     couponDiscount:  parseFloat(s.coupon_discount || 0),
-    total:           parseFloat(s.total_amount || s.total || 0),
+    total:           parseFloat(s.total || 0),
     deliveryMethod:  s.delivery_method  || null,
     deliveryProvider:s.delivery_provider || null,
     estimatedDelivery: s.estimated_delivery || null,

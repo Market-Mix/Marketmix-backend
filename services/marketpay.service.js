@@ -10,9 +10,9 @@
  * Supported methods: 'cod' | 'paystack' | 'flutterwave'
  */
 
-const codAdapter         = require('./adapters/cod.adapter');
-const paystackAdapter    = require('./adapters/paystack.adapter');
-const flutterwaveAdapter = require('./adapters/flutterwave.adapter');
+const codAdapter         = require('../adapters/cod.adapter');
+const paystackAdapter    = require('../adapters/paystack.adapter');
+const flutterwaveAdapter = require('../adapters/flutterwave.adapter');
 
 const ADAPTERS = {
   cod:         codAdapter,

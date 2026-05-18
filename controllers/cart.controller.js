@@ -1,6 +1,21 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 
+function normalizeCartItems(items) {
+  const itemMap = new Map();
+
+  for (const item of items) {
+    const { product_id } = item;
+    const quantity = parseInt(item.quantity, 10);
+    itemMap.set(product_id, (itemMap.get(product_id) || 0) + quantity);
+  }
+
+  return [...itemMap.entries()].map(([product_id, quantity]) => ({
+    product_id,
+    quantity
+  }));
+}
+
 /**
  * @desc    Add item to cart
  * @route   POST /api/cart/add
@@ -135,6 +150,177 @@ const addToCart = async (req, res) => {
       stack: error.stack
     });
     return sendError(res, 500, 'Error adding item to cart', error.message);
+  }
+};
+
+/**
+ * @desc    Merge client cart items into user's cart
+ * @route   POST /api/cart/merge
+ * @access  Private
+ */
+const mergeCart = async (req, res) => {
+  let client;
+
+  try {
+    const user_id = req.user.id;
+    const { items } = req.body;
+
+    if (!user_id) {
+      return sendError(res, 401, 'User not authenticated - user_id missing');
+    }
+
+    if (!Array.isArray(items)) {
+      return sendError(res, 400, 'Items must be an array');
+    }
+
+    const hasInvalidItem = items.some(
+      item =>
+        !item ||
+        !item.product_id ||
+        !Number.isInteger(item.quantity) ||
+        item.quantity < 1
+    );
+
+    if (hasInvalidItem) {
+      return sendError(res, 400, 'Each item must include product_id and a positive integer quantity');
+    }
+
+    client = await db.pool.connect();
+
+    const normalizedItems = normalizeCartItems(items);
+    const mergedItems = [];
+    const adjustments = [];
+
+    await client.query('BEGIN');
+
+    let cartRes = await client.query(
+      `SELECT id FROM cart
+       WHERE user_id = $1 AND is_active = true AND is_deleted = false
+       LIMIT 1
+       FOR UPDATE`,
+      [user_id]
+    );
+
+    let cartId;
+    if (cartRes.rows.length === 0) {
+      const createCartRes = await client.query(
+        `INSERT INTO cart (user_id, cart_type, is_active, is_deleted, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, NOW(), NOW())
+         RETURNING id`,
+        [user_id, 'shopping', true, false]
+      );
+      cartId = createCartRes.rows[0].id;
+    } else {
+      cartId = cartRes.rows[0].id;
+    }
+
+    for (const item of normalizedItems) {
+      const requested = item.quantity;
+
+      const productResult = await client.query(
+        `SELECT id, price, stock_quantity, name, main_image_url
+         FROM products
+         WHERE id = $1 AND is_active = true AND is_deleted = false
+         FOR UPDATE`,
+        [item.product_id]
+      );
+
+      if (productResult.rows.length === 0) {
+        adjustments.push({
+          product_id: item.product_id,
+          requested,
+          adjusted_to: 0,
+          reason: 'product_unavailable'
+        });
+        continue;
+      }
+
+      const product = productResult.rows[0];
+      const stockQuantity = parseInt(product.stock_quantity || 0, 10);
+
+      const existingCartItem = await client.query(
+        `SELECT id, quantity FROM cart_items
+         WHERE cart_id = $1 AND product_id = $2
+         FOR UPDATE`,
+        [cartId, item.product_id]
+      );
+
+      const existingQuantity = existingCartItem.rows.length
+        ? parseInt(existingCartItem.rows[0].quantity || 0, 10)
+        : 0;
+      const desiredQuantity = existingQuantity + requested;
+      const adjustedQuantity = Math.min(desiredQuantity, stockQuantity);
+
+      if (adjustedQuantity !== desiredQuantity) {
+        adjustments.push({
+          product_id: item.product_id,
+          requested,
+          adjusted_to: adjustedQuantity,
+          reason: 'insufficient_stock'
+        });
+      }
+
+      if (adjustedQuantity < 1) {
+        if (existingCartItem.rows.length) {
+          await client.query('DELETE FROM cart_items WHERE id = $1', [
+            existingCartItem.rows[0].id
+          ]);
+        }
+        continue;
+      }
+
+      let cartItem;
+      if (existingCartItem.rows.length) {
+        const updateResult = await client.query(
+          `UPDATE cart_items
+           SET quantity = $1, updated_at = NOW()
+           WHERE id = $2
+           RETURNING id, cart_id, product_id, quantity, updated_at`,
+          [adjustedQuantity, existingCartItem.rows[0].id]
+        );
+        cartItem = updateResult.rows[0];
+      } else {
+        const insertResult = await client.query(
+          `INSERT INTO cart_items (cart_id, product_id, quantity, created_at, updated_at)
+           VALUES ($1, $2, $3, NOW(), NOW())
+           RETURNING id, cart_id, product_id, quantity, created_at, updated_at`,
+          [cartId, item.product_id, adjustedQuantity]
+        );
+        cartItem = insertResult.rows[0];
+      }
+
+      mergedItems.push({
+        id: cartItem.id,
+        product_id: cartItem.product_id,
+        quantity: cartItem.quantity,
+        productName: product.name,
+        productImage: product.main_image_url,
+        price: parseFloat(product.price),
+        totalPrice: parseFloat(product.price) * cartItem.quantity
+      });
+    }
+
+    await client.query('COMMIT');
+
+    return sendSuccess(res, 200, 'Cart merged successfully', {
+      mergedItems,
+      adjustments
+    });
+  } catch (error) {
+    if (client) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+    console.error('Merge cart error:', {
+      message: error.message,
+      code: error.code,
+      detail: error.detail,
+      stack: error.stack
+    });
+    return sendError(res, 500, 'Error merging cart', error.message);
+  } finally {
+    if (client) {
+      client.release();
+    }
   }
 };
 
@@ -372,6 +558,7 @@ const clearCart = async (req, res) => {
 
 module.exports = {
   addToCart,
+  mergeCart,
   getCart,
   updateCartItem,
   removeFromCart,
