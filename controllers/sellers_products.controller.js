@@ -8,6 +8,7 @@ const db           = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const multer       = require('multer');
 const { logActivity } = require('./seller_activity.controller');
+const { uploadToCloudinary } = require('../utils/cloudinary');
 
 // ─── Multer ──────────────────────────────────────────────────────────────────
 const upload = multer({
@@ -34,30 +35,6 @@ async function resolveStoreId(req) {
     [storeId, req.user.id]
   );
   return r.rows.length ? storeId : null;
-}
-
-// ─── Supabase image upload ───────────────────────────────────────────────────
-async function uploadImageToSupabase(file, sellerId) {
-  const SUPABASE_URL         = process.env.SUPABASE_URL;
-  const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) throw new Error('Supabase storage not configured');
-
-  const ext      = file.originalname.split('.').pop() || 'jpg';
-  const filename = `${sellerId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-  const bucket   = 'product-images';
-
-  const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${filename}`, {
-    method:  'POST',
-    headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, 'Content-Type': file.mimetype, 'x-upsert': 'true' },
-    body:    file.buffer,
-  });
-
-  if (!uploadRes.ok) {
-    const err = await uploadRes.text();
-    throw new Error(`Image upload failed: ${err}`);
-  }
-
-  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${filename}`;
 }
 
 // ─── GET /api/seller/products ────────────────────────────────────────────────
@@ -138,7 +115,7 @@ const createSellerProduct = async (req, res) => {
 
     let mainImageUrl = req.body.image_url || null;
     if (req.file) {
-      try { mainImageUrl = await uploadImageToSupabase(req.file, sellerId); }
+      try { mainImageUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype, 'products'); }
       catch (e) { return sendError(res, 500, `Image upload failed: ${e.message}`); }
     }
 
@@ -202,7 +179,7 @@ const updateSellerProduct = async (req, res) => {
 
     let mainImageUrl = existing.main_image_url;
     if (req.file) {
-      try { mainImageUrl = await uploadImageToSupabase(req.file, sellerId); }
+      try { mainImageUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype, 'products'); }
       catch (e) { return sendError(res, 500, `Image upload failed: ${e.message}`); }
     } else if (req.body.image_url) {
       mainImageUrl = req.body.image_url;

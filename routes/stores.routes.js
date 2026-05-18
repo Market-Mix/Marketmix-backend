@@ -12,6 +12,7 @@ const {
 const { protect }  = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 const multer       = require('multer');
+const { uploadToCloudinary } = require('../utils/cloudinary');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -29,39 +30,13 @@ router.get('/public/:storeId/products', getPublicStoreProducts);
 /* ── Protected routes (seller only) ────────────────────────────────────── */
 router.use(protect, isSeller);
 
-// Logo upload — reuses same Supabase proxy pattern as KYC/product images
+// Logo upload via Cloudinary
 router.post('/logo-upload', upload.single('file'), async (req, res) => {
   const { sendSuccess, sendError } = require('../utils/response');
   if (!req.file) return sendError(res, 400, 'No file provided');
 
-  const SUPABASE_URL         = process.env.SUPABASE_URL;
-  const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY)
-    return sendError(res, 500, 'Storage not configured');
-
   try {
-    const ext      = req.file.originalname.split('.').pop() || 'jpg';
-    const filename = `${req.user.id}-store${Date.now()}.${ext}`;
-
-    const uploadRes = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/store-logos/${filename}`,
-      {
-        method:  'POST',
-        headers: {
-          Authorization:  `Bearer ${SUPABASE_SERVICE_KEY}`,
-          'Content-Type': req.file.mimetype,
-          'x-upsert':     'true',
-        },
-        body: req.file.buffer,
-      }
-    );
-
-    if (!uploadRes.ok) {
-      const err = await uploadRes.text();
-      return sendError(res, 500, `Upload failed: ${err}`);
-    }
-
-    const fileUrl = `${SUPABASE_URL}/storage/v1/object/public/store-logos/${filename}`;
+    const fileUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype, 'store-logos');
     return sendSuccess(res, 200, 'Logo uploaded', { url: fileUrl });
   } catch (err) {
     return sendError(res, 500, 'Error uploading logo', err.message);

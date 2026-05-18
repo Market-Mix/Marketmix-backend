@@ -7,6 +7,7 @@ const { sendSuccess, sendError } = require('../utils/response');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 const multer = require('multer');
+const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 
@@ -494,70 +495,17 @@ router.post('/kyc/upload', protect, isSeller, upload.single('file'), async (req,
 
 
 // ─── POST /api/seller/logo/upload ─────────────────────────────────────────────
-// Receives a file from the frontend, uploads it to Supabase Storage
-// in the 'store-logos' bucket using the service key (server-side only),
-// returns a signed URL.
+// Receives a file from the frontend, uploads it to Cloudinary,
+// returns the secure URL.
 router.post('/logo/upload', protect, isSeller, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return sendError(res, 400, 'No file provided');
     }
 
-    const timestamp  = Date.now();
-    const safeName   = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storagePath = `${req.user.id}-${timestamp}-${safeName}`;
+    const fileUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype, 'store-logos');
 
-    const SUPABASE_URL         = process.env.SUPABASE_URL;
-    const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-      console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY');
-      return sendError(res, 500, 'Storage service not configured');
-    }
-
-    // Upload file to Supabase Storage
-    const uploadRes = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/store-logos/${storagePath}`,
-      {
-        method:  'POST',
-        headers: {
-          Authorization:  `Bearer ${SUPABASE_SERVICE_KEY}`,
-          'Content-Type': req.file.mimetype,
-          'x-upsert':     'true',
-        },
-        body: req.file.buffer,
-      }
-    );
-
-    if (!uploadRes.ok) {
-      const errText = await uploadRes.text();
-      console.error('Supabase Storage upload error:', errText);
-      return sendError(res, 500, 'Failed to upload file');
-    }
-
-    // Generate a long-lived signed URL (10 years) for the store logo
-    const signedRes = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/sign/store-logos/${storagePath}`,
-      {
-        method:  'POST',
-        headers: {
-          Authorization:  `Bearer ${SUPABASE_SERVICE_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ expiresIn: 315360000 }), // 10 years in seconds
-      }
-    );
-
-    let fileUrl;
-    if (signedRes.ok) {
-      const signedData = await signedRes.json();
-      fileUrl = `${SUPABASE_URL}/storage/v1${signedData.signedURL}`;
-    } else {
-      // Fallback: store the path so admin can generate URLs later
-      fileUrl = `store-logos/${storagePath}`;
-    }
-
-    console.log(`✅ Store logo uploaded: ${storagePath}`);
+    console.log(`Store logo uploaded: ${fileUrl}`);
     return sendSuccess(res, 200, 'Logo uploaded successfully', { url: fileUrl });
 
   } catch (error) {
