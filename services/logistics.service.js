@@ -9,6 +9,7 @@
 
 const db             = require('../config/db');
 const sellerAdapter  = require('../adapter/seller.adapter');
+const shipbubbleAdapter = require('../adapter/shipbubble.adapter');
 const marketmixAdapter = require('../adapter/marketmix.adapter');
 
 /**
@@ -36,6 +37,10 @@ async function getDeliveryOptions(sessionId, items, address) {
   // MarketMix quotes (all providers)
   const mmQuotes = await marketmixAdapter.getQuotes(sessionId, items, address);
   quotes.push(...mmQuotes);
+
+  // Shipbubble quotes
+  const sbQuotes = await shipbubbleAdapter.getQuote(sessionId, items, address);
+  quotes.push(...sbQuotes);
 
   // Persist to delivery_quotes table
   await _persistQuotes(sessionId, quotes);
