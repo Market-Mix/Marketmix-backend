@@ -3,16 +3,16 @@
  *
  * Central router for all payment providers.
  * Add a new provider by:
- *   1. Creating adapter in ./adapters/<name>.adapter.js
+ *   1. Creating adapter in ./adapter/<name>.adapter.js
  *   2. Registering it in ADAPTERS below
  *   3. Adding env vars — zero changes to business logic
  *
  * Supported methods: 'cod' | 'paystack' | 'flutterwave'
  */
 
-const codAdapter         = require('../adapters/cod.adapter');
-const paystackAdapter    = require('../adapters/paystack.adapter');
-const flutterwaveAdapter = require('../adapters/flutterwave.adapter');
+const codAdapter         = require('../adapter/COD.adapter');
+const paystackAdapter    = require('../adapter/paystack.adapter');
+const flutterwaveAdapter = require('../adapter/flutterwave.adapter');
 
 const ADAPTERS = {
   cod:         codAdapter,
