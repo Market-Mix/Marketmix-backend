@@ -16,13 +16,17 @@ const db = require('../config/db');
 async function getQuote(sessionId, items, address, sellerId) {
   try {
     const settingsRes = await db.query(
-      `SELECT * FROM vendor_shipping_settings WHERE seller_id = $1 AND is_active = true LIMIT 1`,
+      `SELECT * FROM vendor_shipping_settings
+       WHERE seller_id = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
       [sellerId]
     );
 
     if (!settingsRes.rows.length) return null;
 
     const s = settingsRes.rows[0];
+    if (s.is_active === false) return null;
 
     // Calculate subtotal for this seller's items
     const sellerItems = items.filter(i => i.seller_id === sellerId);

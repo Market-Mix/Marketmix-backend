@@ -125,7 +125,7 @@ async function _persistQuotes(sessionId, quotes) {
         q.estimatedDays     || null,
         q.notes             || null,
         q.quoteReference    || null,
-        JSON.stringify(q.rawSettings || {}),
+        JSON.stringify(q.rawSettings || q.raw || {}),
         q.isMock ? true : false,
       ]
     );
