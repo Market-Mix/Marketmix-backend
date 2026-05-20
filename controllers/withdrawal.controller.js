@@ -81,6 +81,15 @@ const requestWithdrawal = async (req, res) => {
       [sellerId, -amount]
     );
 
+    // Create a seller notification for the withdrawal request
+    const notificationTitle = 'Withdrawal Request Submitted';
+    const notificationMessage = `Your withdrawal request for ₦${amount.toFixed(2)} via ${method === 'bank' ? 'Bank Transfer' : 'PayPal'} is now pending.`;
+    await client.query(
+      `INSERT INTO notifications (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5), FALSE, FALSE, NOW(), NOW())`,
+      [sellerId, notificationTitle, notificationMessage, 'withdrawal', '/sellers/sellers earning.html']
+    );
+
     await client.query('COMMIT');
 
     return sendSuccess(res, 201, 'Withdrawal request processed successfully', {
