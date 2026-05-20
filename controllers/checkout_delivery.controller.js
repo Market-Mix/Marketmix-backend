@@ -61,9 +61,10 @@ const selectDelivery = async (req, res) => {
     if (!method || !provider_id) {
       return sendError(res, 400, 'method and provider_id are required');
     }
-    if (!['seller', 'marketmix'].includes(method)) {
-      return sendError(res, 400, 'method must be "seller" or "marketmix"');
-    }
+    const validMethods = ['seller', 'marketmix', 'mock_standard', 'mock_express'];
+if (!method) {
+  return sendError(res, 400, 'method is required');
+}
 
     const session = await _getSession(sessionId, userId);
     if (!session) return sendError(res, 404, 'Checkout session not found');
