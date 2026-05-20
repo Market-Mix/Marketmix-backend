@@ -79,13 +79,28 @@ const initiatePayment = async (req, res) => {
     const paymentStatus = method === 'cod' ? 'unpaid' : 'unpaid';
 
     
-  const orderRes = await client.query(
+ // Before the INSERT, fetch address snapshot
+const addrSnap = session.address_snapshot 
+  ? (typeof session.address_snapshot === 'string' 
+      ? JSON.parse(session.address_snapshot) 
+      : session.address_snapshot)
+  : {};
+
+const shippingAddress = [
+  addrSnap.address_line1,
+  addrSnap.city,
+  addrSnap.state,
+  addrSnap.country
+].filter(Boolean).join(', ') || 'Address on file';
+
+const orderRes = await client.query(
   `INSERT INTO orders
      (buyer_id, checkout_session_id, status, payment_method,
       payment_status, subtotal, shipping_fee, discount_amount,
       total_amount, coupon_code, address_id, delivery_method,
-      delivery_provider, estimated_delivery, notes, created_at)
-   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
+      delivery_provider, estimated_delivery, notes,
+      shipping_address, created_at)
+   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
    RETURNING id, total_amount, status`,
   [
     userId, sessionId, orderStatus, method, paymentStatus,
@@ -99,9 +114,9 @@ const initiatePayment = async (req, res) => {
     session.delivery_provider || null,
     session.estimated_delivery || null,
     session.notes || null,
+    shippingAddress,
   ]
 );
-
 
     const order = orderRes.rows[0];
 
