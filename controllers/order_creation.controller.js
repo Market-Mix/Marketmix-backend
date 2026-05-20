@@ -333,6 +333,34 @@ const confirmCheckout = async (req, res) => {
           [item.quantity, item.product_id]
         );
       }
+
+      // Create a seller notification for the new vendor order
+      const buyerResult = await client.query(
+        'SELECT first_name, last_name FROM users WHERE id = $1',
+        [userId]
+      );
+      const buyerName = buyerResult.rows.length
+        ? `${buyerResult.rows[0].first_name || ''} ${buyerResult.rows[0].last_name || ''}`.trim()
+        : 'a buyer';
+
+      const title = 'New Order Received';
+      const message = `You have a new order from ${buyerName} for ${vendor.items.length} item${vendor.items.length === 1 ? '' : 's'}.`;
+      await client.query(
+        `INSERT INTO notifications
+           (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5, FALSE, FALSE, NOW(), NOW())`,
+        [
+          vendor.sellerId,
+          title,
+          message,
+          'order',
+          JSON.stringify({
+            orderId: order.id,
+            vendorOrderId: vendorOrder.id,
+            link: '/sellers/sellers order.html'
+          }),
+        ]
+      );
     }
 
     await client.query(
