@@ -331,7 +331,7 @@ const flutterwaveWebhook = async (req, res) => {
 // ── GET /api/payments/paystack/callback ───────────────────────────────────────
 const paystackCallback = async (req, res) => {
   const { reference } = req.query;
-  const frontendBase  = process.env.FRONTEND_URL || 'https://marketmix.vercel.app';
+  const frontendBase = process.env.FRONTEND_URL || 'https://marketmix.vercel.app';
 
   try {
     if (!reference) {
@@ -340,13 +340,13 @@ const paystackCallback = async (req, res) => {
 
     const result = await marketpay.verifyPayment('paystack', reference);
 
-    if (result.paymentStatus === 'paid') {
+    if (result.paymentStatus === 'paid' || result.status === 'success') {
       await _fulfillOrder(reference, result);
-      // Look up order ID to redirect properly
-     const txRes = await db.query(
-  `SELECT * FROM payment_transactions WHERE provider_reference = $1 LIMIT 1`,
-  [reference]
-);
+      
+      const txRow = await db.query(
+        `SELECT order_id FROM payment_transactions WHERE provider_reference = $1 LIMIT 1`,
+        [reference]
+      );
       const orderId = txRow.rows[0]?.order_id || '';
       return res.redirect(`${frontendBase}/buyers/order-success.html?orderId=${orderId}&ref=${reference}`);
     }
@@ -354,7 +354,7 @@ const paystackCallback = async (req, res) => {
     return res.redirect(`${frontendBase}/buyers/order-failed.html?ref=${reference}&status=${result.status}`);
   } catch (err) {
     console.error('paystackCallback error:', err);
-    return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=verification_error`);
+    return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=verification_error&ref=${reference}`);
   }
 };
 
