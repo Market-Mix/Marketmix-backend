@@ -78,28 +78,30 @@ const initiatePayment = async (req, res) => {
     const orderStatus  = method === 'cod' ? 'pending' : 'awaiting_payment';
     const paymentStatus = method === 'cod' ? 'unpaid' : 'unpaid';
 
-    const orderRes = await client.query(
-      `INSERT INTO orders
-         (user_id, buyer_id, checkout_session_id, status, payment_method,
-          payment_status, subtotal, shipping_fee, discount_amount,
-          total_amount, coupon_code, address_id, delivery_method,
-          delivery_provider, estimated_delivery, notes, created_at)
-       VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
-       RETURNING id, total_amount, status`,
-      [
-        userId, sessionId, orderStatus, method, paymentStatus,
-        parseFloat(session.subtotal || 0),
-        parseFloat(session.shipping_fee || 0),
-        parseFloat(session.coupon_discount || 0),
-        totalAmount,
-        session.coupon_code || null,
-        session.address_id,
-        session.delivery_method,
-        session.delivery_provider || null,
-        session.estimated_delivery || null,
-        session.notes || null,
-      ]
-    );
+    
+  const orderRes = await client.query(
+  `INSERT INTO orders
+     (buyer_id, checkout_session_id, status, payment_method,
+      payment_status, subtotal, shipping_fee, discount_amount,
+      total_amount, coupon_code, address_id, delivery_method,
+      delivery_provider, estimated_delivery, notes, created_at)
+   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
+   RETURNING id, total_amount, status`,
+  [
+    userId, sessionId, orderStatus, method, paymentStatus,
+    parseFloat(session.subtotal || 0),
+    parseFloat(session.shipping_fee || 0),
+    parseFloat(session.coupon_discount || 0),
+    totalAmount,
+    session.coupon_code || null,
+    session.address_id,
+    session.delivery_method,
+    session.delivery_provider || null,
+    session.estimated_delivery || null,
+    session.notes || null,
+  ]
+);
+
 
     const order = orderRes.rows[0];
 
@@ -154,19 +156,19 @@ const initiatePayment = async (req, res) => {
     });
 
     // 5. Save payment transaction
-    await client.query(
-      `INSERT INTO payment_transactions
-         (order_id, user_id, provider, reference, provider_transaction_id,
-          amount, currency, status, raw_response, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
-      [
-        order.id, userId, method,
-        payResult.reference,
-        payResult.transactionId || null,
-        totalAmount, 'NGN', 'pending',
-        JSON.stringify(payResult.raw || {}),
-      ]
-    );
+   await client.query(
+  `INSERT INTO payment_transactions
+     (order_id, user_id, provider, provider_reference, provider_transaction_id,
+      amount, currency, status, raw_response, created_at)
+   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
+  [
+    order.id, userId, method,
+    payResult.reference,
+    payResult.transactionId || null,
+    totalAmount, 'NGN', 'pending',
+    JSON.stringify(payResult.raw || {}),
+  ]
+);
 
     // 6. Update session → payment_initiated
     await client.query(
