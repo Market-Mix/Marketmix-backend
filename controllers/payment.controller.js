@@ -343,10 +343,10 @@ const paystackCallback = async (req, res) => {
     if (result.paymentStatus === 'paid') {
       await _fulfillOrder(reference, result);
       // Look up order ID to redirect properly
-      const txRow = await db.query(
-        `SELECT order_id FROM payment_transactions WHERE reference = $1 LIMIT 1`,
-        [reference]
-      );
+     const txRes = await db.query(
+  `SELECT * FROM payment_transactions WHERE provider_reference = $1 LIMIT 1`,
+  [reference]
+);
       const orderId = txRow.rows[0]?.order_id || '';
       return res.redirect(`${frontendBase}/buyers/order-success.html?orderId=${orderId}&ref=${reference}`);
     }
@@ -472,9 +472,9 @@ const processRefund = async (req, res) => {
 async function _fulfillOrder(reference, payResult) {
   try {
     const txRes = await db.query(
-      `SELECT * FROM payment_transactions WHERE reference = $1 LIMIT 1`,
-      [reference]
-    );
+  `SELECT * FROM payment_transactions WHERE provider_reference = $1 LIMIT 1`,
+  [reference]
+);
     if (!txRes.rows.length) {
       console.warn(`_fulfillOrder: no transaction found for reference ${reference}`);
       return;
