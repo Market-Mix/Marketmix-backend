@@ -368,13 +368,19 @@ const flutterwaveCallback = async (req, res) => {
       return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=cancelled`);
     }
 
-    const result = await marketpay.verifyPayment('flutterwave', tx_ref, transaction_id);
+    // Add logging to debug
+    console.log('FLW callback:', { tx_ref, transaction_id, status });
 
-    if (result.paymentStatus === 'paid') {
+    const result = await marketpay.verifyPayment('flutterwave', tx_ref, transaction_id);
+    
+    console.log('FLW verify result:', result.paymentStatus, result.status);
+
+    // Flutterwave uses 'successful' not 'paid'
+    if (result.paymentStatus === 'paid' || result.status === 'successful') {
       await _fulfillOrder(tx_ref, result);
       const txRow = await db.query(
-        `SELECT order_id FROM payment_transactions WHERE reference = $1 LIMIT 1`,
-        [tx_ref]
+        `SELECT order_id FROM payment_transactions WHERE provider_reference = $1 OR provider_transaction_id = $2 LIMIT 1`,
+        [tx_ref, String(transaction_id || '')]
       );
       const orderId = txRow.rows[0]?.order_id || '';
       return res.redirect(`${frontendBase}/buyers/order-success.html?orderId=${orderId}&ref=${tx_ref}`);
@@ -383,7 +389,7 @@ const flutterwaveCallback = async (req, res) => {
     return res.redirect(`${frontendBase}/buyers/order-failed.html?ref=${tx_ref}&status=${result.status}`);
   } catch (err) {
     console.error('flutterwaveCallback error:', err);
-    return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=verification_error`);
+    return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=verification_error&ref=${tx_ref}`);
   }
 };
 
@@ -430,10 +436,9 @@ const processRefund = async (req, res) => {
     const { orderId, reason, amount } = req.body;
 
     const txRes = await db.query(
-      `SELECT * FROM payment_transactions WHERE order_id = $1 AND status = 'success' LIMIT 1`,
-      [orderId]
-    );
-
+  `SELECT * FROM payment_transactions WHERE provider_reference = $1 LIMIT 1`,
+  [reference]
+);
     if (!txRes.rows.length) {
       return sendError(res, 404, 'No successful payment found for this order');
     }
