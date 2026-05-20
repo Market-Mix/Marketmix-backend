@@ -58,12 +58,8 @@ const selectDelivery = async (req, res) => {
     const userId        = req.user.id;
     const { method, provider_id } = req.body;
 
-    if (!method || !provider_id) {
-      return sendError(res, 400, 'method and provider_id are required');
-    }
-    const validMethods = ['seller', 'marketmix', 'mock_standard', 'mock_express'];
-if (!method) {
-  return sendError(res, 400, 'method is required');
+   if (!method || !provider_id) {
+  return sendError(res, 400, 'method and provider_id are required');
 }
 
     const session = await _getSession(sessionId, userId);
@@ -75,7 +71,7 @@ if (!method) {
 
     // If no quotes cached yet, regenerate
     const cached = await db.query(
-      `SELECT id FROM delivery_quotes WHERE session_id = $1 LIMIT 1`,
+      `SELECT id FROM delivery_quotes WHERE checkout_session_id = $1 LIMIT 1`,
       [sessionId]
     );
 
