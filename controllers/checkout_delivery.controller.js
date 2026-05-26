@@ -36,15 +36,18 @@ const getDeliveryOptions = async (req, res) => {
     const quotes = await logistics.getDeliveryOptions(sessionId, items, address);
 
     // Group for cleaner frontend consumption
-    const sellerOptions   = quotes.filter(q => q.provider === 'seller');
+    const sellerOptions    = quotes.filter(q => q.provider === 'seller');
     const marketmixOptions = quotes.filter(q => q.provider === 'marketmix');
+    const shipbubbleOptions = quotes.filter(q => q.provider === 'shipbubble');
 
-    return sendSuccess(res, 200, 'Delivery options fetched', {
-      sellerDelivery:    sellerOptions,
-      marketmixDelivery: marketmixOptions,
-      all:               quotes,
+      return sendSuccess(res, 200, 'Delivery options fetched', {
+      sellerDelivery:      sellerOptions,
+      marketmixDelivery:   marketmixOptions,
+      shipbubbleDelivery:  shipbubbleOptions,
+      all:                 quotes,
       address,
     });
+
   } catch (err) {
     console.error('getDeliveryOptions error:', err);
     return sendError(res, 500, 'Error fetching delivery options', err.message);

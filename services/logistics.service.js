@@ -20,11 +20,11 @@ async function getDeliveryOptions(sessionId, items, address) {
   } catch (e) { console.warn('[logistics] marketmix quote:', e.message); }
 
   try {
-    const sbResult = await shipbubbleAdapter.getQuote(sessionId, items, address);
-    if (Array.isArray(sbResult)) quotes.push(...sbResult);
-    else if (sbResult) quotes.push(sbResult);
+    const sbQuotes = await shipbubbleAdapter.getQuotes(sessionId, items, address);
+    if (Array.isArray(sbQuotes)) quotes.push(...sbQuotes);
   } catch (e) { console.warn('[logistics] shipbubble quote:', e.message); }
 
+  
   try { await _persistQuotes(sessionId, quotes); }
   catch (e) { console.warn('[logistics] persist quotes skipped:', e.message); }
 
