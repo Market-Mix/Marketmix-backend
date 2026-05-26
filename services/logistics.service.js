@@ -24,7 +24,7 @@ async function getDeliveryOptions(sessionId, items, address) {
     if (Array.isArray(sbQuotes)) quotes.push(...sbQuotes);
   } catch (e) { console.warn('[logistics] shipbubble quote:', e.message); }
 
-  
+
   try { await _persistQuotes(sessionId, quotes); }
   catch (e) { console.warn('[logistics] persist quotes skipped:', e.message); }
 
@@ -36,9 +36,10 @@ let quote = null;
 try {
   const quoteRes = await db.query(
     `SELECT * FROM delivery_quotes
-     WHERE checkout_session_id = $1 AND provider = $2
+     WHERE checkout_session_id = $1
+       AND (provider = $2 OR quote_reference LIKE $3)
      ORDER BY id DESC LIMIT 1`,
-    [session.id, providerId]
+    [session.id, providerId, `%${providerId}%`]
   );
   quote = quoteRes.rows[0] || null;
 } catch (e) { console.warn('[logistics] quote lookup failed:', e.message); }
