@@ -982,6 +982,46 @@ router.get('/public/:id', async (req, res) => {
     return sendError(res, 500, 'Error fetching store profile', error);
   }
 });
- 
+
+// ─── GET /api/seller/refund-cases — Fetch seller's refund cases ────────────────
+router.get('/refund-cases', protect, isSeller, async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+
+    const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
+    const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+    if (!SUPABASE_SERVICE_KEY) {
+      console.warn('⚠️ SUPABASE_SERVICE_KEY not configured. Refund cases will not be fetched.');
+      return sendSuccess(res, 200, 'Refund cases (service key not configured)', []);
+    }
+
+    // Fetch refund cases from Supabase using service role key
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/refund_cases?select=*&seller_id=eq.${sellerId}&order=created_at.desc`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+          'apikey': SUPABASE_SERVICE_KEY,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      console.error(`Supabase fetch failed: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error('Supabase error:', errorText);
+      return sendError(res, response.status, 'Failed to fetch refund cases from Supabase', errorText);
+    }
+
+    const data = await response.json();
+    return sendSuccess(res, 200, 'Refund cases fetched successfully', data);
+  } catch (error) {
+    console.error('Error fetching refund cases:', error);
+    return sendError(res, 500, 'Error fetching refund cases', error.message);
+  }
+});
 
 module.exports = router;

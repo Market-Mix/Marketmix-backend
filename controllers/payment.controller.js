@@ -348,10 +348,10 @@ const paystackCallback = async (req, res) => {
         [reference]
       );
       const orderId = txRow.rows[0]?.order_id || '';
-      return res.redirect(`${frontendBase}/buyers/order-success.html?orderId=${orderId}&ref=${reference}`);
+      return res.redirect(`${frontendBase}/buyers/order-success.html?orderId=${orderId}&ref=${reference}&method=paystack`);
     }
 
-    return res.redirect(`${frontendBase}/buyers/order-failed.html?ref=${reference}&status=${result.status}`);
+    return res.redirect(`${frontendBase}/buyers/order-failed.html?ref=${reference}&status=${result.status || 'failed'}&method=paystack`);
   } catch (err) {
     console.error('paystackCallback error:', err);
     return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=verification_error&ref=${reference}`);
@@ -383,10 +383,10 @@ const flutterwaveCallback = async (req, res) => {
         [tx_ref, String(transaction_id || '')]
       );
       const orderId = txRow.rows[0]?.order_id || '';
-      return res.redirect(`${frontendBase}/buyers/order-success.html?orderId=${orderId}&ref=${tx_ref}`);
+      return res.redirect(`${frontendBase}/buyers/order-success.html?orderId=${orderId}&ref=${tx_ref}&method=flutterwave`);
     }
 
-    return res.redirect(`${frontendBase}/buyers/order-failed.html?ref=${tx_ref}&status=${result.status}`);
+    return res.redirect(`${frontendBase}/buyers/order-failed.html?ref=${tx_ref}&status=${result.status || status || 'failed'}&method=flutterwave`);
   } catch (err) {
     console.error('flutterwaveCallback error:', err);
     return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=verification_error&ref=${tx_ref}`);

@@ -52,23 +52,50 @@ const createOrder = async (req, res) => {
     const order = orderResult.rows[0];
 
     // Create order items
+    const sellerIds = new Set();
     for (const item of items) {
       const product = await db.query(
         'SELECT price, seller_id FROM products WHERE id = $1',
         [item.product_id]
       );
+      const sellerId = product.rows[0].seller_id;
+      sellerIds.add(sellerId);
 
       await db.query(
         `INSERT INTO order_items (
           order_id, product_id, seller_id, quantity, price_at_purchase
         ) VALUES ($1, $2, $3, $4, $5)`,
-        [order.id, item.product_id, product.rows[0].seller_id, item.quantity, product.rows[0].price]
+        [order.id, item.product_id, sellerId, item.quantity, product.rows[0].price]
       );
 
       // Update stock
       await db.query(
         'UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2',
         [item.quantity, item.product_id]
+      );
+    }
+
+    // Create seller notifications for each seller involved in this order.
+    const buyerResult = await db.query(
+      'SELECT first_name, last_name FROM users WHERE id = $1',
+      [user_id]
+    );
+    const buyerName = buyerResult.rows.length
+      ? `${buyerResult.rows[0].first_name || ''} ${buyerResult.rows[0].last_name || ''}`.trim()
+      : 'a buyer';
+
+    for (const sellerId of sellerIds) {
+      await db.query(
+        `INSERT INTO notifications
+           (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,FALSE,FALSE,NOW(),NOW())`,
+        [
+          sellerId,
+          'New Order Received',
+          `You have received a new order from ${buyerName}.`,
+          'order',
+          JSON.stringify({ orderId: order.id, link: '/sellers/sellers order.html' })
+        ]
       );
     }
 
