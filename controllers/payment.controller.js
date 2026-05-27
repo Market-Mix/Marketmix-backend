@@ -505,6 +505,31 @@ async function _fulfillOrder(reference, payResult) {
       [tx.order_id]
     );
 
+    // Create escrow record
+    const orderData = await db.query(
+      `SELECT o.buyer_id, oi.seller_id, o.total_amount
+       FROM orders o
+       JOIN order_items oi ON oi.order_id = o.id
+       WHERE o.id = $1
+       LIMIT 1`,
+      [tx.order_id]
+    );
+
+    if (orderData.rows.length) {
+      const { buyer_id, seller_id, total_amount } = orderData.rows[0];
+      const autoReleaseAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // 3 days
+
+      await db.query(
+        `INSERT INTO escrow_transactions
+           (order_id, seller_id, buyer_id, amount, status,
+            payment_reference, payment_provider, auto_release_at)
+         VALUES ($1,$2,$3,$4,'held',$5,$6,$7)
+         ON CONFLICT DO NOTHING`,
+        [tx.order_id, seller_id, buyer_id, total_amount,
+         reference, tx.provider, autoReleaseAt]
+      );
+    }
+
     // Update vendor orders
     await db.query(
       `UPDATE vendor_orders SET status = 'confirmed', updated_at = NOW()

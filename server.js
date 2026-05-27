@@ -82,6 +82,17 @@ app.use('/api/seller/shipping', vendorRoutes);
 app.use('/api/seller', sellerRoutes);           // ← AFTER /api/seller/stores
 app.use('/api/shops/following', shopFollowsRoutes);
 
+
+
+
+const { execFile } = require('child_process');
+setInterval(() => {
+  execFile('node', ['scripts/escrow_auto_release.js'], (err, stdout) => {
+    if (err) console.error('Escrow cron error:', err.message);
+    else console.log(stdout);
+  });
+}, 6 * 60 * 60 * 1000); // Every 6 hours
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({

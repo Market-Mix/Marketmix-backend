@@ -1024,4 +1024,23 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
   }
 });
 
+// ─── GET /api/seller/escrow ────────────────────────────────────────────────────
+router.get('/escrow', protect, isSeller, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT et.id, et.order_id, et.amount, et.status,
+              et.held_at, et.auto_release_at, et.released_at, et.notes
+       FROM escrow_transactions et
+       WHERE et.seller_id = $1
+       ORDER BY et.created_at DESC
+       LIMIT 50`,
+      [req.user.id]
+    );
+    return sendSuccess(res, 200, 'Escrow records', { escrows: result.rows });
+  } catch (error) {
+    console.error('Get escrow records error:', error);
+    return sendError(res, 500, 'Error fetching escrow records', error.message);
+  }
+});
+
 module.exports = router;

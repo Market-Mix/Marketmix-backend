@@ -409,6 +409,46 @@ const confirmDelivery = async (req, res) => {
       [orderId]
     );
 
+    // Release escrow when buyer confirms delivery
+    const escrowUpdate = await db.query(
+      `UPDATE escrow_transactions
+       SET status = 'released',
+           released_at = NOW(),
+           updated_at = NOW()
+       WHERE order_id = $1 AND status = 'held'
+       RETURNING seller_id, amount`,
+      [orderId]
+    );
+
+    // Credit seller balance
+    if (escrowUpdate.rows.length) {
+      const { seller_id, amount } = escrowUpdate.rows[0];
+      const COMMISSION = 0.05; // 5% platform fee
+      const netAmount = parseFloat(amount) * (1 - COMMISSION);
+
+      await db.query(
+        `UPDATE seller_profiles
+         SET available_balance = available_balance + $1,
+             total_earnings = total_earnings + $1,
+             updated_at = NOW()
+         WHERE user_id = $2`,
+        [netAmount, seller_id]
+      );
+
+      // Notify seller
+      await db.query(
+        `INSERT INTO notifications
+           (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
+         VALUES ($1,'Funds Released',
+           $2,'payment',
+           jsonb_build_object('orderId',$3,'amount',$4,'link','/sellers/sellers earning.html'),
+           FALSE,FALSE,NOW(),NOW())`,
+        [seller_id,
+         `₦${netAmount.toFixed(2)} has been released to your account for order #${orderId.toString().slice(0,8).toUpperCase()}.`,
+         orderId, netAmount]
+      );
+    }
+
     console.log(`✅ Delivery confirmed for order ${orderId} by user ${user_id}`);
 
     return sendSuccess(res, 200, 'Delivery confirmed successfully', {
@@ -491,6 +531,16 @@ const submitReport = async (req, res) => {
     );
 
     const report = reportResult.rows[0];
+
+    // Freeze escrow when report is submitted
+    await db.query(
+      `UPDATE escrow_transactions
+       SET status = 'disputed',
+           updated_at = NOW(),
+           notes = CONCAT(COALESCE(notes,''), ' | Dispute filed: ', $2)
+       WHERE order_id = $1 AND status IN ('held','released')`,
+      [orderId, reason]
+    );
 
     console.log(`✅ Report submitted for order ${orderId} by user ${user_id}, Report ID: ${report.id}`);
 
