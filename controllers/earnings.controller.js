@@ -29,7 +29,7 @@ const getSellerEarnings = async (req, res) => {
         COALESCE(SUM(net_amount) FILTER (WHERE status = 'pending'), 0) as pending_earnings,
         COALESCE(SUM(net_amount) FILTER (WHERE status = 'withdrawn'), 0) as total_withdrawn
        FROM earnings 
-       WHERE seller_id = $1${storeFilter}`,
+       WHERE seller_id = $1${storeId ? ' AND store_id = $2' : ''}`,
       earningsParams
     );
 
