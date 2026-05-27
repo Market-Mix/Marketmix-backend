@@ -142,6 +142,7 @@ const getUserOrders = async (req, res) => {
           json_build_object(
             'id', oi.id,
             'product_id', oi.product_id,
+            'image', p.main_image_url,
             'product_name', p.name,
             'quantity', oi.quantity,
             'price', oi.price_at_purchase
