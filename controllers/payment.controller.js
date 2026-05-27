@@ -517,7 +517,7 @@ async function _fulfillOrder(reference, payResult) {
 
     if (orderData.rows.length) {
       const { buyer_id, seller_id, total_amount } = orderData.rows[0];
-      const autoReleaseAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // 3 days
+      const autoReleaseAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000); // 2 days
 
       await db.query(
         `INSERT INTO escrow_transactions

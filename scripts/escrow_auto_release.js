@@ -8,13 +8,25 @@ async function autoReleaseEscrow() {
   try {
     await client.query('BEGIN');
 
-    // Find overdue held escrows
+    // Find escrows where:
+    // 1. Held + buyer hasn't confirmed delivery after 2 days
+    // 2. Delivered + 24hrs passed with no dispute
     const due = await client.query(
-      `SELECT et.*, o.id AS order_id
+      `SELECT et.*, o.id AS order_id, o.status AS order_status, o.delivery_confirmed_at
        FROM escrow_transactions et
        JOIN orders o ON o.id = et.order_id
        WHERE et.status = 'held'
-         AND et.auto_release_at <= NOW()
+         AND (
+           -- Case 1: buyer never confirmed delivery after 2 days
+           (o.status != 'delivered' AND et.held_at <= NOW() - INTERVAL '2 days')
+           OR
+           -- Case 2: buyer confirmed delivery but no dispute after 24hrs
+           (o.status = 'delivered' AND o.delivery_confirmed_at <= NOW() - INTERVAL '24 hours'
+            AND NOT EXISTS (
+              SELECT 1 FROM order_reports r 
+              WHERE r.order_id = o.id AND r.status IN ('pending','under_review')
+            ))
+         )
        FOR UPDATE SKIP LOCKED`
     );
 

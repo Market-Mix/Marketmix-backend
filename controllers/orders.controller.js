@@ -532,14 +532,19 @@ const submitReport = async (req, res) => {
 
     const report = reportResult.rows[0];
 
-    // Freeze escrow when report is submitted
+    const escrowCheck = await db.query(
+      `SELECT id, status FROM escrow_transactions WHERE order_id=$1 LIMIT 1`,
+      [orderId]
+    );
+
+    if (!escrowCheck.rows.length || escrowCheck.rows[0].status === 'released') {
+      return sendError(res, 400, 'Dispute window has closed, funds already released to seller');
+    }
+
     await db.query(
-      `UPDATE escrow_transactions
-       SET status = 'disputed',
-           updated_at = NOW(),
-           notes = CONCAT(COALESCE(notes,''), ' | Dispute filed: ', $2)
-       WHERE order_id = $1 AND status IN ('held','released')`,
-      [orderId, reason]
+      `UPDATE escrow_transactions SET status='disputed', updated_at=NOW()
+       WHERE order_id=$1 AND status='held'`,
+      [orderId]
     );
 
     console.log(`✅ Report submitted for order ${orderId} by user ${user_id}, Report ID: ${report.id}`);
