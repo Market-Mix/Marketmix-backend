@@ -30,6 +30,31 @@ async function notificationHasLinkColumn() {
   try {
     const { user_id, title, message, type = 'info', link } = req.body;
 
+    // Normalize common link shapes to avoid storing broken relative paths
+    let normalizedLink = (link || '').toString().trim();
+    if (normalizedLink) {
+      const lower = normalizedLink.toLowerCase();
+      // Fix common wishlist filename mismatches
+      if (lower === 'buyers wishlist.html' || lower === 'buyers/wishlist.html' || lower === '/buyers/wishlist.html') {
+        normalizedLink = '/buyers/buyers%20wishlist.html';
+      } else if (lower === 'buyers homepage.html' || lower === 'buyers/homepage.html' || lower === '/buyers/homepage.html') {
+        normalizedLink = '/buyers/buyers%20homepage.html';
+      } else {
+        // If it's a bare filename like cart.html, assume it's under /buyers/
+        if (/^[^/]+\.html$/i.test(normalizedLink)) {
+          normalizedLink = '/buyers/' + encodeURI(normalizedLink);
+        } else if (!/^https?:\/\//i.test(normalizedLink) && !normalizedLink.startsWith('/')) {
+          // Ensure leading slash for other relative paths and encode spaces
+          normalizedLink = '/' + encodeURI(normalizedLink);
+        } else {
+          // Already absolute or starts with slash - encode any spaces
+          normalizedLink = encodeURI(normalizedLink);
+        }
+      }
+    } else {
+      normalizedLink = null;
+    }
+
     console.log('📩 createNotification request body:', req.body);
 
     if (!user_id || !title || !message) {
@@ -56,14 +81,14 @@ async function notificationHasLinkColumn() {
         VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, NOW(), NOW())
         RETURNING id, user_id, title, message, type, is_read, link, created_at, updated_at, is_deleted
       `;
-      params = [user_id, title, message, type, link || null];
+      params = [user_id, title, message, type, normalizedLink || null];
     } else {
       insertQuery = `
         INSERT INTO notifications (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
         VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5), FALSE, FALSE, NOW(), NOW())
         RETURNING id, user_id, title, message, type, is_read, data->>'link' AS link, created_at, updated_at, is_deleted
       `;
-      params = [user_id, title, message, type, link || null];
+      params = [user_id, title, message, type, normalizedLink || null];
     }
 
     const result = await db.query(insertQuery, params);
