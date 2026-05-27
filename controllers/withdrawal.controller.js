@@ -109,13 +109,27 @@ const requestWithdrawal = async (req, res) => {
       `UPDATE seller_profiles SET available_balance=available_balance-$1 WHERE user_id=$2`,
       [amount, req.user.id]
     );
+
+    // Insert into withdrawals table for history
     await client.query(
-      `INSERT INTO earnings(seller_id,amount,commission,status,created_at) VALUES($1,$2,0,'withdrawn',NOW())`,
-      [req.user.id, -amount]
+      `INSERT INTO withdrawals 
+        (seller_id, amount, bank_account_name, bank_account_number, bank_name, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'pending', NOW())`,
+      [req.user.id, amount, p.bank_account_name, p.bank_account_number, p.bank_name]
     );
+
+    // Record in earnings as withdrawn transaction
+    await client.query(
+      `INSERT INTO earnings(seller_id, amount, net_amount, commission, status, created_at)
+       VALUES($1, $2, $3, 0, 'withdrawn', NOW())`,
+      [req.user.id, -amount, -amount]
+    );
+
     await client.query(
       `INSERT INTO notifications(user_id,title,message,type,data,is_read,is_deleted,created_at,updated_at)
-       VALUES($1,'Withdrawal Requested',$2,'withdrawal',jsonb_build_object('link','/sellers/sellers earning.html'),FALSE,FALSE,NOW(),NOW())`,
+       VALUES($1,'Withdrawal Requested',$2,'withdrawal',
+       jsonb_build_object('link','/sellers/sellers earning.html'),
+       FALSE,FALSE,NOW(),NOW())`,
       [req.user.id, `Withdrawal of ₦${Number(amount).toFixed(2)} to ${p.bank_name} (${p.bank_account_number}) is processing.`]
     );
 
