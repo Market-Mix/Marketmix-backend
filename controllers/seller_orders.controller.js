@@ -244,20 +244,23 @@ const updateSellerOrderStatus = async (req, res) => {
       [status.toLowerCase(), orderId]
     );
 
-    const buyerRes = await db.query('SELECT buyer_id FROM orders WHERE id = $1', [orderId]);
-    const buyerId = buyerRes.rows[0]?.buyer_id;
-    if (buyerId) {
-      await db.query(
-        `INSERT INTO notifications (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
-         VALUES ($1,$2,$3,'order',jsonb_build_object('orderId',$4,'link','/buyers/buyers order & tracking.html'),FALSE,FALSE,NOW(),NOW())`,
-        [buyerId, `Order Update`, `Your order #${String(orderId).substring(0,8).toUpperCase()} is now ${status}.`, orderId]
-      );
-    }
-
-    // ── Activity log ──
     const shortId   = String(orderId).substring(0, 8);
     const actType   = ACTIVITY_TYPE_MAP[status.toLowerCase()] || 'order_updated';
     const label     = status.charAt(0).toUpperCase() + status.slice(1);
+
+    await db.query(
+      `INSERT INTO notifications 
+         (user_id, title, message, type, is_read, is_deleted, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, FALSE, FALSE, NOW(), NOW())`,
+      [
+        sellerId,
+        `Order #${shortId} marked as ${label}`,
+        `Status changed from ${currentStatus} to ${status}`,
+        'order'
+      ]
+    );
+
+    // ── Activity log ──
     await logActivity({
       sellerId,
       type:       actType,
