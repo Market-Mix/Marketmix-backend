@@ -1,21 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const {
-  getWithdrawals,
-  requestWithdrawal,
-  setWithdrawalPin,
-  saveBankAccount,
-  getBankAccount
-} = require('../controllers/withdrawal.controller');
 const { protect } = require('../middlewares/auth.middleware');
-const { isSeller } = require('../middlewares/role.middleware');
+const {
+  addToWishlist,
+  getWishlist,
+  createGuestWishlist,
+  addToGuestWishlist,
+  removeFromWishlist
+} = require('../controllers/wishlist.controller');
 
-router.use(protect, isSeller);
-
-router.get('/', getWithdrawals);
-router.post('/', requestWithdrawal);
-router.post('/set-pin', setWithdrawalPin);
-router.post('/bank-account', saveBankAccount);
-router.get('/bank-account', getBankAccount);
+router.post('/add', protect, addToWishlist);
+router.get('/', protect, getWishlist);
+router.delete('/remove/:id', protect, removeFromWishlist);
+router.post('/guest/create', createGuestWishlist);
+router.post('/guest/add', addToGuestWishlist);
 
 module.exports = router;

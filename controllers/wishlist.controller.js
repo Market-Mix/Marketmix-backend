@@ -1,16 +1,51 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 
+const ensureBuyerRole = async (req, res) => {
+  const user_id = req.user && req.user.id;
+  if (!user_id) {
+    sendError(res, 401, 'Not authenticated');
+    return null;
+  }
+
+  const userRoleResult = await db.query(
+    `SELECT role FROM users WHERE id = $1 AND COALESCE(is_deleted, false) = false LIMIT 1`,
+    [user_id]
+  );
+  const userRecord = userRoleResult.rows[0];
+
+  console.log('Wishlist auth check:', {
+    user_id,
+    tokenRole: req.user && req.user.role,
+    roleSource: 'database',
+    dbRole: userRecord && userRecord.role,
+    dbQueryRows: userRoleResult.rows
+  });
+
+  if (!userRecord) {
+    sendError(res, 401, 'User not found');
+    return null;
+  }
+
+  if (userRecord.role !== 'buyer') {
+    sendError(res, 403, 'Access denied. Buyer role required');
+    return null;
+  }
+
+  req.user.role = userRecord.role;
+  return user_id;
+};
+
 /**
  * Add item to wishlist
  * POST /api/wishlist/add
  */
 const addToWishlist = async (req, res) => {
   try {
-    const user_id = req.user && req.user.id;
+    const user_id = await ensureBuyerRole(req, res);
+    if (!user_id) return;
     const { product_id } = req.body;
 
-    if (!user_id) return sendError(res, 401, 'Not authenticated');
     if (!product_id) return sendError(res, 400, 'product_id required');
 
     // Find or create a wishlist for this user
@@ -54,8 +89,8 @@ const addToWishlist = async (req, res) => {
  */
 const getWishlist = async (req, res) => {
   try {
-    const user_id = req.user && req.user.id;
-    if (!user_id) return sendError(res, 401, 'Not authenticated');
+    const user_id = await ensureBuyerRole(req, res);
+    if (!user_id) return;
 
     const result = await db.query(
       `SELECT wi.id, wi.product_id, p.name, p.price, p.main_image_url, wi.added_at
@@ -131,10 +166,10 @@ const addToGuestWishlist = async (req, res) => {
 // Add this to your wishlist.controller.js
 const removeFromWishlist = async (req, res) => {
   try {
-    const user_id = req.user && req.user.id;
+    const user_id = await ensureBuyerRole(req, res);
     const { id } = req.params; // wishlist_item id
     
-    if (!user_id) return sendError(res, 401, 'Not authenticated');
+    if (!user_id) return;
     
     await db.query(
       `DELETE FROM wishlist_items 
