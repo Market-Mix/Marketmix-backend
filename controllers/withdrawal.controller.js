@@ -154,7 +154,6 @@ const requestWithdrawal = async (req, res) => {
     return sendError(res, 500, 'Error processing withdrawal', err.message);
   } finally { client.release(); }
 };
-
 module.exports = {
   getWithdrawals,
   requestWithdrawal,

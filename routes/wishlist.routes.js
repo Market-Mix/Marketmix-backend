@@ -1,16 +1,21 @@
 const express = require('express');
 const router = express.Router();
-const wishlist = require('../controllers/wishlist.controller');
+const {
+  getWithdrawals,
+  requestWithdrawal,
+  setWithdrawalPin,
+  saveBankAccount,
+  getBankAccount
+} = require('../controllers/withdrawal.controller');
 const { protect } = require('../middlewares/auth.middleware');
+const { isSeller } = require('../middlewares/role.middleware');
 
-// Authenticated wishlist endpoints
-router.post('/add', protect, wishlist.addToWishlist);
-router.get('/', protect, wishlist.getWishlist);
-router.delete('/remove/:id', protect, wishlist.removeFromWishlist);
+router.use(protect, isSeller);
 
-// Guest wishlist endpoints (no auth required)
-router.post('/guest/create', wishlist.createGuestWishlist);
-router.post('/guest/add', wishlist.addToGuestWishlist);
-
+router.get('/', getWithdrawals);
+router.post('/', requestWithdrawal);
+router.post('/set-pin', setWithdrawalPin);
+router.post('/bank-account', saveBankAccount);
+router.get('/bank-account', getBankAccount);
 
 module.exports = router;
