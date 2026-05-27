@@ -222,12 +222,19 @@ const updateSellerOrderStatus = async (req, res) => {
     if (ownerCheck.rows.length === 0) return sendError(res, 404, 'Order not found or does not contain your products');
 
     const currentStatus = ownerCheck.rows[0].status;
+    const newStatusLower = status.toLowerCase();
     const progression   = ['pending', 'confirmed', 'processing', 'shipped', 'delivered'];
     const currentIdx    = progression.indexOf(currentStatus);
-    const newIdx        = progression.indexOf(status.toLowerCase());
+    const newIdx        = progression.indexOf(newStatusLower);
 
-    if (newIdx <= currentIdx) {
+    // Allow if same status (idempotent) or forward progression
+    if (newIdx < currentIdx) {
       return sendError(res, 400, `Cannot move order from "${currentStatus}" to "${status}". Status can only move forward.`);
+    }
+    // If already at this status, just return success silently
+    if (newIdx === currentIdx) {
+      const existingRow = ownerCheck.rows[0];
+      return sendSuccess(res, 200, `Order is already "${status}"`, { order: { id: existingRow.id, status: currentStatus, updated_at: new Date() } });
     }
 
     const result = await db.query(
