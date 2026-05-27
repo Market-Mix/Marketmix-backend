@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getWithdrawals, requestWithdrawal } = require('../controllers/withdrawal.controller');
+const { setWithdrawalPin, saveBankAccount, getBankAccount, requestWithdrawal, getWithdrawals } = require('../controllers/withdrawal.controller');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 
@@ -14,6 +15,8 @@ router.use(isSeller);
  * @access  Private (Seller)
  */
 router.get('/', getWithdrawals);
+router.get('/bank-account', getBankAccount);
+
 
 /**
  * @route   POST /api/withdrawals
@@ -21,5 +24,7 @@ router.get('/', getWithdrawals);
  * @access  Private (Seller)
  */
 router.post('/', requestWithdrawal);
+router.post('/set-pin', setWithdrawalPin);
+router.post('/bank-account', saveBankAccount);
 
 module.exports = router;

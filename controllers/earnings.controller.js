@@ -9,15 +9,18 @@ const { sendSuccess, sendError } = require('../utils/response');
 const getSellerEarnings = async (req, res) => {
   try {
     const sellerId = req.user.id;
+    const storeId = req.headers['x-store-id'] || null;
+    const storeFilter = storeId ? ' AND e.store_id = $2' : '';
+    const earningsParams = storeId ? [sellerId, storeId] : [sellerId];
 
-    // 1. Get summary from seller_profiles (cached totals)
+    // 1. Get summary from seller_profiles or stores (cached totals)
     const profileResult = await db.query(
       `SELECT 
         COALESCE(total_earnings, 0) as total_earnings,
         COALESCE(available_balance, 0) as available_balance
-       FROM seller_profiles 
-       WHERE user_id = $1`,
-      [sellerId]
+       FROM ${storeId ? 'stores' : 'seller_profiles'}
+       WHERE ${storeId ? 'id' : 'user_id'} = $1`,
+      [storeId || sellerId]
     );
 
     // 2. Get detailed summary from earnings table
@@ -26,8 +29,8 @@ const getSellerEarnings = async (req, res) => {
         COALESCE(SUM(net_amount) FILTER (WHERE status = 'pending'), 0) as pending_earnings,
         COALESCE(SUM(net_amount) FILTER (WHERE status = 'withdrawn'), 0) as total_withdrawn
        FROM earnings 
-       WHERE seller_id = $1`,
-      [sellerId]
+       WHERE seller_id = $1${storeFilter}`,
+      earningsParams
     );
 
     // 3. Get recent transactions
@@ -45,10 +48,10 @@ const getSellerEarnings = async (req, res) => {
        LEFT JOIN order_items oi ON e.order_item_id = oi.id
        LEFT JOIN products p ON oi.product_id = p.id
        LEFT JOIN orders o ON e.order_id = o.id
-       WHERE e.seller_id = $1
+       WHERE e.seller_id = $1${storeFilter}
        ORDER BY e.created_at DESC
        LIMIT 50`,
-      [sellerId]
+      earningsParams
     );
 
     // 4. Get earnings by product
@@ -60,10 +63,10 @@ const getSellerEarnings = async (req, res) => {
        FROM earnings e
        JOIN order_items oi ON e.order_item_id = oi.id
        JOIN products p ON oi.product_id = p.id
-       WHERE e.seller_id = $1
+       WHERE e.seller_id = $1${storeFilter}
        GROUP BY p.id, p.name
        ORDER BY revenue DESC`,
-      [sellerId]
+      earningsParams
     );
 
     const profile = profileResult.rows[0] || { total_earnings: 0, available_balance: 0 };
