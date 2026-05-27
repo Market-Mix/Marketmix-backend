@@ -28,7 +28,7 @@ async function autoReleaseEscrow() {
       await client.query(
         `UPDATE escrow_transactions
          SET status='released', released_at=NOW(), updated_at=NOW(),
-             notes='Auto-released after 7 days'
+             notes='Auto-released after 3 days'
          WHERE id=$1`,
         [row.id]
       );
@@ -65,7 +65,7 @@ async function autoReleaseEscrow() {
             FALSE,FALSE,NOW(),NOW())`,
         [
           row.seller_id,
-          `₦${netAmount.toFixed(2)} has been auto-released after 7 days.`,
+          `₦${netAmount.toFixed(2)} has been auto-released after 3 days.`,
           row.order_id,
           row.buyer_id,
           `Your order has been marked as delivered and payment released to the seller.`

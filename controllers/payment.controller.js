@@ -436,16 +436,16 @@ const processRefund = async (req, res) => {
     const { orderId, reason, amount } = req.body;
 
     const txRes = await db.query(
-  `SELECT * FROM payment_transactions WHERE provider_reference = $1 LIMIT 1`,
-  [reference]
-);
+      `SELECT * FROM payment_transactions WHERE order_id = $1 AND status = 'success'`,
+      [orderId]
+    );
     if (!txRes.rows.length) {
       return sendError(res, 404, 'No successful payment found for this order');
     }
 
     const tx = txRes.rows[0];
     const result = await marketpay.refundPayment(tx.provider, {
-      reference:     tx.reference,
+      reference:     tx.provider_reference,
       transactionId: tx.provider_transaction_id,
       amount:        amount || tx.amount,
       reason,

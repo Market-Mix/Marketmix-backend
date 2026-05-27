@@ -1,3 +1,6 @@
+const express = require('express');
+const router = express.Router();
+
 const { protect } = require('../middlewares/auth.middleware');
 const { isAdmin } = require('../middlewares/role.middleware');
 const db = require('../config/db');
@@ -85,3 +88,5 @@ router.post('/escrow/:escrowId/resolve', protect, isAdmin, async (req, res) => {
     client.release();
   }
 });
+
+module.exports = router;
