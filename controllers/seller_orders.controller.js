@@ -205,7 +205,9 @@ const updateSellerOrderStatus = async (req, res) => {
     const { orderId } = req.params;
     const { status }  = req.body;
 
-    const sellerAllowedStatuses = ['confirmed', 'processing', 'shipped'];
+    console.log('updateSellerOrderStatus called:', { sellerId, orderId, status }); // ADD THIS
+
+    const sellerAllowedStatuses = ['confirmed', 'processing', 'shipped', 'delivered'];
     if (!status || !sellerAllowedStatuses.includes(status.toLowerCase())) {
       return sendError(res, 400, `Invalid status. Sellers can set: ${sellerAllowedStatuses.join(', ')}`);
     }
@@ -269,7 +271,7 @@ const updateSellerOrderStatus = async (req, res) => {
 
     return sendSuccess(res, 200, `Order status updated to "${status}"`, { order: result.rows[0] });
   } catch (error) {
-    console.error('updateSellerOrderStatus error:', error);
+    console.error('updateSellerOrderStatus FULL error:', error); // ADD THIS
     return sendError(res, 500, 'Error updating order status', error.message);
   }
 };
