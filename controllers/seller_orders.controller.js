@@ -223,7 +223,7 @@ const updateSellerOrderStatus = async (req, res) => {
 
     const currentStatus = ownerCheck.rows[0].status;
     const newStatusLower = status.toLowerCase();
-    const progression   = ['pending', 'confirmed', 'processing', 'shipped', 'delivered'];
+    const progression   = ['awaiting_payment', 'pending', 'confirmed', 'processing', 'shipped', 'delivered'];
     const currentIdx    = progression.indexOf(currentStatus);
     const newIdx        = progression.indexOf(newStatusLower);
 
