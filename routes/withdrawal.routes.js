@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getWithdrawals, requestWithdrawal } = require('../controllers/withdrawal.controller');
-const { setWithdrawalPin, saveBankAccount, getBankAccount, requestWithdrawal, getWithdrawals } = require('../controllers/withdrawal.controller');
+const { getWithdrawals, requestWithdrawal,  setWithdrawalPin, saveBankAccount, getBankAccount } = require('../controllers/withdrawal.controller');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 
