@@ -1,8 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const { sendSuccess, sendError } = require('../utils/response');
-const { protect } = require('../middleware/auth');
-const db = require('../config/db');
+
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+function getSupabaseHeaders() {
+  return {
+    Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+    apikey: SUPABASE_SERVICE_KEY,
+    'Content-Type': 'application/json'
+  };
+}
+
+function ensureSupabaseConfigured(res) {
+  if (!SUPABASE_SERVICE_KEY) {
+    console.error('❌ SUPABASE_SERVICE_KEY not configured');
+    res.status(500).json({ success: false, message: 'Server misconfiguration: Supabase service key not available' });
+    return false;
+  }
+  return true;
+}
 
 // ─── POST /api/refunds/create — Create refund case ───────────────────────────
 router.post('/create', async (req, res) => {
@@ -18,7 +36,8 @@ router.post('/create', async (req, res) => {
       evidence_type
     } = req.body;
 
-    // Validate required fields
+    console.log('➡️ /api/refunds/create hit with body:', req.body);
+
     if (!buyer_id || !order_id || !product_name || !complaint_text) {
       console.error('❌ Missing required fields:', {
         buyer_id: !!buyer_id,
@@ -26,216 +45,187 @@ router.post('/create', async (req, res) => {
         product_name: !!product_name,
         complaint_text: !!complaint_text
       });
-      return sendError(res, 400, 'Missing required fields', {
-        required: ['buyer_id', 'order_id', 'product_name', 'complaint_text']
-      });
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
     }
 
-    // Validate Supabase credentials
-    const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
-    router.post('/create', async (req, res) => {
-      try {
-        const {
-          buyer_id,
-          order_id,
-          product_name,
-          complaint_text,
-          seller_id,
-          evidence_url,
-          evidence_public_id,
-          evidence_type
-        } = req.body;
+    if (!ensureSupabaseConfigured(res)) return;
 
-        console.log('➡️ /api/refunds/create reached with body:', req.body);
+    const refundPayload = {
+      buyer_id,
+      order_id: String(order_id),
+      product_name,
+      complaint_text,
+      seller_id: seller_id || null,
+      status: 'pending',
+      evidence_url: evidence_url || null,
+      evidence_public_id: evidence_public_id || null,
+      evidence_type: evidence_type || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
 
-        // Validate required fields
-        if (!buyer_id || !order_id || !product_name || !complaint_text) {
-          console.error('❌ Missing required fields:', {
-            buyer_id: !!buyer_id,
-            order_id: !!order_id,
-            product_name: !!product_name,
-            complaint_text: !!complaint_text
-          });
-          return res.status(400).json({ success: false, message: 'Missing required fields' });
-        }
+    console.log('📦 Inserting refund case into Supabase:', refundPayload);
 
-        // Validate Supabase credentials
-        const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
-        const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-
-        if (!SUPABASE_SERVICE_KEY) {
-          console.error('❌ SUPABASE_SERVICE_KEY not configured');
-          return res.status(500).json({ success: false, message: 'Server misconfiguration: Supabase service key not available' });
-        }
-
-        console.log('📝 Creating refund case:', {
-          buyer_id,
-          order_id,
-          product_name,
-          seller_id,
-          evidence_url: evidence_url ? '(provided)' : null
-        });
-
-        // Prepare refund case payload
-        const refundPayload = {
-          buyer_id,
-          order_id: String(order_id),
-          product_name,
-          complaint_text,
-          seller_id: seller_id || null,
-          status: 'pending',
-          evidence_url: evidence_url || null,
-          evidence_public_id: evidence_public_id || null,
-          evidence_type: evidence_type || null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        };
-
-        console.log('📦 Refund payload to insert:', refundPayload);
-
-        // Insert refund case into Supabase via REST (service role key)
-        console.log('🔁 Inserting refund case into Supabase...');
-        const insertResponse = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-            'apikey': SUPABASE_SERVICE_KEY,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
-          },
-          body: JSON.stringify(refundPayload)
-        });
-
-        const insertedData = await insertResponse.json().catch(async () => {
-          const text = await insertResponse.text().catch(() => 'No body');
-          return { errorBody: text };
-        });
-
-        if (!insertResponse.ok) {
-          console.error(`❌ Supabase insert failed: ${insertResponse.status} ${insertResponse.statusText}`);
-          console.error('Supabase error body:', insertedData);
-          return res.status(insertResponse.status).json({ success: false, message: 'Failed to create refund case', details: insertedData });
-        }
-
-        const refundCase = Array.isArray(insertedData) ? insertedData[0] : insertedData;
-
-        if (!refundCase || !refundCase.id) {
-          console.error('❌ No refund case ID returned from Supabase', insertedData);
-          return res.status(500).json({ success: false, message: 'Refund case created but no ID returned' });
-        }
-
-        console.log('✅ Refund case created successfully:', { id: refundCase.id, buyer_id: refundCase.buyer_id, order_id: refundCase.order_id });
-
-        // Create buyer notification
-        console.log('📬 Creating buyer notification...');
-        const buyerNotification = {
-          user_id: buyer_id,
-          title: 'Refund Case Created',
-          message: `Your refund case for order ${order_id} has been created. We'll review your complaint shortly.`,
-          type: 'refund',
-          link: '/buyers/buyers%20return%20report.html',
-          is_read: false,
-          is_deleted: false,
-          created_at: new Date().toISOString()
-        };
-
-        const buyerNotifResponse = await fetch(
-          `${SUPABASE_URL}/rest/v1/notifications`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-              'apikey': SUPABASE_SERVICE_KEY,
-              'Content-Type': 'application/json',
-              'Prefer': 'return=representation'
-            },
-            body: JSON.stringify(buyerNotification)
-          }
-        );
-
-        if (!buyerNotifResponse.ok) {
-          const errorText = await buyerNotifResponse.text();
-          console.error('⚠️ Failed to create buyer notification:', errorText);
-        } else {
-          console.log('✅ Buyer notification created successfully');
-        }
-
-        // Create seller notification if seller_id is provided
-        if (seller_id) {
-          console.log('📬 Creating seller notification for seller:', seller_id);
-          const sellerNotification = {
-            user_id: seller_id,
-            title: 'New Refund Request',
-            message: `A refund case has been submitted for order ${order_id}: "${product_name}"`,
-            type: 'refund',
-            link: '/sellers/sellers%20returns.html',
-            is_read: false,
-            is_deleted: false,
-            created_at: new Date().toISOString()
-          };
-
-          const sellerNotifResponse = await fetch(
-            `${SUPABASE_URL}/rest/v1/notifications`,
-            {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-                'apikey': SUPABASE_SERVICE_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=representation'
-              },
-              body: JSON.stringify(sellerNotification)
-            }
-          );
-
-          if (!sellerNotifResponse.ok) {
-            const errorText = await sellerNotifResponse.text();
-            console.error('⚠️ Failed to create seller notification:', errorText);
-          } else {
-            console.log('✅ Seller notification created successfully');
-          }
-        }
-
-        // Return success response with refund case data in requested format
-        return res.status(200).json({ success: true, refundCase: refundCase });
-      } catch (error) {
-        console.error('❌ Error creating refund case:', error);
-        return res.status(500).json({ success: false, message: error.message || 'Internal server error while creating refund case' });
-      }
+    const insertResponse = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases`, {
+      method: 'POST',
+      headers: {
+        ...getSupabaseHeaders(),
+        Prefer: 'return=representation'
+      },
+      body: JSON.stringify(refundPayload)
     });
 
-    console.log('📝 Adding message to refund case:', { caseId, sender_type });
+    const insertedData = await insertResponse.json().catch(async () => {
+      const text = await insertResponse.text().catch(() => 'No body');
+      return { errorBody: text };
+    });
 
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/refund_messages`,
-      {
+    if (!insertResponse.ok) {
+      console.error(`❌ Supabase insert failed: ${insertResponse.status} ${insertResponse.statusText}`);
+      console.error('Supabase error body:', insertedData);
+      return res.status(insertResponse.status).json({ success: false, message: 'Failed to create refund case', details: insertedData });
+    }
+
+    const refundCase = Array.isArray(insertedData) ? insertedData[0] : insertedData;
+    if (!refundCase || !refundCase.id) {
+      console.error('❌ Missing refund case ID after insert', insertedData);
+      return res.status(500).json({ success: false, message: 'Refund case created but no ID returned' });
+    }
+
+    console.log('✅ Refund case inserted successfully:', { id: refundCase.id, buyer_id: refundCase.buyer_id, order_id: refundCase.order_id });
+
+    const buyerNotification = {
+      user_id: buyer_id,
+      title: 'Refund Case Created',
+      message: `Your refund case for order ${order_id} has been created successfully.`,
+      type: 'refund',
+      link: '/buyers/buyers%20return%20report.html',
+      is_read: false,
+      is_deleted: false,
+      created_at: new Date().toISOString()
+    };
+
+    console.log('📬 Inserting buyer notification');
+    const buyerNotifResponse = await fetch(`${SUPABASE_URL}/rest/v1/notifications`, {
+      method: 'POST',
+      headers: getSupabaseHeaders(),
+      body: JSON.stringify(buyerNotification)
+    });
+
+    if (!buyerNotifResponse.ok) {
+      const errorText = await buyerNotifResponse.text();
+      console.error('⚠️ Failed to create buyer notification:', errorText);
+    } else {
+      console.log('✅ Buyer notification created successfully');
+    }
+
+    if (seller_id) {
+      const sellerNotification = {
+        user_id: seller_id,
+        title: 'New Refund Request',
+        message: `A refund request was submitted for order ${order_id}.`,
+        type: 'refund',
+        link: '/sellers/sellers%20returns.html',
+        is_read: false,
+        is_deleted: false,
+        created_at: new Date().toISOString()
+      };
+
+      console.log('📬 Inserting seller notification');
+      const sellerNotifResponse = await fetch(`${SUPABASE_URL}/rest/v1/notifications`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-          'apikey': SUPABASE_SERVICE_KEY,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation'
-        },
-        body: JSON.stringify(messagePayload)
+        headers: getSupabaseHeaders(),
+        body: JSON.stringify(sellerNotification)
+      });
+
+      if (!sellerNotifResponse.ok) {
+        const errorText = await sellerNotifResponse.text();
+        console.error('⚠️ Failed to create seller notification:', errorText);
+      } else {
+        console.log('✅ Seller notification created successfully');
       }
-    );
+    }
+
+    return res.status(200).json({ success: true, refundCase });
+  } catch (error) {
+    console.error('❌ Error in /api/refunds/create:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
+  }
+});
+
+// ─── GET /api/refunds/buyer/:buyerId — Fetch buyer refund cases ─────────────
+router.get('/buyer/:buyerId', async (req, res) => {
+  try {
+    const { buyerId } = req.params;
+    console.log('➡️ /api/refunds/buyer/:buyerId hit for buyerId:', buyerId);
+    if (!buyerId) {
+      return res.status(400).json({ success: false, message: 'Missing buyerId parameter' });
+    }
+
+    if (!ensureSupabaseConfigured(res)) return;
+
+    const queryUrl = `${SUPABASE_URL}/rest/v1/refund_cases?select=*&buyer_id=eq.${encodeURIComponent(buyerId)}&order=created_at.desc`;
+    console.log('📦 Fetching refund cases from Supabase:', queryUrl);
+
+    const response = await fetch(queryUrl, {
+      method: 'GET',
+      headers: getSupabaseHeaders()
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`❌ Failed to add message: ${response.status}`);
-      return sendError(res, response.status, 'Failed to add message', errorText);
+      console.error(`❌ Supabase refund fetch failed: ${response.status} ${response.statusText}`);
+      return res.status(response.status).json({ success: false, message: 'Failed to fetch refund cases', details: errorText });
     }
 
-    const data = await response.json();
-    console.log('✅ Message added successfully');
+    const refundCases = await response.json();
+    console.log('✅ Refund cases fetched successfully:', refundCases.length);
+    return res.status(200).json({ success: true, refundCases });
+  } catch (error) {
+    console.error('❌ Error in /api/refunds/buyer/:buyerId:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
+  }
+});
 
-    return sendSuccess(res, 201, 'Message added successfully', {
-      message: Array.isArray(data) ? data[0] : data
+router.patch('/:caseId/status', async (req, res) => {
+  try {
+    const { caseId } = req.params;
+    const { status } = req.body;
+
+    if (!caseId || !status) {
+      return res.status(400).json({ success: false, message: 'Missing caseId or status' });
+    }
+
+    if (!ensureSupabaseConfigured(res)) return;
+
+    const updatePayload = {
+      status,
+      updated_at: new Date().toISOString()
+    };
+
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(caseId)}`, {
+      method: 'PATCH',
+      headers: {
+        ...getSupabaseHeaders(),
+        Prefer: 'return=representation'
+      },
+      body: JSON.stringify(updatePayload)
     });
 
+    const updatedData = await response.json().catch(async () => {
+      const text = await response.text().catch(() => 'No body');
+      return { errorBody: text };
+    });
+
+    if (!response.ok) {
+      console.error(`❌ Supabase refund update failed: ${response.status} ${response.statusText}`);
+      return res.status(response.status).json({ success: false, message: 'Failed to update refund case status', details: updatedData });
+    }
+
+    return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
   } catch (error) {
-    console.error('❌ Error adding message:', error);
-    return sendError(res, 500, 'Internal server error', error.message);
+    console.error('❌ Error in /api/refunds/:caseId/status:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
   }
 });
 
