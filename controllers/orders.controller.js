@@ -136,7 +136,12 @@ const getUserOrders = async (req, res) => {
       o.total_amount,
       o.status,
       o.created_at,
-      COALESCE(MIN(oi.seller_id) FILTER (WHERE oi.seller_id IS NOT NULL), NULL) AS seller_id,
+      COALESCE((
+        SELECT oi2.seller_id
+        FROM order_items oi2
+        WHERE oi2.order_id = o.id AND oi2.seller_id IS NOT NULL
+        LIMIT 1
+      ), NULL) AS seller_id,
       COALESCE(SUM(oi.quantity), 0) as total_items,
       COALESCE(
         json_agg(
@@ -217,7 +222,12 @@ const getOrderById = async (req, res) => {
       `SELECT 
         o.id, o.total_amount, o.status, o.shipping_address, 
         o.payment_method, o.notes, o.created_at, o.updated_at,
-        COALESCE(MIN(oi.seller_id) FILTER (WHERE oi.seller_id IS NOT NULL), NULL) AS seller_id,
+        COALESCE((
+          SELECT oi2.seller_id
+          FROM order_items oi2
+          WHERE oi2.order_id = o.id AND oi2.seller_id IS NOT NULL
+          LIMIT 1
+        ), NULL) AS seller_id,
         COALESCE(
           json_agg(
             json_build_object(
