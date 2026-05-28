@@ -55,6 +55,7 @@ const sellerOrdersRoutes = require('./routes/seller_orders.routes');
 const sellerActivityRoutes = require('./routes/seller_activity.routes');
 const shopFollowsRoutes = require('./routes/shop_follows.routes');
 const storesRoutes = require('./routes/stores.routes');
+const refundsRoutes = require('./routes/refunds.routes');
 const sellerRoutes = require('./routes/sellers.routes');  // ← keep last
 
 // Mount routes — ORDER MATTERS
@@ -79,6 +80,7 @@ app.use('/api/seller/orders', sellerOrdersRoutes);
 app.use('/api/seller/activity', sellerActivityRoutes);
 app.use('/api/seller/stores', storesRoutes);   // ← BEFORE /api/seller
 app.use('/api/seller/shipping', vendorRoutes);
+app.use('/api/refunds', refundsRoutes);
 app.use('/api/seller', sellerRoutes);           // ← AFTER /api/seller/stores
 app.use('/api/shops/following', shopFollowsRoutes);
 
