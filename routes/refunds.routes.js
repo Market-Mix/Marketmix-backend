@@ -31,38 +31,33 @@ router.post('/create', async (req, res) => {
       product_name,
       complaint_text,
       seller_id,
-      evidence_url,
-      evidence_public_id,
-      evidence_type
+      evidence_url
     } = req.body;
 
     console.log('➡️ /api/refunds/create hit with body:', req.body);
 
-    if (!buyer_id || !order_id || !product_name || !complaint_text) {
-      console.error('❌ Missing required fields:', {
-        buyer_id: !!buyer_id,
-        order_id: !!order_id,
-        product_name: !!product_name,
-        complaint_text: !!complaint_text
-      });
-      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    const requiredFields = ['buyer_id', 'seller_id', 'order_id', 'product_name', 'complaint_text'];
+    const missing = requiredFields.filter(field => !req.body[field]);
+    if (missing.length > 0) {
+      console.error('❌ Missing required refund fields:', missing);
+      return res.status(400).json({ success: false, message: 'Missing required fields', missing });
     }
 
     if (!ensureSupabaseConfigured(res)) return;
 
     const refundPayload = {
       buyer_id,
+      seller_id,
       order_id: String(order_id),
       product_name,
       complaint_text,
-      seller_id: seller_id || null,
-      status: 'pending',
       evidence_url: evidence_url || null,
-      evidence_public_id: evidence_public_id || null,
-      evidence_type: evidence_type || null,
+      status: 'pending',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
+
+    console.log('📦 Refund payload prepared for Supabase insert:', refundPayload);
 
     console.log('📦 Inserting refund case into Supabase:', refundPayload);
 
@@ -149,6 +144,8 @@ router.post('/create', async (req, res) => {
     return res.status(200).json({ success: true, refundCase });
   } catch (error) {
     console.error('❌ Error in /api/refunds/create:', error);
+    console.error('Refund insert error:', error);
+    console.error('Refund payload received:', req.body);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
   }
 });
