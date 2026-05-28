@@ -36,7 +36,7 @@ router.post('/create', async (req, res) => {
 
     console.log('➡️ /api/refunds/create hit with body:', req.body);
 
-    const requiredFields = ['buyer_id', 'seller_id', 'order_id', 'product_name', 'complaint_text'];
+    const requiredFields = ['buyer_id', 'order_id', 'product_name', 'complaint_text'];
     const missing = requiredFields.filter(field => !req.body[field]);
     if (missing.length > 0) {
       console.error('❌ Missing required refund fields:', missing);
@@ -45,9 +45,45 @@ router.post('/create', async (req, res) => {
 
     if (!ensureSupabaseConfigured(res)) return;
 
+    let resolvedSellerId = seller_id;
+    if (!resolvedSellerId && order_id) {
+      try {
+        const orderItemsRes = await db.query(
+          'SELECT seller_id FROM order_items WHERE order_id = $1 AND seller_id IS NOT NULL LIMIT 1',
+          [order_id]
+        );
+        if (orderItemsRes.rows.length > 0) {
+          resolvedSellerId = orderItemsRes.rows[0].seller_id;
+          console.log('🔎 Resolved seller_id from order_items:', resolvedSellerId);
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not resolve seller_id from order_items:', err.message);
+      }
+    }
+
+    if (!resolvedSellerId && product_name) {
+      try {
+        const productRes = await db.query(
+          'SELECT seller_id FROM products WHERE name = $1 AND seller_id IS NOT NULL LIMIT 1',
+          [product_name]
+        );
+        if (productRes.rows.length > 0) {
+          resolvedSellerId = productRes.rows[0].seller_id;
+          console.log('🔎 Resolved seller_id from product record:', resolvedSellerId);
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not resolve seller_id from product record:', err.message);
+      }
+    }
+
+    if (!resolvedSellerId) {
+      console.error('❌ Unable to resolve seller_id for refund create payload:', { order_id, product_name, receivedSellerId: seller_id });
+      return res.status(400).json({ success: false, message: 'Unable to resolve seller_id for this order', details: { order_id, product_name } });
+    }
+
     const refundPayload = {
       buyer_id,
-      seller_id,
+      seller_id: resolvedSellerId,
       order_id: String(order_id),
       product_name,
       complaint_text,
@@ -58,6 +94,7 @@ router.post('/create', async (req, res) => {
     };
 
     console.log('📦 Refund payload prepared for Supabase insert:', refundPayload);
+    console.log('Final refund insert payload:', refundPayload);
 
     console.log('📦 Inserting refund case into Supabase:', refundPayload);
 

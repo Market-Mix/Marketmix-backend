@@ -125,9 +125,17 @@ router.get('/:id', async (req, res) => {
 		let sellerResult = { rows: [] };
 		try {
 			sellerResult = await pool.query(
-				`SELECT id, name, email, shop_name, shop_avatar_url, rating 
-				 FROM users 
-				 WHERE id = $1`,
+				`SELECT u.id,
+				        u.email,
+				        u.first_name,
+				        u.last_name,
+				        COALESCE(sp.business_name, u.first_name || ' ' || u.last_name) AS name,
+				        COALESCE(sp.business_name, u.first_name || ' ' || u.last_name) AS shop_name,
+				        sp.store_logo_url AS shop_avatar_url,
+				        sp.rating
+				 FROM users u
+				 LEFT JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
+				 WHERE u.id = $1`,
 				[product.seller_id]
 			);
 		} catch (err) {
