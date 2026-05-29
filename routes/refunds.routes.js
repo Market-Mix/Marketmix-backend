@@ -28,6 +28,8 @@ router.post('/create', async (req, res) => {
     const {
       buyer_id,
       order_id,
+      order_item_id,
+      product_id,
       product_name,
       complaint_text,
       seller_id,
@@ -36,7 +38,7 @@ router.post('/create', async (req, res) => {
 
     console.log('➡️ /api/refunds/create hit with body:', req.body);
 
-    const requiredFields = ['buyer_id', 'order_id', 'product_name', 'complaint_text'];
+    const requiredFields = ['buyer_id', 'order_id', 'order_item_id', 'product_id', 'product_name', 'complaint_text'];
     const missing = requiredFields.filter(field => !req.body[field]);
     if (missing.length > 0) {
       console.error('❌ Missing required refund fields:', missing);
@@ -85,6 +87,8 @@ router.post('/create', async (req, res) => {
       buyer_id,
       seller_id: resolvedSellerId,
       order_id: String(order_id),
+      order_item_id: order_item_id || null,
+      product_id: product_id || null,
       product_name,
       complaint_text,
       evidence_url: evidence_url || null,
