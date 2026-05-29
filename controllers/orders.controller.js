@@ -130,12 +130,20 @@ const getUserOrders = async (req, res) => {
 
     const offset = (page - 1) * limit;
     
-    // Build query - join products table to get product names
+    // Build query - join products and seller info to get product names and seller store names
     let sql = `SELECT
       o.id,
       o.total_amount,
       o.status,
       o.created_at,
+      COALESCE((
+        SELECT COALESCE(sp2.business_name, u2.first_name || ' ' || u2.last_name)
+        FROM order_items oi2
+        LEFT JOIN seller_profiles sp2 ON oi2.seller_id = sp2.user_id
+        LEFT JOIN users u2 ON oi2.seller_id = u2.id
+        WHERE oi2.order_id = o.id AND oi2.seller_id IS NOT NULL
+        LIMIT 1
+      ), NULL) AS seller_name,
       COALESCE((
         SELECT oi2.seller_id
         FROM order_items oi2
@@ -152,13 +160,16 @@ const getUserOrders = async (req, res) => {
             'product_name', p.name,
             'quantity', oi.quantity,
             'price', oi.price_at_purchase,
-            'seller_id', oi.seller_id
+            'seller_id', oi.seller_id,
+            'seller_name', COALESCE(sp.business_name, su.first_name || ' ' || su.last_name)
           ) ORDER BY oi.created_at
         ) FILTER (WHERE oi.id IS NOT NULL), '[]'
       ) as items
      FROM orders o
      LEFT JOIN order_items oi ON o.id = oi.order_id
      LEFT JOIN products p ON oi.product_id = p.id
+     LEFT JOIN seller_profiles sp ON oi.seller_id = sp.user_id
+     LEFT JOIN users su ON oi.seller_id = su.id
      WHERE o.buyer_id = $1`;
     
     const params = [user_id];
@@ -223,6 +234,14 @@ const getOrderById = async (req, res) => {
         o.id, o.total_amount, o.status, o.shipping_address, 
         o.payment_method, o.notes, o.created_at, o.updated_at,
         COALESCE((
+          SELECT COALESCE(sp2.business_name, u2.first_name || ' ' || u2.last_name)
+          FROM order_items oi2
+          LEFT JOIN seller_profiles sp2 ON oi2.seller_id = sp2.user_id
+          LEFT JOIN users u2 ON oi2.seller_id = u2.id
+          WHERE oi2.order_id = o.id AND oi2.seller_id IS NOT NULL
+          LIMIT 1
+        ), NULL) AS seller_name,
+        COALESCE((
           SELECT oi2.seller_id
           FROM order_items oi2
           WHERE oi2.order_id = o.id AND oi2.seller_id IS NOT NULL
@@ -236,13 +255,16 @@ const getOrderById = async (req, res) => {
               'product_name', p.name,
               'quantity', oi.quantity,
               'price', oi.price_at_purchase,
-              'seller_id', oi.seller_id
+              'seller_id', oi.seller_id,
+              'seller_name', COALESCE(sp.business_name, su.first_name || ' ' || su.last_name)
             )
           ) FILTER (WHERE oi.id IS NOT NULL), '[]'
         ) as items
        FROM orders o
        LEFT JOIN order_items oi ON o.id = oi.order_id
        LEFT JOIN products p ON oi.product_id = p.id
+       LEFT JOIN seller_profiles sp ON oi.seller_id = sp.user_id
+       LEFT JOIN users su ON oi.seller_id = su.id
        WHERE o.id = $1 AND o.buyer_id = $2
        GROUP BY o.id`,
       [orderId, user_id]
