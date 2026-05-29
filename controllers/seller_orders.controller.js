@@ -240,14 +240,16 @@ const updateSellerOrderStatus = async (req, res) => {
     }
 
     const result = await db.query(
-      `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING id, status, updated_at`,
+      `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING id, status, updated_at, buyer_id`,
       [status.toLowerCase(), orderId]
     );
 
     const shortId   = String(orderId).substring(0, 8);
     const actType   = ACTIVITY_TYPE_MAP[status.toLowerCase()] || 'order_updated';
     const label     = status.charAt(0).toUpperCase() + status.slice(1);
+    const buyerId   = result.rows[0].buyer_id;
 
+    // ── Create seller notification ──
     await db.query(
       `INSERT INTO notifications 
          (user_id, title, message, type, is_read, is_deleted, created_at, updated_at)
@@ -259,6 +261,45 @@ const updateSellerOrderStatus = async (req, res) => {
         'order'
       ]
     );
+
+    // ── Create buyer notification for tracking status update ──
+    const statusMessages = {
+      confirmed:  `Your order #${shortId} has been confirmed! Seller is preparing it for shipment.`,
+      processing: `Your order #${shortId} is being processed. Packaging in progress.`,
+      shipped:    `Your order #${shortId} has been shipped! Track your package to see delivery updates.`,
+      delivered:  `Your order #${shortId} has been delivered! Thank you for shopping with us.`,
+      cancelled:  `Your order #${shortId} has been cancelled. Please check your account for details.`,
+    };
+
+    const statusBuyerTitle = {
+      confirmed:  'Order Confirmed',
+      processing: 'Order Processing',
+      shipped:    'Order Shipped',
+      delivered:  'Order Delivered',
+      cancelled:  'Order Cancelled',
+    };
+
+    const buyerMessage = statusMessages[newStatusLower] || `Your order #${shortId} status has been updated to ${label}.`;
+    const buyerTitle = statusBuyerTitle[newStatusLower] || `Order Update: ${label}`;
+
+    try {
+      await db.query(
+        `INSERT INTO notifications 
+           (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5), FALSE, FALSE, NOW(), NOW())`,
+        [
+          buyerId,
+          buyerTitle,
+          buyerMessage,
+          'order',
+          '/buyers/buyers%20order%20&%20tracking.html'
+        ]
+      );
+      console.log(`✅ Buyer notification created for order #${shortId}`);
+    } catch (notifErr) {
+      console.error(`⚠️ Failed to create buyer notification:`, notifErr.message);
+      // Don't fail the entire request if notification fails - just log it
+    }
 
     // ── Activity log ──
     await logActivity({
