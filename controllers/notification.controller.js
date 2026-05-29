@@ -35,13 +35,17 @@ async function notificationHasLinkColumn() {
     if (normalizedLink) {
       const lower = normalizedLink.toLowerCase();
       // Fix common wishlist filename mismatches
-      if (lower === 'buyers wishlist.html' || lower === 'buyers/wishlist.html' || lower === '/buyers/wishlist.html') {
+      if (/^\/?(?:buyers\/)?buyers(?:%20|\s)wishlist\.html(?:\?.*)?$/i.test(normalizedLink)
+          || /^\/?(?:buyers\/)?wishlist\.html(?:\?.*)?$/i.test(normalizedLink)
+          || /^wishlist\.html(?:\?.*)?$/i.test(normalizedLink)) {
         normalizedLink = '/buyers/buyers%20wishlist.html';
       } else if (lower === 'buyers homepage.html' || lower === 'buyers/homepage.html' || lower === '/buyers/homepage.html') {
         normalizedLink = '/buyers/buyers%20homepage.html';
+      } else if (/^\/?(?:buyers\/)?store-id\.html(?:\?.*)?$/i.test(normalizedLink)) {
+        normalizedLink = '/buyers/store-id.html' + (normalizedLink.includes('?') ? normalizedLink.slice(normalizedLink.indexOf('?')) : '');
       } else {
         // If it's a bare filename like cart.html, assume it's under /buyers/
-        if (/^[^/]+\.html$/i.test(normalizedLink)) {
+        if (/^[^/]+\.html(?:\?.*)?$/i.test(normalizedLink)) {
           normalizedLink = '/buyers/' + encodeURI(normalizedLink);
         } else if (!/^https?:\/\//i.test(normalizedLink) && !normalizedLink.startsWith('/')) {
           // Ensure leading slash for other relative paths and encode spaces
