@@ -118,6 +118,9 @@ const createSellerProduct = async (req, res) => {
     }
 
     const { name, description, price, stock_quantity, category_id, is_active } = req.body;
+    const category_meta = req.body.category_meta 
+      ? (typeof req.body.category_meta === 'string' ? JSON.parse(req.body.category_meta) : req.body.category_meta)
+      : null;
     if (!name || price === undefined || price === null) {
       return sendError(res, 400, 'Product name and price are required');
     }
@@ -140,14 +143,14 @@ const weight_kg = req.body.weight_kg ? parseFloat(req.body.weight_kg) : null;
     const result = await db.query(
       `INSERT INTO products
          (seller_id, store_id, name, description, price, stock_quantity,
-          main_image_url, images, weight_kg, category_id, is_active, is_deleted, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,NOW(),NOW())
+          main_image_url, images, weight_kg, category_id, category_meta, is_active, is_deleted, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false,NOW(),NOW())
        RETURNING id, name, description, price, stock_quantity,
                  main_image_url, images, weight_kg, category_id, is_active, created_at`,
       [
         sellerId, storeId, name.trim(), description || '',
         parseFloat(price), parseInt(stock_quantity) || 0,
-        mainImageUrl, images, weight_kg, category_id || null,
+        mainImageUrl, images, weight_kg, category_id || null, category_meta,
         is_active !== 'false' && is_active !== false
       ]
     );
@@ -194,6 +197,9 @@ const updateSellerProduct = async (req, res) => {
 
     const existing = ownership.rows[0];
     const { name, description, price, stock_quantity, category_id, is_active } = req.body;
+    const category_meta = req.body.category_meta 
+      ? (typeof req.body.category_meta === 'string' ? JSON.parse(req.body.category_meta) : req.body.category_meta)
+      : null;
 
     let images = existing.images || [];
     const existingImagesFromBody = req.body.existing_images ? JSON.parse(req.body.existing_images) : null;
@@ -218,6 +224,7 @@ const updateSellerProduct = async (req, res) => {
     if (price !== undefined)          { fields.push(`price = $${i++}`);          vals.push(parseFloat(price)); }
     if (stock_quantity !== undefined) { fields.push(`stock_quantity = $${i++}`); vals.push(parseInt(stock_quantity)); }
     if (category_id !== undefined)    { fields.push(`category_id = $${i++}`);    vals.push(category_id || null); }
+    if (category_meta !== undefined)  { fields.push(`category_meta = $${i++}`);  vals.push(category_meta); }
     if (is_active !== undefined)      { fields.push(`is_active = $${i++}`);      vals.push(is_active !== 'false' && is_active !== false); }
     if (req.body.weight_kg !== undefined) { fields.push(`weight_kg = $${i++}`); vals.push(parseFloat(req.body.weight_kg) || null); }
     fields.push(`images = $${i++}`);
