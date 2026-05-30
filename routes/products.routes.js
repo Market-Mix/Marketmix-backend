@@ -16,8 +16,9 @@ router.get('/', async (req, res) => {
 			// Using COALESCE to handle NULL category names
 			// Also fetch flash_start and flash_end if available
 			result = await pool.query(
-				`SELECT p.id, p.seller_id, p.name, p.description, p.price, p.stock_quantity, p.main_image_url, 
-						p.is_active, p.created_at, p.category_id, p.color, p.size, p.images, p.weight_kg,
+				`SELECT p.id, p.seller_id, p.name, p.description, p.price, p.stock_quantity, 
+						p.main_image_url, p.images, p.category_meta, p.weight_kg,
+						p.is_active, p.created_at, p.category_id, p.color, p.size,
 						p."flash start" as flash_start, p."flash end" as flash_end,
 						COALESCE(c.name, 'uncategorized') as category_name
 				 FROM products p
@@ -99,6 +100,7 @@ router.get('/:id', async (req, res) => {
 		try {
 			productResult = await pool.query(
 					`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
+							images, category_meta, weight_kg,
 							is_active, category_id, color, size, views,
 							"flash start" as flash_start, "flash end" as flash_end,
 							created_at, updated_at
