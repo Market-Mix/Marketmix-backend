@@ -14,8 +14,8 @@ const { isSeller } = require('../middlewares/role.middleware');
 router.use(protect, isSeller);
 
 router.get('/', getSellerProducts);
-router.post('/', upload.single('image'), createSellerProduct);
-router.put('/:productId', upload.single('image'), updateSellerProduct);
+router.post('/', upload.array('images', 5), createSellerProduct);
+router.put('/:productId', upload.array('images', 5), updateSellerProduct);
 router.delete('/:productId', deleteSellerProduct);
 
 module.exports = router;

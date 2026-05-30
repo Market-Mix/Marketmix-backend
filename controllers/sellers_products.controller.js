@@ -20,6 +20,15 @@ const upload = multer({
   },
 });
 
+// Add this helper after the upload declaration:
+async function uploadMultipleImages(files) {
+  const urls = [];
+  for (const file of files) {
+    const url = await uploadToCloudinary(file.buffer, file.mimetype, 'products');
+    urls.push(url);
+  }
+  return urls;
+}
 // ─── Helper: resolve active store ────────────────────────────────────────────
 /**
  * Reads storeId from X-Store-Id header or ?storeId query param,
@@ -113,23 +122,32 @@ const createSellerProduct = async (req, res) => {
       return sendError(res, 400, 'Product name and price are required');
     }
 
-    let mainImageUrl = req.body.image_url || null;
-    if (req.file) {
-      try { mainImageUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype, 'products'); }
-      catch (e) { return sendError(res, 500, `Image upload failed: ${e.message}`); }
-    }
+  
+let images = [];
+const existingUrls = req.body.image_url ? [req.body.image_url] : [];
 
+if (req.files && req.files.length) {
+  try {
+    const uploaded = await uploadMultipleImages(req.files);
+    images = [...existingUrls, ...uploaded];
+  } catch (e) { return sendError(res, 500, `Image upload failed: ${e.message}`); }
+} else {
+  images = existingUrls;
+}
+
+const mainImageUrl = images[0] || null;
+const weight_kg = req.body.weight_kg ? parseFloat(req.body.weight_kg) : null;
     const result = await db.query(
       `INSERT INTO products
          (seller_id, store_id, name, description, price, stock_quantity,
-          main_image_url, category_id, is_active, is_deleted, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false,NOW(),NOW())
+          main_image_url, images, weight_kg, category_id, is_active, is_deleted, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,NOW(),NOW())
        RETURNING id, name, description, price, stock_quantity,
-                 main_image_url, category_id, is_active, created_at`,
+                 main_image_url, images, weight_kg, category_id, is_active, created_at`,
       [
         sellerId, storeId, name.trim(), description || '',
         parseFloat(price), parseInt(stock_quantity) || 0,
-        mainImageUrl, category_id || null,
+        mainImageUrl, images, weight_kg, category_id || null,
         is_active !== 'false' && is_active !== false
       ]
     );
@@ -168,7 +186,7 @@ const updateSellerProduct = async (req, res) => {
     }
 
     const ownership = await db.query(
-      `SELECT id, name, main_image_url FROM products
+      `SELECT id, name, main_image_url, images FROM products
        WHERE id = $1 AND seller_id = $2 AND store_id = $3 AND is_deleted = false`,
       [productId, sellerId, storeId]
     );
@@ -177,13 +195,19 @@ const updateSellerProduct = async (req, res) => {
     const existing = ownership.rows[0];
     const { name, description, price, stock_quantity, category_id, is_active } = req.body;
 
-    let mainImageUrl = existing.main_image_url;
-    if (req.file) {
-      try { mainImageUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype, 'products'); }
-      catch (e) { return sendError(res, 500, `Image upload failed: ${e.message}`); }
-    } else if (req.body.image_url) {
-      mainImageUrl = req.body.image_url;
+    let images = existing.images || [];
+    const existingImagesFromBody = req.body.existing_images ? JSON.parse(req.body.existing_images) : null;
+    if (existingImagesFromBody) images = existingImagesFromBody;
+
+    if (req.files && req.files.length) {
+      try {
+        const uploaded = await uploadMultipleImages(req.files);
+        const total = [...images, ...uploaded].slice(0, 5);
+        images = total;
+      } catch (e) { return sendError(res, 500, `Image upload failed: ${e.message}`); }
     }
+
+    const mainImageUrl = images[0] || existing.main_image_url;
 
     const fields = [];
     const vals   = [];
@@ -195,7 +219,9 @@ const updateSellerProduct = async (req, res) => {
     if (stock_quantity !== undefined) { fields.push(`stock_quantity = $${i++}`); vals.push(parseInt(stock_quantity)); }
     if (category_id !== undefined)    { fields.push(`category_id = $${i++}`);    vals.push(category_id || null); }
     if (is_active !== undefined)      { fields.push(`is_active = $${i++}`);      vals.push(is_active !== 'false' && is_active !== false); }
-
+    if (req.body.weight_kg !== undefined) { fields.push(`weight_kg = $${i++}`); vals.push(parseFloat(req.body.weight_kg) || null); }
+    fields.push(`images = $${i++}`);
+    vals.push(images);
     fields.push(`main_image_url = $${i++}`);
     vals.push(mainImageUrl);
     fields.push(`updated_at = NOW()`);

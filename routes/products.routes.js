@@ -17,7 +17,7 @@ router.get('/', async (req, res) => {
 			// Also fetch flash_start and flash_end if available
 			result = await pool.query(
 				`SELECT p.id, p.seller_id, p.name, p.description, p.price, p.stock_quantity, p.main_image_url, 
-						p.is_active, p.created_at, p.category_id, p.color, p.size,
+						p.is_active, p.created_at, p.category_id, p.color, p.size, p.images, p.weight_kg,
 						p."flash start" as flash_start, p."flash end" as flash_end,
 						COALESCE(c.name, 'uncategorized') as category_name
 				 FROM products p
