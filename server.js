@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const corsOptions = require('./config/cors');
 const db = require('./config/db');
+const { handlePaystackWithdrawalWebhook } = require('./controllers/withdrawal.controller');
 
 // Create Express app
 const app = express();
@@ -17,6 +18,12 @@ app.use(cors(corsOptions));
 
 // Logging middleware
 app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'));
+
+// Webhook routes (BEFORE body-parsing middleware to preserve raw body for signature verification)
+app.post('/api/webhooks/paystack',
+  express.raw({ type: 'application/json' }),
+  handlePaystackWithdrawalWebhook
+);
 
 // Body parsing middleware
 app.use(express.json());
@@ -58,6 +65,7 @@ const storesRoutes = require('./routes/stores.routes');
 const refundsRoutes = require('./routes/refunds.routes');
 const sellerRoutes = require('./routes/sellers.routes'); 
 const cronRoutes = require('./routes/cron.routes'); // ← keep last
+const withdrawalRoutes = require('./routes/withdrawal.routes');
 
 // Mount routes — ORDER MATTERS
 app.use('/api/auth', authRoutes);
@@ -95,6 +103,24 @@ setInterval(() => {
     else console.log(stdout);
   });
 }, 6 * 60 * 60 * 1000); // Every 6 hours
+
+// Add after existing cron
+const { processWithdrawal } = require('./services/payout.service');
+
+setInterval(async () => {
+  try {
+    const due = await db.query(
+      `SELECT id FROM withdrawals 
+       WHERE status='pending' AND scheduled_for <= NOW()
+       LIMIT 10`
+    );
+    for (const row of due.rows) {
+      await processWithdrawal(row.id).catch(e =>
+        console.error(`Withdrawal ${row.id} failed:`, e.message)
+      );
+    }
+  } catch (e) { console.error('Withdrawal cron error:', e.message); }
+}, 15 * 60 * 1000); // Every 15 min
 
 // 404 handler
 app.use((req, res) => {

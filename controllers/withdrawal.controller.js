@@ -1,6 +1,11 @@
+const crypto = require('crypto');
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const { sendSuccess, sendError } = require('../utils/response');
+
+const MIN_WITHDRAWAL = parseFloat(process.env.MIN_WITHDRAWAL || '1000');
+const WITHDRAWAL_DELAY_HOURS = parseInt(process.env.WITHDRAWAL_DELAY_HOURS || '24');
+const NEW_USER_HOLD_HOURS = parseInt(process.env.NEW_USER_HOLD_HOURS || '48');
 
 const getWithdrawals = async (req, res) => {
   try {
@@ -66,16 +71,24 @@ const requestWithdrawal = async (req, res) => {
   const client = await db.pool.connect();
   try {
     const { amount, pin } = req.body;
-    if (!amount || amount <= 0) return sendError(res, 400, 'Invalid amount');
-    if (!pin) return sendError(res, 400, 'Withdrawal PIN required');
+    const sellerId = req.user.id;
+
+    if (!amount || amount < MIN_WITHDRAWAL)
+      return sendError(res, 400, `Minimum withdrawal is ₦${MIN_WITHDRAWAL}`);
+    if (!pin)
+      return sendError(res, 400, 'Withdrawal PIN required');
 
     await client.query('BEGIN');
 
+    // Lock row
     const profileRes = await client.query(
-      `SELECT available_balance, withdrawal_pin, withdrawal_pin_set,
-              bank_account_number, bank_name, bank_account_name
-       FROM seller_profiles WHERE user_id=$1 FOR UPDATE`,
-      [req.user.id]
+      `SELECT sp.available_balance, sp.withdrawal_pin, sp.withdrawal_pin_set,
+              sp.bank_account_number, sp.bank_name, sp.bank_account_name, sp.bank_code,
+              u.withdrawal_eligible_at, u.created_at
+       FROM seller_profiles sp
+       JOIN users u ON u.id = sp.user_id
+       WHERE sp.user_id = $1 FOR UPDATE`,
+      [sellerId]
     );
 
     if (!profileRes.rows.length) {
@@ -84,6 +97,17 @@ const requestWithdrawal = async (req, res) => {
     }
 
     const p = profileRes.rows[0];
+
+    // Anti-fraud: new user hold
+    const eligibleAt = p.withdrawal_eligible_at
+      ? new Date(p.withdrawal_eligible_at)
+      : new Date(new Date(p.created_at).getTime() + NEW_USER_HOLD_HOURS * 3600000);
+
+    if (new Date() < eligibleAt) {
+      await client.query('ROLLBACK');
+      const hoursLeft = Math.ceil((eligibleAt - new Date()) / 3600000);
+      return sendError(res, 403, `Withdrawals available in ${hoursLeft}h (new account hold)`);
+    }
 
     if (!p.withdrawal_pin_set) {
       await client.query('ROLLBACK');
@@ -105,38 +129,57 @@ const requestWithdrawal = async (req, res) => {
       return sendError(res, 400, 'Insufficient balance');
     }
 
+    // Check for pending withdrawals (prevent double submit)
+    const pending = await client.query(
+      `SELECT id FROM withdrawals WHERE seller_id = $1 AND status IN ('pending','processing') LIMIT 1`,
+      [sellerId]
+    );
+    if (pending.rows.length) {
+      await client.query('ROLLBACK');
+      return sendError(res, 409, 'You already have a pending withdrawal');
+    }
+
+    // Generate unique reference
+    const reference = `MX-WD-${sellerId.slice(0,8)}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+    // Schedule for future (withdrawal delay)
+    const scheduledFor = new Date(Date.now() + WITHDRAWAL_DELAY_HOURS * 3600000);
+
+    // Reserve balance immediately
     await client.query(
-      `UPDATE seller_profiles SET available_balance=available_balance-$1 WHERE user_id=$2`,
-      [amount, req.user.id]
+      `UPDATE seller_profiles SET available_balance = available_balance - $1 WHERE user_id = $2`,
+      [amount, sellerId]
     );
 
-    // Insert into withdrawals table for history
-    await client.query(
+    const wdRes = await client.query(
       `INSERT INTO withdrawals 
-        (seller_id, amount, bank_account_name, bank_account_number, bank_name, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'pending', NOW())`,
-      [req.user.id, amount, p.bank_account_name, p.bank_account_number, p.bank_name]
-    );
-
-    // Record in earnings as withdrawn transaction
-    await client.query(
-      `INSERT INTO earnings(seller_id, amount, net_amount, commission, status, created_at)
-       VALUES($1, $2, $3, 0, 'withdrawn', NOW())`,
-      [req.user.id, -amount, -amount]
+        (seller_id, amount, bank_account_name, bank_account_number, bank_name, bank_code,
+         status, reference, scheduled_for, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,NOW())
+       RETURNING id, reference, scheduled_for`,
+      [sellerId, amount, p.bank_account_name, p.bank_account_number,
+       p.bank_name, p.bank_code || null, reference, scheduledFor]
     );
 
     await client.query(
       `INSERT INTO notifications(user_id,title,message,type,data,is_read,is_deleted,created_at,updated_at)
        VALUES($1,'Withdrawal Requested',$2,'withdrawal',
-       jsonb_build_object('link','/sellers/sellers earning.html'),
+       jsonb_build_object('link','/sellers/sellers earning.html','reference',$3),
        FALSE,FALSE,NOW(),NOW())`,
-      [req.user.id, `Withdrawal of ₦${Number(amount).toFixed(2)} to ${p.bank_name} (${p.bank_account_number}) is processing.`]
+      [sellerId,
+       `Withdrawal of ₦${Number(amount).toFixed(2)} to ${p.bank_name} queued. Processing in ${WITHDRAWAL_DELAY_HOURS}h.`,
+       reference]
     );
 
     await client.query('COMMIT');
-    return sendSuccess(res, 201, 'Withdrawal request submitted', {
+
+    return sendSuccess(res, 201, 'Withdrawal request created', {
+      reference,
+      scheduledFor,
+      amount,
       newBalance: parseFloat(p.available_balance) - amount
     });
+
   } catch (err) {
     await client.query('ROLLBACK');
     return sendError(res, 500, 'Error processing withdrawal', err.message);
@@ -145,10 +188,65 @@ const requestWithdrawal = async (req, res) => {
   }
 };
 
+const handlePaystackWithdrawalWebhook = async (req, res) => {
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  const hash = crypto.createHmac('sha512', secret)
+    .update(JSON.stringify(req.body)).digest('hex');
+
+  if (hash !== req.headers['x-paystack-signature']) {
+    return res.status(401).end();
+  }
+
+  res.status(200).end(); // Acknowledge immediately
+
+  const { event, data } = req.body;
+  if (!['transfer.success', 'transfer.failed', 'transfer.reversed'].includes(event)) return;
+
+  const reference = data.reference;
+  const wd = await db.query(`SELECT * FROM withdrawals WHERE reference=$1`, [reference]);
+  if (!wd.rows.length) return;
+
+  const withdrawal = wd.rows[0];
+
+  if (event === 'transfer.success') {
+    await db.query(
+      `UPDATE withdrawals SET status='success', processed_at=NOW() WHERE id=$1`,
+      [withdrawal.id]
+    );
+    await db.query(
+      `INSERT INTO notifications(user_id,title,message,type,data,is_read,is_deleted,created_at,updated_at)
+       VALUES($1,'Withdrawal Successful',$2,'withdrawal',
+       jsonb_build_object('link','/sellers/sellers earning.html'),
+       FALSE,FALSE,NOW(),NOW())`,
+      [withdrawal.seller_id,
+       `₦${Number(withdrawal.amount).toFixed(2)} has been sent to your bank account.`]
+    );
+  } else {
+    // failed or reversed — restore balance
+    await db.query(
+      `UPDATE withdrawals SET status='failed', failure_reason=$1, processed_at=NOW() WHERE id=$2`,
+      [data.reason || event, withdrawal.id]
+    );
+    await db.query(
+      `UPDATE seller_profiles SET available_balance=available_balance+$1 WHERE user_id=$2`,
+      [withdrawal.amount, withdrawal.seller_id]
+    );
+    await db.query(
+      `INSERT INTO notifications(user_id,title,message,type,data,is_read,is_deleted,created_at,updated_at)
+       VALUES($1,'Withdrawal Failed',$2,'withdrawal',
+       jsonb_build_object('link','/sellers/sellers earning.html'),
+       FALSE,FALSE,NOW(),NOW())`,
+      [withdrawal.seller_id,
+       `Withdrawal of ₦${Number(withdrawal.amount).toFixed(2)} failed: ${data.reason || 'Bank declined'}.`]
+    );
+  }
+};
+
 module.exports = {
   getWithdrawals,
   requestWithdrawal,
   setWithdrawalPin,
   saveBankAccount,
-  getBankAccount
+  getBankAccount,
+  handlePaystackWithdrawalWebhook
 };
