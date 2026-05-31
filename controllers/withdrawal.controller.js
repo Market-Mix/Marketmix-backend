@@ -73,6 +73,14 @@ const requestWithdrawal = async (req, res) => {
     const { amount, pin } = req.body;
     const sellerId = req.user.id;
 
+    console.log('=== WITHDRAWAL REQUEST ===');
+    console.log('sellerId:', sellerId);
+    console.log('amount:', amount);
+    console.log('pin provided:', !!pin);
+    console.log('MIN_WITHDRAWAL:', MIN_WITHDRAWAL);
+    console.log('WITHDRAWAL_DELAY_HOURS:', WITHDRAWAL_DELAY_HOURS);
+    console.log('NEW_USER_HOLD_HOURS:', NEW_USER_HOLD_HOURS);
+
     if (!amount || amount < MIN_WITHDRAWAL)
       return sendError(res, 400, `Minimum withdrawal is ₦${MIN_WITHDRAWAL}`);
     if (!pin)
