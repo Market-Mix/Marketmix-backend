@@ -65,7 +65,7 @@ const storesRoutes = require('./routes/stores.routes');
 const refundsRoutes = require('./routes/refunds.routes');
 const sellerRoutes = require('./routes/sellers.routes'); 
 const cronRoutes = require('./routes/cron.routes'); // ← keep last
-const withdrawalRoutes = require('./routes/withdrawal.routes');
+
 
 // Mount routes — ORDER MATTERS
 app.use('/api/auth', authRoutes);
