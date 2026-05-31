@@ -34,6 +34,15 @@ const getSellerEarnings = async (req, res) => {
       [sellerId]
     );
 
+    const debugEscrow = await db.query(
+      `SELECT id, amount, status, held_at, released_at 
+       FROM escrow_transactions 
+       WHERE seller_id = $1 
+       ORDER BY held_at DESC LIMIT 10`,
+      [sellerId]
+    );
+    console.log('Escrow rows:', JSON.stringify(debugEscrow.rows, null, 2));
+
     const profile = profileResult.rows[0] || { total_earnings: 0, available_balance: 0 };
     const pendingEarnings = parseFloat(pendingResult.rows[0].pending_earnings);
     const availableBalance = parseFloat(profile.available_balance);
