@@ -1,7 +1,6 @@
 const db = require('../config/db');
 
 const SECRET = process.env.PAYSTACK_SECRET_KEY;
-const FLW_SECRET = process.env.FLUTTERWAVE_SECRET_KEY;
 
 async function ensureRecipient(withdrawal) {
   if (withdrawal.recipient_code) return withdrawal.recipient_code;
@@ -39,6 +38,44 @@ async function ensureRecipient(withdrawal) {
   return code;
 }
 
+async function ensureFlwRecipient(withdrawal) {
+  // Flutterwave doesn't use persistent recipient codes like Paystack
+  // Just validate bank details exist
+  if (!withdrawal.bank_account_number || !withdrawal.bank_name) {
+    throw new Error('Bank details required for Flutterwave transfer');
+  }
+  return null; // No recipient code needed
+}
+
+async function processFlutterwaveWithdrawal(wd) {
+  const secret = process.env.FLUTTERWAVE_SECRET_KEY;
+  if (!secret) throw new Error('FLUTTERWAVE_SECRET_KEY not configured');
+
+  const res = await fetch('https://api.flutterwave.com/v3/transfers', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      account_bank: wd.bank_code || 'N/A',
+      account_number: wd.bank_account_number,
+      amount: wd.amount,
+      narration: `MarketMix withdrawal ${wd.reference}`,
+      currency: 'NGN',
+      reference: wd.reference,
+      callback_url: `${process.env.APP_BASE_URL}/api/webhooks/flutterwave-transfer`,
+      debit_currency: 'NGN'
+    })
+  });
+
+  const data = await res.json();
+  if (data.status !== 'success') {
+    throw new Error(data.message || 'Flutterwave transfer initiation failed');
+  }
+  return data.data;
+}
+
 async function processWithdrawal(withdrawalId) {
   const client = await db.pool.connect();
   try {
@@ -65,38 +102,51 @@ async function processWithdrawal(withdrawalId) {
     await client.query(`UPDATE withdrawals SET status='processing' WHERE id=$1`, [wd.id]);
     await client.query('COMMIT');
 
-    // Get/create recipient
-    const recipientCode = await ensureRecipient(wd);
+    const provider = process.env.WITHDRAWAL_PROVIDER || 'paystack'; // 'paystack' | 'flutterwave'
+    let gatewayRef = '';
 
-    // Initiate transfer
-    const transferRes = await fetch('https://api.paystack.co/transfer', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${SECRET}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        source: 'balance',
-        amount: Math.round(wd.amount * 100), // kobo
-        recipient: recipientCode,
-        reference: wd.reference,
-        reason: `MarketMix withdrawal ${wd.reference}`
-      })
-    });
+    if (provider === 'flutterwave') {
+      await ensureFlwRecipient(wd);
+      const transfer = await processFlutterwaveWithdrawal(wd);
+      gatewayRef = String(transfer.id || '');
 
-    const transfer = await transferRes.json();
+      if (!gatewayRef) {
+        await db.query(`UPDATE withdrawals SET status='failed', failure_reason=$1 WHERE id=$2`,
+          ['Flutterwave transfer initiation did not return a reference', wd.id]);
+        await db.query(`UPDATE seller_profiles SET available_balance=available_balance+$1 WHERE user_id=$2`,
+          [wd.amount, wd.seller_id]);
+        return { success: false, reason: 'Flutterwave transfer initiation failed' };
+      }
+    } else {
+      // existing Paystack logic
+      const recipientCode = await ensureRecipient(wd);
+      const transferRes = await fetch('https://api.paystack.co/transfer', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${SECRET}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'balance',
+          amount: Math.round(wd.amount * 100),
+          recipient: recipientCode,
+          reference: wd.reference,
+          reason: `MarketMix withdrawal ${wd.reference}`
+        })
+      });
 
-    if (!transfer.status) {
-      // Revert to pending + restore balance on hard failure
-      await db.query(`UPDATE withdrawals SET status='failed', failure_reason=$1 WHERE id=$2`,
-        [transfer.message, wd.id]);
-      await db.query(`UPDATE seller_profiles SET available_balance=available_balance+$1 WHERE user_id=$2`,
-        [wd.amount, wd.seller_id]);
-      return { success: false, reason: transfer.message };
+      const transfer = await transferRes.json();
+      if (!transfer.status) {
+        await db.query(`UPDATE withdrawals SET status='failed', failure_reason=$1 WHERE id=$2`,
+          [transfer.message, wd.id]);
+        await db.query(`UPDATE seller_profiles SET available_balance=available_balance+$1 WHERE user_id=$2`,
+          [wd.amount, wd.seller_id]);
+        return { success: false, reason: transfer.message };
+      }
+      gatewayRef = String(transfer.data?.id || '');
     }
 
     await db.query(
       `UPDATE withdrawals SET gateway_reference=$1, status='processing' WHERE id=$2`,
-      [String(transfer.data?.id || ''), wd.id]
+      [gatewayRef, wd.id]
     );
-
     return { success: true, reference: wd.reference };
 
   } catch (err) {

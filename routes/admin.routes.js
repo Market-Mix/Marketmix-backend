@@ -119,4 +119,64 @@ router.post('/withdrawals/:id/reject', protect, isAdmin, async (req, res) => {
   return sendSuccess(res, 200, 'Withdrawal rejected and balance restored');
 });
 
+// GET /api/admin/withdrawals - list all withdrawals
+router.get('/withdrawals', protect, isAdmin, async (req, res) => {
+  const { status, page = 1, limit = 20 } = req.query;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+  
+  let where = status ? `WHERE status = $1` : '';
+  const params = status ? [status, limit, offset] : [limit, offset];
+
+  const result = await db.query(
+    `SELECT w.*, sp.bank_account_name, sp.bank_name, u.email
+     FROM withdrawals w
+     JOIN seller_profiles sp ON sp.user_id = w.seller_id
+     JOIN users u ON u.id = w.seller_id
+     ${where}
+     ORDER BY w.created_at DESC
+     LIMIT $${status ? 2 : 1} OFFSET $${status ? 3 : 2}`,
+    params
+  );
+
+  return sendSuccess(res, 200, 'Withdrawals fetched', {
+    withdrawals: result.rows,
+    page: parseInt(page)
+  });
+});
+
+// POST /api/admin/withdrawals/:id/force-process - bypass schedule
+router.post('/withdrawals/:id/force-process', protect, isAdmin, async (req, res) => {
+  try {
+    await db.query(
+      `UPDATE withdrawals SET scheduled_for=NOW(), updated_at=NOW() WHERE id=$1`,
+      [req.params.id]
+    );
+    const { processWithdrawal } = require('../services/payout.service');
+    const result = await processWithdrawal(req.params.id);
+    return sendSuccess(res, 200, 'Processing initiated', result);
+  } catch (err) {
+    return sendError(res, 500, err.message);
+  }
+});
+
+// POST /api/admin/withdrawals/:id/approve - override anti-fraud hold
+router.post('/withdrawals/:id/approve', protect, isAdmin, async (req, res) => {
+  const { notes } = req.body;
+  const wd = await db.query(
+    `UPDATE withdrawals 
+     SET scheduled_for=NOW(), admin_approved=true, admin_notes=$1, updated_at=NOW()
+     WHERE id=$2 AND status='pending'
+     RETURNING seller_id, amount`,
+    [notes || 'Admin approved', req.params.id]
+  );
+  if (!wd.rows.length) return sendError(res, 404, 'Withdrawal not found or not pending');
+  
+  // Also clear user hold if that's blocking
+  await db.query(
+    `UPDATE users SET withdrawal_eligible_at=NOW() WHERE id=$1`,
+    [wd.rows[0].seller_id]
+  );
+  return sendSuccess(res, 200, 'Withdrawal approved and queued for immediate processing');
+});
+
 module.exports = router;

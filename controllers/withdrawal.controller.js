@@ -242,11 +242,64 @@ const handlePaystackWithdrawalWebhook = async (req, res) => {
   }
 };
 
+const handleFlutterwaveTransferWebhook = async (req, res) => {
+  const secretHash = process.env.FLUTTERWAVE_WEBHOOK_HASH;
+  const signature = req.headers['verif-hash'];
+  
+  if (secretHash && signature !== secretHash) {
+    return res.status(401).end();
+  }
+
+  res.status(200).end(); // Acknowledge immediately
+
+  const { event, data } = req.body;
+  if (!['transfer.completed', 'transfer.failed'].includes(event)) return;
+
+  const reference = data.reference;
+  const wd = await db.query(`SELECT * FROM withdrawals WHERE reference=$1`, [reference]);
+  if (!wd.rows.length) return;
+
+  const withdrawal = wd.rows[0];
+
+  if (event === 'transfer.completed' && data.status === 'SUCCESSFUL') {
+    await db.query(
+      `UPDATE withdrawals SET status='success', processed_at=NOW() WHERE id=$1`,
+      [withdrawal.id]
+    );
+    await db.query(
+      `INSERT INTO notifications(user_id,title,message,type,data,is_read,is_deleted,created_at,updated_at)
+       VALUES($1,'Withdrawal Successful',$2,'withdrawal',
+       jsonb_build_object('link','/sellers/sellers earning.html'),
+       FALSE,FALSE,NOW(),NOW())`,
+      [withdrawal.seller_id,
+       `₦${Number(withdrawal.amount).toFixed(2)} has been sent to your bank account.`]
+    );
+  } else {
+    await db.query(
+      `UPDATE withdrawals SET status='failed', failure_reason=$1, processed_at=NOW() WHERE id=$2`,
+      [data.complete_message || event, withdrawal.id]
+    );
+    await db.query(
+      `UPDATE seller_profiles SET available_balance=available_balance+$1 WHERE user_id=$2`,
+      [withdrawal.amount, withdrawal.seller_id]
+    );
+    await db.query(
+      `INSERT INTO notifications(user_id,title,message,type,data,is_read,is_deleted,created_at,updated_at)
+       VALUES($1,'Withdrawal Failed',$2,'withdrawal',
+       jsonb_build_object('link','/sellers/sellers earning.html'),
+       FALSE,FALSE,NOW(),NOW())`,
+      [withdrawal.seller_id,
+       `Withdrawal of ₦${Number(withdrawal.amount).toFixed(2)} failed: ${data.complete_message || 'Bank declined'}.`]
+    );
+  }
+};
+
 module.exports = {
   getWithdrawals,
   requestWithdrawal,
   setWithdrawalPin,
   saveBankAccount,
   getBankAccount,
-  handlePaystackWithdrawalWebhook
+  handlePaystackWithdrawalWebhook,
+  handleFlutterwaveTransferWebhook
 };
