@@ -178,16 +178,12 @@ const requestWithdrawal = async (req, res) => {
       ]
     );
 
-    await client.query(
-      `INSERT INTO notifications(user_id,title,message,type,data,is_read,is_deleted,created_at,updated_at)
-       VALUES($1,'Withdrawal Requested',$2,'withdrawal',
-       jsonb_build_object('link','/sellers/sellers earning.html','reference',$3),
-       FALSE,FALSE,NOW(),NOW())`,
-      [sellerId,
-       `Withdrawal of ₦${Number(amount).toFixed(2)} to ${p.bank_name} queued. Processing in ${WITHDRAWAL_DELAY_HOURS}h.`,
-       reference]
-    );
-
+   await client.query(
+  `INSERT INTO notifications(user_id,title,message,type,link,is_read,is_deleted,created_at,updated_at)
+   VALUES($1,'Withdrawal Requested',$2,'withdrawal','/sellers/sellers earning.html',
+   FALSE,FALSE,NOW(),NOW())`,
+  [sellerId, `Withdrawal of ₦${Number(amount).toFixed(2)} to ${p.bank_name} queued. Processing in ${WITHDRAWAL_DELAY_HOURS}h.`]
+);
     await client.query('COMMIT');
 
     return sendSuccess(res, 201, 'Withdrawal request created', {
@@ -231,10 +227,8 @@ const handlePaystackWithdrawalWebhook = async (req, res) => {
       [withdrawal.id]
     );
     await db.query(
-      `INSERT INTO notifications(user_id,title,message,type,data,is_read,is_deleted,created_at,updated_at)
-       VALUES($1,'Withdrawal Successful',$2,'withdrawal',
-       jsonb_build_object('link','/sellers/sellers earning.html'),
-       FALSE,FALSE,NOW(),NOW())`,
+      `INSERT INTO notifications(user_id,title,message,type,link,is_read,is_deleted,created_at,updated_at)
+       VALUES($1,'Withdrawal Successful',$2,'withdrawal','/sellers/sellers earning.html',FALSE,FALSE,NOW(),NOW())`,
       [withdrawal.seller_id,
        `₦${Number(withdrawal.amount).toFixed(2)} has been sent to your bank account.`]
     );
@@ -249,10 +243,8 @@ const handlePaystackWithdrawalWebhook = async (req, res) => {
       [withdrawal.amount, withdrawal.seller_id]
     );
     await db.query(
-      `INSERT INTO notifications(user_id,title,message,type,data,is_read,is_deleted,created_at,updated_at)
-       VALUES($1,'Withdrawal Failed',$2,'withdrawal',
-       jsonb_build_object('link','/sellers/sellers earning.html'),
-       FALSE,FALSE,NOW(),NOW())`,
+      `INSERT INTO notifications(user_id,title,message,type,link,is_read,is_deleted,created_at,updated_at)
+       VALUES($1,'Withdrawal Failed',$2,'withdrawal','/sellers/sellers earning.html',FALSE,FALSE,NOW(),NOW())`,
       [withdrawal.seller_id,
        `Withdrawal of ₦${Number(withdrawal.amount).toFixed(2)} failed: ${data.reason || 'Bank declined'}.`]
     );
@@ -284,10 +276,8 @@ const handleFlutterwaveTransferWebhook = async (req, res) => {
       [withdrawal.id]
     );
     await db.query(
-      `INSERT INTO notifications(user_id,title,message,type,data,is_read,is_deleted,created_at,updated_at)
-       VALUES($1,'Withdrawal Successful',$2,'withdrawal',
-       jsonb_build_object('link','/sellers/sellers earning.html'),
-       FALSE,FALSE,NOW(),NOW())`,
+      `INSERT INTO notifications(user_id,title,message,type,link,is_read,is_deleted,created_at,updated_at)
+       VALUES($1,'Withdrawal Successful',$2,'withdrawal','/sellers/sellers earning.html',FALSE,FALSE,NOW(),NOW())`,
       [withdrawal.seller_id,
        `₦${Number(withdrawal.amount).toFixed(2)} has been sent to your bank account.`]
     );
@@ -301,10 +291,8 @@ const handleFlutterwaveTransferWebhook = async (req, res) => {
       [withdrawal.amount, withdrawal.seller_id]
     );
     await db.query(
-      `INSERT INTO notifications(user_id,title,message,type,data,is_read,is_deleted,created_at,updated_at)
-       VALUES($1,'Withdrawal Failed',$2,'withdrawal',
-       jsonb_build_object('link','/sellers/sellers earning.html'),
-       FALSE,FALSE,NOW(),NOW())`,
+      `INSERT INTO notifications(user_id,title,message,type,link,is_read,is_deleted,created_at,updated_at)
+       VALUES($1,'Withdrawal Failed',$2,'withdrawal','/sellers/sellers earning.html',FALSE,FALSE,NOW(),NOW())`,
       [withdrawal.seller_id,
        `Withdrawal of ₦${Number(withdrawal.amount).toFixed(2)} failed: ${data.complete_message || 'Bank declined'}.`]
     );
