@@ -10,7 +10,6 @@ const getSellerEarnings = async (req, res) => {
   try {
     const sellerId = req.user.id;
 
-    // Available + total from seller_profiles (source of truth)
     const profileResult = await db.query(
       `SELECT 
         COALESCE(total_earnings, 0) as total_earnings,
@@ -19,7 +18,7 @@ const getSellerEarnings = async (req, res) => {
       [sellerId]
     );
 
-    // Pending = escrow held amounts for this seller
+    // Pending = escrow held amounts (net of commission) - NOT yet released
     const pendingResult = await db.query(
       `SELECT COALESCE(SUM(amount * 0.95), 0) as pending_earnings
        FROM escrow_transactions 
@@ -27,13 +26,20 @@ const getSellerEarnings = async (req, res) => {
       [sellerId]
     );
 
-    // Total withdrawn
+    // Total withdrawn = sum of withdrawal transactions
     const withdrawnResult = await db.query(
       `SELECT COALESCE(SUM(ABS(amount)), 0) as total_withdrawn
        FROM earnings 
        WHERE seller_id = $1 AND status = 'withdrawn'`,
       [sellerId]
     );
+
+    const profile = profileResult.rows[0] || { total_earnings: 0, available_balance: 0 };
+    const pendingEarnings = parseFloat(pendingResult.rows[0].pending_earnings);
+    const availableBalance = parseFloat(profile.available_balance);
+
+    // Total earnings = available + pending + withdrawn (what they've actually earned)
+    const totalEarnings = availableBalance + pendingEarnings + parseFloat(withdrawnResult.rows[0].total_withdrawn);
 
     // Recent transactions
     const transactionsResult = await db.query(
@@ -101,9 +107,9 @@ const getSellerEarnings = async (req, res) => {
 
     return sendSuccess(res, 200, 'Earnings fetched', {
       summary: {
-        totalEarnings: parseFloat(profile.total_earnings),
-        availableBalance: parseFloat(profile.available_balance),
-        pendingEarnings: parseFloat(pendingResult.rows[0].pending_earnings),
+        totalEarnings,
+        availableBalance,
+        pendingEarnings,
         totalWithdrawn: parseFloat(withdrawnResult.rows[0].total_withdrawn)
       },
       transactions: allTransactions,
