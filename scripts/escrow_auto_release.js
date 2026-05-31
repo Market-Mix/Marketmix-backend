@@ -62,26 +62,18 @@ async function autoReleaseEscrow() {
         [netAmount, row.seller_id]
       );
 
-      // Notify both parties
+      // Notify seller
       await client.query(
-        `INSERT INTO notifications
-           (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
-         VALUES
-           ($1,'Funds Auto-Released',
-            $2,'payment',
-            jsonb_build_object('orderId',$3,'link','/sellers/sellers earning.html'),
-            FALSE,FALSE,NOW(),NOW()),
-           ($4,'Order Auto-Completed',
-            $5,'order',
-            jsonb_build_object('orderId',$3,'link','/buyers/buyers order & tracking.html'),
-            FALSE,FALSE,NOW(),NOW())`,
-        [
-          row.seller_id,
-          `₦${netAmount.toFixed(2)} has been auto-released after 3 days.`,
-          row.order_id,
-          row.buyer_id,
-          `Your order has been marked as delivered and payment released to the seller.`
-        ]
+        `INSERT INTO notifications(user_id,title,message,type,is_read,is_deleted,created_at,updated_at)
+         VALUES($1,$2,$3,'payment',FALSE,FALSE,NOW(),NOW())`,
+        [row.seller_id, 'Funds Auto-Released', `₦${netAmount.toFixed(2)} has been auto-released after 3 days.`]
+      );
+
+      // Notify buyer
+      await client.query(
+        `INSERT INTO notifications(user_id,title,message,type,is_read,is_deleted,created_at,updated_at)
+         VALUES($1,$2,$3,'order',FALSE,FALSE,NOW(),NOW())`,
+        [row.buyer_id, 'Order Auto-Completed', `Your order has been marked as delivered and payment released to the seller.`]
       );
     }
 
