@@ -162,11 +162,20 @@ const requestWithdrawal = async (req, res) => {
     const wdRes = await client.query(
       `INSERT INTO withdrawals 
         (seller_id, amount, bank_account_name, bank_account_number, bank_name, bank_code,
-         status, reference, scheduled_for, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,NOW())
+         account_masked, status, reference, scheduled_for, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,NOW())
        RETURNING id, reference, scheduled_for`,
-      [sellerId, amount, p.bank_account_name, p.bank_account_number,
-       p.bank_name, p.bank_code || null, reference, scheduledFor]
+      [
+        sellerId,
+        amount,
+        p.bank_account_name,
+        p.bank_account_number,
+        p.bank_name,
+        p.bank_code || null,
+        p.bank_account_number ? `****${p.bank_account_number.slice(-4)}` : null,
+        reference,
+        scheduledFor
+      ]
     );
 
     await client.query(
