@@ -87,8 +87,6 @@ const getSellerEarnings = async (req, res) => {
       [sellerId]
     );
 
-    const profile = profileResult.rows[0] || { total_earnings: 0, available_balance: 0 };
-
     // Combine transactions + pending escrow into one list
     const pendingTxs = escrowResult.rows.map(et => ({
       id: et.id,
