@@ -1019,9 +1019,10 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
     const data = await response.json();
     const refundCases = Array.isArray(data) ? data : [];
 
+    // Keep order IDs as strings (could be UUID) and skip falsy values
     const orderIds = [...new Set(refundCases
-      .map((refund) => parseInt(refund.order_id, 10))
-      .filter((id) => Number.isFinite(id)))];
+      .map((refund) => refund.order_id)
+      .filter(Boolean))];
 
     let orderInfoMap = new Map();
     if (orderIds.length > 0) {
@@ -1038,7 +1039,7 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
          JOIN users u ON u.id = o.buyer_id
          JOIN order_items oi ON oi.order_id = o.id
          LEFT JOIN products p ON p.id = oi.product_id
-         WHERE o.id = ANY($1::int[])`,
+        WHERE o.id = ANY($1::text[])`,
         [orderIds]
       );
 
