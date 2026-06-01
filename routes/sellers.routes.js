@@ -1022,7 +1022,9 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
     // Keep order IDs as strings (could be UUID) and skip falsy values
     const orderIds = [...new Set(refundCases
       .map((refund) => refund.order_id)
-      .filter(Boolean))];
+      .filter((id) => id !== null && id !== undefined)
+      .map((id) => String(id))
+    )];
 
     let orderInfoMap = new Map();
     if (orderIds.length > 0) {
