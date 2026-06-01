@@ -1017,64 +1017,7 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
     }
 
     const data = await response.json();
-    const refundCases = Array.isArray(data) ? data : [];
-
-    // Keep order IDs as strings (could be UUID) and skip falsy values
-    const orderIds = [...new Set(refundCases
-      .map((refund) => refund.order_id)
-      .filter((id) => id !== null && id !== undefined)
-      .map((id) => String(id))
-    )];
-
-    let orderInfoMap = new Map();
-    if (orderIds.length > 0) {
-      const orderItemsRes = await db.query(
-        `SELECT
-           o.id AS order_id,
-           u.first_name,
-           u.last_name,
-           oi.id AS order_item_id,
-           oi.quantity,
-           oi.price_at_purchase,
-           p.name AS product_name
-         FROM orders o
-         JOIN users u ON u.id = o.buyer_id
-         JOIN order_items oi ON oi.order_id = o.id
-         LEFT JOIN products p ON p.id = oi.product_id
-        WHERE o.id = ANY($1::text[])`,
-        [orderIds]
-      );
-
-      for (const row of orderItemsRes.rows) {
-        const buyerName = `${row.first_name || ''} ${row.last_name || ''}`.trim() || null;
-        const amount = row.quantity && row.price_at_purchase ? parseFloat(row.quantity) * parseFloat(row.price_at_purchase) : null;
-        const itemInfo = {
-          buyer_name: buyerName,
-          amount,
-          product_name: row.product_name || null
-        };
-
-        orderInfoMap.set(`${row.order_id}:${row.order_item_id}`, itemInfo);
-        if (!orderInfoMap.has(String(row.order_id))) {
-          orderInfoMap.set(String(row.order_id), itemInfo);
-        }
-      }
-    }
-
-    const enrichedCases = refundCases.map((refund) => {
-      const orderIdKey = String(refund.order_id);
-      const itemKey = refund.order_item_id ? `${orderIdKey}:${refund.order_item_id}` : null;
-      const orderInfo = (itemKey && orderInfoMap.has(itemKey))
-        ? orderInfoMap.get(itemKey)
-        : orderInfoMap.get(orderIdKey);
-
-      return {
-        ...refund,
-        ...(orderInfo || {})
-      };
-    });
-
-    return sendSuccess(res, 200, 'Refund cases fetched successfully', enrichedCases);
+    return sendSuccess(res, 200, 'Refund cases fetched successfully', data);
   } catch (error) {
     console.error('Error fetching refund cases:', error);
     return sendError(res, 500, 'Error fetching refund cases', error.message);
