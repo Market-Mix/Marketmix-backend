@@ -83,8 +83,32 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Unable to resolve seller_id for this order', details: { order_id, product_name } });
     }
 
+    // Fetch buyer name and order item amount
+    let buyerName = null;
+    let totalAmount = 0;
+    try {
+      const buyerRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [buyer_id]);
+      if (buyerRes.rows.length > 0) {
+        const row = buyerRes.rows[0];
+        buyerName = `${row.first_name || ''} ${row.last_name || ''}`.trim() || null;
+      }
+
+      const itemRes = await db.query(
+        'SELECT quantity, price_at_purchase FROM order_items WHERE order_id = $1 AND id = $2',
+        [order_id, order_item_id]
+      );
+      if (itemRes.rows.length > 0) {
+        const row = itemRes.rows[0];
+        totalAmount = (parseFloat(row.quantity) || 1) * (parseFloat(row.price_at_purchase) || 0);
+      }
+    } catch (err) {
+      console.warn('⚠️ Could not fetch buyer name or amount:', err.message);
+    }
+
     const refundPayload = {
       buyer_id,
+      buyer_name: buyerName,
+      total_amount: totalAmount,
       seller_id: resolvedSellerId,
       order_id: String(order_id),
       order_item_id: order_item_id || null,
