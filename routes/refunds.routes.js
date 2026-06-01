@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { sendSuccess, sendError } = require('../utils/response');
+const db = require('../config/db');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
