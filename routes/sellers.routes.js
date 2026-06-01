@@ -1017,7 +1017,6 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
     }
 
     const data = await response.json();
-<<<<<<< HEAD
     const refundCases = Array.isArray(data) ? data : [];
 
     // Keep order IDs as strings (could be UUID) and skip falsy values
@@ -1076,9 +1075,6 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
     });
 
     return sendSuccess(res, 200, 'Refund cases fetched successfully', enrichedCases);
-=======
-    return sendSuccess(res, 200, 'Refund cases fetched successfully', data);
->>>>>>> parent of 5293ac7 (seller refund)
   } catch (error) {
     console.error('Error fetching refund cases:', error);
     return sendError(res, 500, 'Error fetching refund cases', error.message);
