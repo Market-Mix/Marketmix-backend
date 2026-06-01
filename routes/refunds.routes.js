@@ -108,8 +108,6 @@ router.post('/create', async (req, res) => {
 
     const refundPayload = {
       buyer_id,
-      buyer_name: buyerName,
-      total_amount: totalAmount,
       seller_id: resolvedSellerId,
       order_id: String(order_id),
       order_item_id: order_item_id || null,
