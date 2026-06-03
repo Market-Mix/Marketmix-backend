@@ -50,12 +50,24 @@ router.get('/seller', protect, isSeller, async (req, res) => {
     }
 
     const refundCases = await response.json();
-    const count = Array.isArray(refundCases) ? refundCases.length : 0;
-    
+    // Supabase returns an exact count in the Content-Range header when using Prefer: count=exact
+    const contentRange = response.headers.get('content-range');
+    let count = 0;
+    if (contentRange) {
+      // Format: 0-9/123  -> total is after '/'
+      const parts = contentRange.split('/');
+      if (parts.length === 2) {
+        const parsed = parseInt(parts[1], 10);
+        if (!Number.isNaN(parsed)) count = parsed;
+      }
+    }
+    // Fallback to array length if header missing
+    if (!count && Array.isArray(refundCases)) count = refundCases.length;
+
     console.log(`✅ Refund count fetched for seller ${sellerId}: ${count}`);
-    return sendSuccess(res, 200, 'Seller refunds fetched successfully', { 
+    return sendSuccess(res, 200, 'Seller refunds fetched successfully', {
       count,
-      refunds: refundCases || []
+      refunds: Array.isArray(refundCases) ? refundCases : []
     });
   } catch (error) {
     console.error('❌ Error in /api/refunds/seller:', error);
