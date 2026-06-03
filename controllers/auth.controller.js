@@ -316,7 +316,7 @@ const googleLogin = async (req, res) => {
  */
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, role } = req.body;
 
     // Validate input
     if (!email || !password) {
@@ -334,6 +334,11 @@ const login = async (req, res) => {
     }
 
     const user = result.rows[0];
+
+    // If role specified, verify user has that role or is admin
+    if (role && user.role !== role && user.role !== 'admin') {
+      return sendError(res, 403, `This account is not registered as a ${role}`);
+    }
 
     // Check if user signed up with Google (no password)
     if (!user.password_hash && user.google_id) {
@@ -356,7 +361,7 @@ const login = async (req, res) => {
     const token = generateToken({
       id: user.id,
       email: user.email,
-      role: user.role
+      role: role || user.role
     });
 
     return sendSuccess(res, 200, 'Login successful', {
