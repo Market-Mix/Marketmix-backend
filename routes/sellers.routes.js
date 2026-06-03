@@ -1017,7 +1017,61 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
     }
 
     const data = await response.json();
-    return sendSuccess(res, 200, 'Refund cases fetched successfully', data);
+    // Enrich refund cases with local DB data (buyer name, total amount) when available
+    const enriched = await Promise.all((data || []).map(async (c) => {
+      try {
+        const caseCopy = { ...c };
+
+        // Resolve buyer name from local users table if missing
+        if (!caseCopy.buyer_name && caseCopy.buyer_id) {
+          try {
+            const userRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [caseCopy.buyer_id]);
+            if (userRes.rows.length > 0) {
+              const row = userRes.rows[0];
+              caseCopy.buyer_name = `${row.first_name || ''} ${row.last_name || ''}`.trim() || null;
+            }
+          } catch (err) {
+            console.warn('⚠️ Could not resolve buyer name for refund case', caseCopy.id, err.message);
+          }
+        }
+
+        // Resolve total amount from order_items if missing
+        if ((caseCopy.total_amount === undefined || caseCopy.total_amount === null) && (caseCopy.order_item_id || caseCopy.order_id)) {
+          try {
+            if (caseCopy.order_item_id) {
+              const itemRes = await db.query(
+                'SELECT quantity, price_at_purchase FROM order_items WHERE id = $1 LIMIT 1',
+                [caseCopy.order_item_id]
+              );
+              if (itemRes.rows.length > 0) {
+                const r = itemRes.rows[0];
+                caseCopy.total_amount = (parseFloat(r.quantity) || 1) * (parseFloat(r.price_at_purchase) || 0);
+              }
+            } else if (caseCopy.order_id) {
+              // Fallback: sum order_items for the order (optionally filtered by seller_id)
+              const itemsRes = await db.query(
+                'SELECT quantity, price_at_purchase FROM order_items WHERE order_id = $1',
+                [caseCopy.order_id]
+              );
+              if (itemsRes.rows.length > 0) {
+                caseCopy.total_amount = itemsRes.rows.reduce((sum, r) => {
+                  return sum + ((parseFloat(r.quantity) || 1) * (parseFloat(r.price_at_purchase) || 0));
+                }, 0);
+              }
+            }
+          } catch (err) {
+            console.warn('⚠️ Could not resolve total_amount for refund case', caseCopy.id, err.message);
+          }
+        }
+
+        return caseCopy;
+      } catch (err) {
+        console.warn('⚠️ Failed to enrich refund case', c?.id, err?.message || err);
+        return c;
+      }
+    }));
+
+    return sendSuccess(res, 200, 'Refund cases fetched successfully', enriched);
   } catch (error) {
     console.error('Error fetching refund cases:', error);
     return sendError(res, 500, 'Error fetching refund cases', error.message);

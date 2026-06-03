@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { sendSuccess, sendError } = require('../utils/response');
+const db = require('../config/db');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -81,6 +82,28 @@ router.post('/create', async (req, res) => {
     if (!resolvedSellerId) {
       console.error('❌ Unable to resolve seller_id for refund create payload:', { order_id, product_name, receivedSellerId: seller_id });
       return res.status(400).json({ success: false, message: 'Unable to resolve seller_id for this order', details: { order_id, product_name } });
+    }
+
+    // Fetch buyer name and order item amount
+    let buyerName = null;
+    let totalAmount = 0;
+    try {
+      const buyerRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [buyer_id]);
+      if (buyerRes.rows.length > 0) {
+        const row = buyerRes.rows[0];
+        buyerName = `${row.first_name || ''} ${row.last_name || ''}`.trim() || null;
+      }
+
+      const itemRes = await db.query(
+        'SELECT quantity, price_at_purchase FROM order_items WHERE order_id = $1 AND id = $2',
+        [order_id, order_item_id]
+      );
+      if (itemRes.rows.length > 0) {
+        const row = itemRes.rows[0];
+        totalAmount = (parseFloat(row.quantity) || 1) * (parseFloat(row.price_at_purchase) || 0);
+      }
+    } catch (err) {
+      console.warn('⚠️ Could not fetch buyer name or amount:', err.message);
     }
 
     const refundPayload = {
