@@ -13,10 +13,13 @@ const { uploadToCloudinary } = require('../utils/cloudinary');
 // ─── Multer ──────────────────────────────────────────────────────────────────
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits:  { fileSize: 5 * 1024 * 1024 },
+  limits:  { fileSize: 50 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-    allowed.includes(file.mimetype) ? cb(null, true) : cb(new Error('Images only'));
+    const allowed = [
+      'image/jpeg','image/png','image/webp','image/gif',
+      'video/mp4','video/quicktime','video/webm','video/avi'
+    ];
+    allowed.includes(file.mimetype) ? cb(null, true) : cb(new Error('Images and videos only'));
   },
 });
 
@@ -117,46 +120,81 @@ const createSellerProduct = async (req, res) => {
       return sendError(res, 400, 'No active store selected. Send X-Store-Id header.');
     }
 
-    const { name, description, price, stock_quantity, category_id, is_active } = req.body;
+    const { 
+      name, description, price, stock_quantity, category_id,
+      subcategory_id, is_active, sku, discount_price,
+      vendor_location, delivery_available, return_accepted,
+      variants
+    } = req.body;
+
     const category_meta = req.body.category_meta 
       ? (typeof req.body.category_meta === 'string' ? JSON.parse(req.body.category_meta) : req.body.category_meta)
       : null;
+
+    const dynamic_fields = req.body.dynamic_fields 
+      ? (typeof req.body.dynamic_fields === 'string' ? JSON.parse(req.body.dynamic_fields) : req.body.dynamic_fields)
+      : {};
+
+    const parsedVariants = variants
+      ? (typeof variants === 'string' ? JSON.parse(variants) : variants)
+      : [];
+
     if (!name || price === undefined || price === null) {
       return sendError(res, 400, 'Product name and price are required');
     }
 
-  
-let images = [];
-const existingUrls = req.body.image_url ? [req.body.image_url] : [];
+    const imageFiles = req.files?.filter(f => f.mimetype.startsWith('image/')) || [];
+    const videoFile = req.files?.find(f => f.mimetype.startsWith('video/')) || null;
 
-if (req.files && req.files.length) {
-  try {
-    const uploaded = await uploadMultipleImages(req.files);
-    images = [...existingUrls, ...uploaded];
-  } catch (e) { return sendError(res, 500, `Image upload failed: ${e.message}`); }
-} else {
-  images = existingUrls;
-}
+    let images = [];
+    const existingUrls = req.body.image_url ? [req.body.image_url] : [];
 
-const mainImageUrl = images[0] || null;
-const weight_kg = req.body.weight_kg ? parseFloat(req.body.weight_kg) : null;
+    if (imageFiles.length > 0) {
+      try {
+        const uploaded = await uploadMultipleImages(imageFiles);
+        images = [...existingUrls, ...uploaded];
+      } catch (e) { return sendError(res, 500, `Image upload failed: ${e.message}`); }
+    } else {
+      images = existingUrls;
+    }
+
+    const mainImageUrl = images[0] || null;
+    const weight_kg = req.body.weight_kg ? parseFloat(req.body.weight_kg) : null;
+
+    let videoUrl = null;
+    if (videoFile) {
+      try {
+        videoUrl = await uploadToCloudinary(videoFile.buffer, videoFile.mimetype, 'product-videos');
+      } catch (e) { return sendError(res, 500, `Video upload failed: ${e.message}`); }
+    }
+
     const result = await db.query(
       `INSERT INTO products
-         (seller_id, store_id, name, description, price, stock_quantity,
-          main_image_url, images, weight_kg, category_id, category_meta, is_active, is_deleted, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false,NOW(),NOW())
-       RETURNING id, name, description, price, stock_quantity,
-                 main_image_url, images, weight_kg, category_id, is_active, created_at`,
+         (seller_id, store_id, name, description, price, discount_price, stock_quantity,
+          main_image_url, images, product_video_url, weight_kg, category_id, subcategory_id,
+          category_meta, dynamic_fields, variants, sku, vendor_location,
+          delivery_available, return_accepted, is_active, is_deleted, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,false,NOW(),NOW())
+       RETURNING *`,
       [
         sellerId, storeId, name.trim(), description || '',
-        parseFloat(price), parseInt(stock_quantity) || 0,
-        mainImageUrl, images, weight_kg, category_id || null, category_meta,
+        parseFloat(price), discount_price !== undefined && discount_price !== null && discount_price !== '' ? parseFloat(discount_price) : null,
+        parseInt(stock_quantity) || 0,
+        mainImageUrl, images, videoUrl, weight_kg || null,
+        category_id || null, subcategory_id || null,
+        category_meta, dynamic_fields, JSON.stringify(parsedVariants),
+        sku || null, vendor_location || null,
+        delivery_available !== 'false' && delivery_available !== false,
+        return_accepted !== 'false' && return_accepted !== false,
         is_active !== 'false' && is_active !== false
       ]
     );
 
     const product = result.rows[0];
     product.price = parseFloat(product.price);
+    if (product.discount_price !== undefined && product.discount_price !== null) {
+      product.discount_price = parseFloat(product.discount_price);
+    }
     product.stockStatus =
       product.stock_quantity === 0  ? 'Out of Stock' :
       product.stock_quantity <= 10  ? 'Low Stock'    : 'In Stock';
@@ -189,28 +227,52 @@ const updateSellerProduct = async (req, res) => {
     }
 
     const ownership = await db.query(
-      `SELECT id, name, main_image_url, images FROM products
+      `SELECT id, name, main_image_url, images, product_video_url FROM products
        WHERE id = $1 AND seller_id = $2 AND store_id = $3 AND is_deleted = false`,
       [productId, sellerId, storeId]
     );
     if (!ownership.rows.length) return sendError(res, 404, 'Product not found or access denied');
 
     const existing = ownership.rows[0];
-    const { name, description, price, stock_quantity, category_id, is_active } = req.body;
+    const {
+      name, description, price, stock_quantity, category_id, subcategory_id,
+      is_active, sku, discount_price, vendor_location,
+      delivery_available, return_accepted, variants
+    } = req.body;
+
     const category_meta = req.body.category_meta 
       ? (typeof req.body.category_meta === 'string' ? JSON.parse(req.body.category_meta) : req.body.category_meta)
       : null;
+
+    const dynamic_fields = req.body.dynamic_fields !== undefined
+      ? (typeof req.body.dynamic_fields === 'string' ? JSON.parse(req.body.dynamic_fields) : req.body.dynamic_fields)
+      : undefined;
+
+    const parsedVariants = req.body.variants !== undefined
+      ? (typeof variants === 'string' ? JSON.parse(variants) : variants)
+      : undefined;
 
     let images = existing.images || [];
     const existingImagesFromBody = req.body.existing_images ? JSON.parse(req.body.existing_images) : null;
     if (existingImagesFromBody) images = existingImagesFromBody;
 
-    if (req.files && req.files.length) {
+    const imageFiles = req.files?.filter(f => f.mimetype.startsWith('image/')) || [];
+    const videoFile = req.files?.find(f => f.mimetype.startsWith('video/')) || null;
+    let videoUrl = existing.product_video_url || null;
+
+    if (imageFiles.length > 0) {
       try {
-        const uploaded = await uploadMultipleImages(req.files);
-        const total = [...images, ...uploaded].slice(0, 5);
-        images = total;
+        const uploaded = await uploadMultipleImages(imageFiles);
+        images = [...images, ...uploaded].slice(0, 5);
       } catch (e) { return sendError(res, 500, `Image upload failed: ${e.message}`); }
+    }
+
+    if (videoFile) {
+      try {
+        videoUrl = await uploadToCloudinary(videoFile.buffer, videoFile.mimetype, 'product-videos');
+      } catch (e) { return sendError(res, 500, `Video upload failed: ${e.message}`); }
+    } else if (req.body.product_video_url !== undefined) {
+      videoUrl = req.body.product_video_url || null;
     }
 
     const mainImageUrl = images[0] || existing.main_image_url;
@@ -222,11 +284,20 @@ const updateSellerProduct = async (req, res) => {
     if (name !== undefined)           { fields.push(`name = $${i++}`);           vals.push(name.trim()); }
     if (description !== undefined)    { fields.push(`description = $${i++}`);    vals.push(description); }
     if (price !== undefined)          { fields.push(`price = $${i++}`);          vals.push(parseFloat(price)); }
+    if (discount_price !== undefined)  { fields.push(`discount_price = $${i++}`); vals.push(discount_price ? parseFloat(discount_price) : null); }
     if (stock_quantity !== undefined) { fields.push(`stock_quantity = $${i++}`); vals.push(parseInt(stock_quantity)); }
     if (category_id !== undefined)    { fields.push(`category_id = $${i++}`);    vals.push(category_id || null); }
+    if (subcategory_id !== undefined) { fields.push(`subcategory_id = $${i++}`); vals.push(subcategory_id || null); }
     if (category_meta !== undefined)  { fields.push(`category_meta = $${i++}`);  vals.push(category_meta); }
-    if (is_active !== undefined)      { fields.push(`is_active = $${i++}`);      vals.push(is_active !== 'false' && is_active !== false); }
+    if (dynamic_fields !== undefined) { fields.push(`dynamic_fields = $${i++}`); vals.push(dynamic_fields); }
+    if (parsedVariants !== undefined) { fields.push(`variants = $${i++}`); vals.push(JSON.stringify(parsedVariants)); }
+    if (sku !== undefined)            { fields.push(`sku = $${i++}`);            vals.push(sku || null); }
+    if (vendor_location !== undefined){ fields.push(`vendor_location = $${i++}`); vals.push(vendor_location || null); }
+    if (delivery_available !== undefined) { fields.push(`delivery_available = $${i++}`); vals.push(delivery_available !== 'false' && delivery_available !== false); }
+    if (return_accepted !== undefined) { fields.push(`return_accepted = $${i++}`); vals.push(return_accepted !== 'false' && return_accepted !== false); }
     if (req.body.weight_kg !== undefined) { fields.push(`weight_kg = $${i++}`); vals.push(parseFloat(req.body.weight_kg) || null); }
+    if (videoFile || req.body.product_video_url !== undefined) { fields.push(`product_video_url = $${i++}`); vals.push(videoUrl); }
+    if (is_active !== undefined)      { fields.push(`is_active = $${i++}`);      vals.push(is_active !== 'false' && is_active !== false); }
     fields.push(`images = $${i++}`);
     vals.push(images);
     fields.push(`main_image_url = $${i++}`);
@@ -236,13 +307,17 @@ const updateSellerProduct = async (req, res) => {
 
     const result = await db.query(
       `UPDATE products SET ${fields.join(', ')} WHERE id = $${i}
-       RETURNING id, name, description, price, stock_quantity,
-                 main_image_url, category_id, is_active, updated_at`,
+       RETURNING id, name, description, price, discount_price, stock_quantity,
+                 main_image_url, category_id, subcategory_id, product_video_url, sku,
+                 vendor_location, delivery_available, return_accepted, is_active, updated_at`,
       vals
     );
 
     const product = result.rows[0];
     product.price = parseFloat(product.price);
+    if (product.discount_price !== undefined && product.discount_price !== null) {
+      product.discount_price = parseFloat(product.discount_price);
+    }
     product.stockStatus =
       product.stock_quantity === 0  ? 'Out of Stock' :
       product.stock_quantity <= 10  ? 'Low Stock'    : 'In Stock';
