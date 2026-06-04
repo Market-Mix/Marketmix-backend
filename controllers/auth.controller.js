@@ -316,7 +316,7 @@ const googleLogin = async (req, res) => {
  */
 const login = async (req, res) => {
   try {
-    const { email, password, role } = req.body;
+    const { email, password, role: expected_role } = req.body;
 
     // Validate input
     if (!email || !password) {
@@ -335,11 +335,6 @@ const login = async (req, res) => {
 
     const user = result.rows[0];
 
-    // If role specified, verify user has that role or is admin
-    if (role && user.role !== role && user.role !== 'admin') {
-      return sendError(res, 403, `This account is not registered as a ${role}`);
-    }
-
     // Check if user signed up with Google (no password)
     if (!user.password_hash && user.google_id) {
       return sendError(res, 400, 'This account uses Google Sign-In. Please use "Sign in with Google" button.');
@@ -350,18 +345,23 @@ const login = async (req, res) => {
       return sendError(res, 401, 'Invalid email or password');
     }
 
-    // Check password
+    // Verify password
     const isMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isMatch) {
       return sendError(res, 401, 'Invalid email or password');
     }
 
-    // Generate token
+    // Only allow login from expected role context if provided
+    if (expected_role && user.role !== expected_role && user.role !== 'admin') {
+      return sendError(res, 403, `This account is not registered as a ${expected_role}`);
+    }
+
+    // Generate token with actual user role
     const token = generateToken({
       id: user.id,
       email: user.email,
-      role: role || user.role
+      role: user.role
     });
 
     return sendSuccess(res, 200, 'Login successful', {

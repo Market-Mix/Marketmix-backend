@@ -136,6 +136,7 @@ const getUserOrders = async (req, res) => {
       o.total_amount,
       o.status,
       o.created_at,
+     o.delivery_confirmed_at,
       COALESCE((
         SELECT COALESCE(sp2.business_name, u2.first_name || ' ' || u2.last_name)
         FROM order_items oi2
