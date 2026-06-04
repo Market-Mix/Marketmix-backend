@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { sendSuccess, sendError } = require('../utils/response');
 const db = require('../config/db');
+const { protect } = require('../middlewares/auth.middleware');
+const { isSeller } = require('../middlewares/role.middleware');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -22,6 +24,57 @@ function ensureSupabaseConfigured(res) {
   }
   return true;
 }
+
+// ─── GET /api/refunds/seller — Get seller's refund count ────────────────────
+router.get('/seller', protect, isSeller, async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    
+    if (!ensureSupabaseConfigured(res)) return;
+
+    const queryUrl = `${SUPABASE_URL}/rest/v1/refund_cases?select=id&seller_id=eq.${encodeURIComponent(sellerId)}&count=exact`;
+    
+    const response = await fetch(queryUrl, {
+      method: 'GET',
+      headers: {
+        ...getSupabaseHeaders(),
+        'Prefer': 'count=exact'
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Supabase refund count fetch failed: ${response.status} ${response.statusText}`);
+      // Return 0 count as fallback instead of error
+      return sendSuccess(res, 200, 'Seller refunds fetched', { count: 0, refunds: [] });
+    }
+
+    const refundCases = await response.json();
+    // Supabase returns an exact count in the Content-Range header when using Prefer: count=exact
+    const contentRange = response.headers.get('content-range');
+    let count = 0;
+    if (contentRange) {
+      // Format: 0-9/123  -> total is after '/'
+      const parts = contentRange.split('/');
+      if (parts.length === 2) {
+        const parsed = parseInt(parts[1], 10);
+        if (!Number.isNaN(parsed)) count = parsed;
+      }
+    }
+    // Fallback to array length if header missing
+    if (!count && Array.isArray(refundCases)) count = refundCases.length;
+
+    console.log(`✅ Refund count fetched for seller ${sellerId}: ${count}`);
+    return sendSuccess(res, 200, 'Seller refunds fetched successfully', {
+      count,
+      refunds: Array.isArray(refundCases) ? refundCases : []
+    });
+  } catch (error) {
+    console.error('❌ Error in /api/refunds/seller:', error);
+    // Return 0 count as fallback instead of error
+    return sendSuccess(res, 200, 'Seller refunds fetched', { count: 0, refunds: [] });
+  }
+});
 
 // ─── POST /api/refunds/create — Create refund case ───────────────────────────
 router.post('/create', async (req, res) => {
