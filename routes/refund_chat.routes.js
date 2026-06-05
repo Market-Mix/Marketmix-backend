@@ -22,7 +22,7 @@ router.get('/:caseId', protect, async (req, res) => {
     if (!access.rows.length) return sendError(res, 403, 'Access denied');
 
     const msgs = await db.query(
-      `SELECT id, sender_id, sender_type, message_text, file_url, file_type, is_read, created_at
+      `SELECT id, sender_id, sender_type, message, file_url, file_type, is_read, created_at
        FROM refund_messages
        WHERE refund_case_id = $1
        ORDER BY created_at ASC`,
@@ -67,7 +67,7 @@ router.post('/:caseId', protect, async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO refund_messages
-         (refund_case_id, sender_id, sender_type, message_text, file_url, file_type)
+         (refund_case_id, sender_id, sender_type, message, file_url, file_type)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
       [caseId, userId, senderType, message_text || null, file_url || null, file_type || null]
