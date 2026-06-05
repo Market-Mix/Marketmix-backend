@@ -68,6 +68,7 @@ const sellerActivityRoutes = require('./routes/seller_activity.routes');
 const shopFollowsRoutes = require('./routes/shop_follows.routes');
 const storesRoutes = require('./routes/stores.routes');
 const refundsRoutes = require('./routes/refunds.routes');
+const refundChatRoutes = require('./routes/refund_chat.routes');
 const sellerRoutes = require('./routes/sellers.routes'); 
 const cronRoutes = require('./routes/cron.routes'); // ← keep last
 
@@ -95,6 +96,7 @@ app.use('/api/seller/activity', sellerActivityRoutes);
 app.use('/api/seller/stores', storesRoutes);   // ← BEFORE /api/seller
 app.use('/api/seller/shipping', vendorRoutes);
 app.use('/api/refunds', refundsRoutes);
+app.use('/api/refund-chat', refundChatRoutes);
 app.use('/api/seller', sellerRoutes);           // ← AFTER /api/seller/stores
 app.use('/api/shops/following', shopFollowsRoutes);
 app.use('/api/cron', cronRoutes);
