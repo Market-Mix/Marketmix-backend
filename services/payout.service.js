@@ -38,43 +38,43 @@ async function ensureRecipient(withdrawal) {
   return code;
 }
 
-async function ensureFlwRecipient(withdrawal) {
-  // Flutterwave doesn't use persistent recipient codes like Paystack
-  // Just validate bank details exist
-  if (!withdrawal.bank_account_number || !withdrawal.bank_name) {
-    throw new Error('Bank details required for Flutterwave transfer');
-  }
-  return null; // No recipient code needed
-}
-
-async function processFlutterwaveWithdrawal(wd) {
-  const secret = process.env.FLUTTERWAVE_SECRET_KEY;
-  if (!secret) throw new Error('FLUTTERWAVE_SECRET_KEY not configured');
-
-  const res = await fetch('https://api.flutterwave.com/v3/transfers', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${secret}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      account_bank: wd.bank_code || 'N/A',
-      account_number: wd.bank_account_number,
-      amount: wd.amount,
-      narration: `MarketMix withdrawal ${wd.reference}`,
-      currency: 'NGN',
-      reference: wd.reference,
-      callback_url: `${process.env.APP_BASE_URL}/api/webhooks/flutterwave-transfer`,
-      debit_currency: 'NGN'
-    })
-  });
-
-  const data = await res.json();
-  if (data.status !== 'success') {
-    throw new Error(data.message || 'Flutterwave transfer initiation failed');
-  }
-  return data.data;
-}
+// async function ensureFlwRecipient(withdrawal) {
+//   // Flutterwave doesn't use persistent recipient codes like Paystack
+//   // Just validate bank details exist
+//   if (!withdrawal.bank_account_number || !withdrawal.bank_name) {
+//     throw new Error('Bank details required for Flutterwave transfer');
+//   }
+//   return null; // No recipient code needed
+// }
+//
+// async function processFlutterwaveWithdrawal(wd) {
+//   const secret = process.env.FLUTTERWAVE_SECRET_KEY;
+//   if (!secret) throw new Error('FLUTTERWAVE_SECRET_KEY not configured');
+//
+//   const res = await fetch('https://api.flutterwave.com/v3/transfers', {
+//     method: 'POST',
+//     headers: {
+//       Authorization: `Bearer ${secret}`,
+//       'Content-Type': 'application/json'
+//     },
+//     body: JSON.stringify({
+//       account_bank: wd.bank_code || 'N/A',
+//       account_number: wd.bank_account_number,
+//       amount: wd.amount,
+//       narration: `MarketMix withdrawal ${wd.reference}`,
+//       currency: 'NGN',
+//       reference: wd.reference,
+//       callback_url: `${process.env.APP_BASE_URL}/api/webhooks/flutterwave-transfer`,
+//       debit_currency: 'NGN'
+//     })
+//   });
+//
+//   const data = await res.json();
+//   if (data.status !== 'success') {
+//     throw new Error(data.message || 'Flutterwave transfer initiation failed');
+//   }
+//   return data.data;
+// }
 
 async function processWithdrawal(withdrawalId) {
   const client = await db.pool.connect();
@@ -102,22 +102,22 @@ async function processWithdrawal(withdrawalId) {
     await client.query(`UPDATE withdrawals SET status='processing' WHERE id=$1`, [wd.id]);
     await client.query('COMMIT');
 
-    const provider = process.env.WITHDRAWAL_PROVIDER || 'paystack'; // 'paystack' | 'flutterwave'
+    const provider = 'paystack';
     let gatewayRef = '';
 
-    if (provider === 'flutterwave') {
-      await ensureFlwRecipient(wd);
-      const transfer = await processFlutterwaveWithdrawal(wd);
-      gatewayRef = String(transfer.id || '');
-
-      if (!gatewayRef) {
-        await db.query(`UPDATE withdrawals SET status='failed', failure_reason=$1 WHERE id=$2`,
-          ['Flutterwave transfer initiation did not return a reference', wd.id]);
-        await db.query(`UPDATE seller_profiles SET available_balance=available_balance+$1 WHERE user_id=$2`,
-          [wd.amount, wd.seller_id]);
-        return { success: false, reason: 'Flutterwave transfer initiation failed' };
-      }
-    } else {
+    // if (provider === 'flutterwave') {
+    //   await ensureFlwRecipient(wd);
+    //   const transfer = await processFlutterwaveWithdrawal(wd);
+    //   gatewayRef = String(transfer.id || '');
+    //
+    //   if (!gatewayRef) {
+    //     await db.query(`UPDATE withdrawals SET status='failed', failure_reason=$1 WHERE id=$2`,
+    //       ['Flutterwave transfer initiation did not return a reference', wd.id]);
+    //     await db.query(`UPDATE seller_profiles SET available_balance=available_balance+$1 WHERE user_id=$2`,
+    //       [wd.amount, wd.seller_id]);
+    //     return { success: false, reason: 'Flutterwave transfer initiation failed' };
+    //   }
+    // } else {
       // existing Paystack logic
       const recipientCode = await ensureRecipient(wd);
       const transferRes = await fetch('https://api.paystack.co/transfer', {
@@ -141,7 +141,7 @@ async function processWithdrawal(withdrawalId) {
         return { success: false, reason: transfer.message };
       }
       gatewayRef = String(transfer.data?.id || '');
-    }
+    // }
 
     await db.query(
       `UPDATE withdrawals SET gateway_reference=$1, status='processing' WHERE id=$2`,

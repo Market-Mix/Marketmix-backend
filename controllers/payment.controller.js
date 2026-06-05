@@ -1,6 +1,6 @@
 /**
  * Payment Controller
- * Handles: initiate, verify, webhooks, refunds, COD confirmation
+ * Handles: initiate, verify, webhooks, refunds
  *
  * Routes (see payment.routes.js):
  *   GET  /api/payments/methods
@@ -8,7 +8,6 @@
  *   POST /api/payments/verify
  *   POST /api/payments/paystack/webhook
  *   POST /api/payments/flutterwave/webhook
- *   POST /api/payments/cod/confirm       (seller/delivery confirms COD)
  *   POST /api/payments/refund            (admin only)
  *   GET  /api/payments/paystack/callback
  *   GET  /api/payments/flutterwave/callback
@@ -28,10 +27,10 @@ const getPaymentMethods = (req, res) => {
 /**
  * Called from frontend when buyer confirms order.
  * 1. Validates checkout session
- * 2. Creates master_order + vendor_orders (for COD immediately; else pending)
- * 3. Calls MarketPay to get payment link / COD reference
+ * 2. Creates master_order + vendor_orders
+ * 3. Calls MarketPay to get payment link
  * 4. Saves payment_transaction record
- * 5. Returns payment URL or COD confirmation
+ * 5. Returns payment URL
  */
 const initiatePayment = async (req, res) => {
   const client = await db.pool.connect();
@@ -41,6 +40,9 @@ const initiatePayment = async (req, res) => {
 
     if (!sessionId || !method) {
       return sendError(res, 400, 'sessionId and method are required');
+    }
+    if (method !== 'paystack') {
+      return sendError(res, 400, 'Unsupported payment method');
     }
 
     // 1. Load and validate session
@@ -75,8 +77,8 @@ const initiatePayment = async (req, res) => {
     await client.query('BEGIN');
 
     // 2. Create master order
-    const orderStatus  = method === 'cod' ? 'pending' : 'awaiting_payment';
-    const paymentStatus = method === 'cod' ? 'unpaid' : 'unpaid';
+    const orderStatus  = 'awaiting_payment';
+    const paymentStatus = 'unpaid';
 
     
  // Before the INSERT, fetch address snapshot
@@ -205,16 +207,9 @@ const orderRes = await client.query(
       amount:    totalAmount,
     };
 
-    if (method === 'cod') {
-      responseData.message = 'Order placed. Pay on delivery.';
-      responseData.orderStatus = 'pending';
-    } else {
-      responseData.paymentUrl      = payResult.authorizationUrl || payResult.paymentLink;
-      responseData.accessCode      = payResult.accessCode;
-      responseData.publicKey       = method === 'paystack'
-        ? process.env.PAYSTACK_PUBLIC_KEY
-        : process.env.FLUTTERWAVE_PUBLIC_KEY;
-    }
+    responseData.paymentUrl      = payResult.authorizationUrl || payResult.paymentLink;
+    responseData.accessCode      = payResult.accessCode;
+    responseData.publicKey       = process.env.PAYSTACK_PUBLIC_KEY;
 
     return sendSuccess(res, 201, 'Payment initiated', responseData);
 
@@ -295,38 +290,38 @@ const paystackWebhook = async (req, res) => {
 };
 
 // ── POST /api/payments/flutterwave/webhook ────────────────────────────────────
-const flutterwaveWebhook = async (req, res) => {
-  try {
-    const signature = req.headers['verif-hash'];
-    const valid     = marketpay.verifyWebhook('flutterwave', req.body, signature);
-
-    if (!valid) {
-      console.warn('Invalid Flutterwave webhook signature');
-      return res.status(401).json({ message: 'Invalid signature' });
-    }
-
-    res.status(200).json({ received: true });
-
-    const event = req.body;
-    console.log(`📣 Flutterwave webhook: ${event.event}`);
-
-    if (event.event === 'charge.completed' && event.data?.status === 'successful') {
-      const tx = event.data;
-      await _fulfillOrder(tx.tx_ref, {
-        paymentStatus:   'paid',
-        amount:          tx.amount,
-        paidAt:          tx.created_at,
-        gatewayResponse: tx.processor_response,
-        channel:         tx.payment_type,
-        transactionId:   String(tx.id),
-        raw:             tx,
-      });
-    }
-
-  } catch (err) {
-    console.error('flutterwaveWebhook error:', err);
-  }
-};
+// const flutterwaveWebhook = async (req, res) => {
+//   try {
+//     const signature = req.headers['verif-hash'];
+//     const valid     = marketpay.verifyWebhook('flutterwave', req.body, signature);
+//
+//     if (!valid) {
+//       console.warn('Invalid Flutterwave webhook signature');
+//       return res.status(401).json({ message: 'Invalid signature' });
+//     }
+//
+//     res.status(200).json({ received: true });
+//
+//     const event = req.body;
+//     console.log(`📣 Flutterwave webhook: ${event.event}`);
+//
+//     if (event.event === 'charge.completed' && event.data?.status === 'successful') {
+//       const tx = event.data;
+//       await _fulfillOrder(tx.tx_ref, {
+//         paymentStatus:   'paid',
+//         amount:          tx.amount,
+//         paidAt:          tx.created_at,
+//         gatewayResponse: tx.processor_response,
+//         channel:         tx.payment_type,
+//         transactionId:   String(tx.id),
+//         raw:             tx,
+//       });
+//     }
+//
+//   } catch (err) {
+//     console.error('flutterwaveWebhook error:', err);
+//   }
+// };
 
 // ── GET /api/payments/paystack/callback ───────────────────────────────────────
 const paystackCallback = async (req, res) => {
@@ -359,76 +354,41 @@ const paystackCallback = async (req, res) => {
 };
 
 // ── GET /api/payments/flutterwave/callback ────────────────────────────────────
-const flutterwaveCallback = async (req, res) => {
-  const { tx_ref, transaction_id, status } = req.query;
-  const frontendBase = process.env.FRONTEND_URL || 'https://marketmix.vercel.app';
+// const flutterwaveCallback = async (req, res) => {
+//   const { tx_ref, transaction_id, status } = req.query;
+//   const frontendBase = process.env.FRONTEND_URL || 'https://marketmix.vercel.app';
+//
+//   try {
+//     if (status === 'cancelled') {
+//       return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=cancelled`);
+//     }
+//
+//     // Add logging to debug
+//     console.log('FLW callback:', { tx_ref, transaction_id, status });
+//
+//     const result = await marketpay.verifyPayment('flutterwave', tx_ref, transaction_id);
+//     
+//     console.log('FLW verify result:', result.paymentStatus, result.status);
+//
+//     // Flutterwave uses 'successful' not 'paid'
+//     if (result.paymentStatus === 'paid' || result.status === 'successful') {
+//       await _fulfillOrder(tx_ref, result);
+//       const txRow = await db.query(
+//         `SELECT order_id FROM payment_transactions WHERE provider_reference = $1 OR provider_transaction_id = $2 LIMIT 1`,
+//         [tx_ref, String(transaction_id || '')]
+//       );
+//       const orderId = txRow.rows[0]?.order_id || '';
+//       return res.redirect(`${frontendBase}/buyers/order-success.html?orderId=${orderId}&ref=${tx_ref}&method=flutterwave`);
+//     }
+//
+//     return res.redirect(`${frontendBase}/buyers/order-failed.html?ref=${tx_ref}&status=${result.status || status || 'failed'}&method=flutterwave`);
+//   } catch (err) {
+//     console.error('flutterwaveCallback error:', err);
+//     return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=verification_error&ref=${tx_ref}`);
+//   }
+// };
 
-  try {
-    if (status === 'cancelled') {
-      return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=cancelled`);
-    }
 
-    // Add logging to debug
-    console.log('FLW callback:', { tx_ref, transaction_id, status });
-
-    const result = await marketpay.verifyPayment('flutterwave', tx_ref, transaction_id);
-    
-    console.log('FLW verify result:', result.paymentStatus, result.status);
-
-    // Flutterwave uses 'successful' not 'paid'
-    if (result.paymentStatus === 'paid' || result.status === 'successful') {
-      await _fulfillOrder(tx_ref, result);
-      const txRow = await db.query(
-        `SELECT order_id FROM payment_transactions WHERE provider_reference = $1 OR provider_transaction_id = $2 LIMIT 1`,
-        [tx_ref, String(transaction_id || '')]
-      );
-      const orderId = txRow.rows[0]?.order_id || '';
-      return res.redirect(`${frontendBase}/buyers/order-success.html?orderId=${orderId}&ref=${tx_ref}&method=flutterwave`);
-    }
-
-    return res.redirect(`${frontendBase}/buyers/order-failed.html?ref=${tx_ref}&status=${result.status || status || 'failed'}&method=flutterwave`);
-  } catch (err) {
-    console.error('flutterwaveCallback error:', err);
-    return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=verification_error&ref=${tx_ref}`);
-  }
-};
-
-// ── POST /api/payments/cod/confirm ────────────────────────────────────────────
-// Called by seller/delivery agent to confirm COD payment collected
-const confirmCOD = async (req, res) => {
-  try {
-    const { orderId, reference } = req.body;
-    const sellerId = req.user.id;
-
-    if (!orderId) return sendError(res, 400, 'orderId is required');
-
-    // Verify seller owns a vendor_order in this master order
-    const ownerCheck = await db.query(
-      `SELECT 1 FROM vendor_orders WHERE order_id = $1 AND seller_id = $2 LIMIT 1`,
-      [orderId, sellerId]
-    );
-    if (!ownerCheck.rows.length) {
-      return sendError(res, 403, 'Access denied to this order');
-    }
-
-    await db.query(
-      `UPDATE orders SET payment_status = 'paid', status = 'confirmed', updated_at = NOW()
-       WHERE id = $1`,
-      [orderId]
-    );
-
-    await db.query(
-      `UPDATE payment_transactions SET status = 'success', updated_at = NOW()
-       WHERE order_id = $1 AND provider = 'cod'`,
-      [orderId]
-    );
-
-    return sendSuccess(res, 200, 'COD payment confirmed', { orderId });
-  } catch (err) {
-    console.error('confirmCOD error:', err);
-    return sendError(res, 500, 'Error confirming COD', err.message);
-  }
-};
 
 // ── POST /api/payments/refund ─────────────────────────────────────────────────
 const processRefund = async (req, res) => {
@@ -581,9 +541,8 @@ module.exports = {
   initiatePayment,
   verifyPayment,
   paystackWebhook,
-  flutterwaveWebhook,
   paystackCallback,
-  flutterwaveCallback,
-  confirmCOD,
+  // flutterwaveWebhook,
+  // flutterwaveCallback,
   processRefund,
 };

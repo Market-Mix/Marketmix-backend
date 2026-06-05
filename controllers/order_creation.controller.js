@@ -118,7 +118,7 @@ async function clearCart(client, userId) {
  * Confirm checkout and create persisted order records.
  *
  * POST /api/checkout/session/:sessionId/confirm
- * Body: { payment_method?: 'cod' | 'paystack' | 'flutterwave', notes?: string }
+ * Body: { payment_method?: 'paystack', notes?: string }
  */
 const confirmCheckout = async (req, res) => {
   const client = await db.pool.connect();
@@ -230,8 +230,12 @@ const confirmCheckout = async (req, res) => {
     const couponDiscount = money(session.coupon_discount);
     const shippingFee = money(session.shipping_fee);
     const totalAmount = money(session.total || (subtotal - couponDiscount + shippingFee));
-    const chosenPaymentMethod = paymentMethod || session.payment_method || 'cod';
-    const orderStatus = chosenPaymentMethod === 'cod' ? 'pending' : 'awaiting_payment';
+    const chosenPaymentMethod = paymentMethod || session.payment_method || 'paystack';
+    if (chosenPaymentMethod !== 'paystack') {
+      await client.query('ROLLBACK');
+      return sendError(res, 400, 'Unsupported payment method');
+    }
+    const orderStatus = 'awaiting_payment';
     const vendors = allocateShipping(Object.values(groupBySeller(items)), shippingFee);
     const orderStoreId = vendors.length === 1 ? vendors[0].storeId : null;
 

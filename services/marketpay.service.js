@@ -7,17 +7,15 @@
  *   2. Registering it in ADAPTERS below
  *   3. Adding env vars — zero changes to business logic
  *
- * Supported methods: 'cod' | 'paystack' | 'flutterwave'
+ * Supported methods: 'paystack'
  */
 
-const codAdapter         = require('../adapter/COD.adapter');
 const paystackAdapter    = require('../adapter/paystack.adapter');
-const flutterwaveAdapter = require('../adapter/flutterwave.adapter');
+// const flutterwaveAdapter = require('../adapter/flutterwave.adapter');
 
 const ADAPTERS = {
-  cod:         codAdapter,
   paystack:    paystackAdapter,
-  flutterwave: flutterwaveAdapter,
+  // flutterwave: flutterwaveAdapter,
 };
 
 const SUPPORTED_METHODS = Object.keys(ADAPTERS);
@@ -33,7 +31,7 @@ function getAdapter(method) {
 /**
  * Initialize a payment transaction.
  *
- * @param {string} method   - 'cod' | 'paystack' | 'flutterwave'
+ * @param {string} method   - 'paystack'
  * @param {object} payload  - { orderId, amount, currency, email, name, phone, metadata, callbackUrl }
  * @returns {PaymentInitResult}
  */
@@ -47,7 +45,7 @@ async function initiatePayment(method, payload) {
  *
  * @param {string} method    - provider used
  * @param {string} reference - transaction reference
- * @param {string} [transactionId] - provider-specific ID (Flutterwave)
+ * @param {string} [transactionId] - provider-specific ID
  * @returns {PaymentVerifyResult}
  */
 async function verifyPayment(method, reference, transactionId) {
@@ -91,22 +89,13 @@ function getAvailableMethods() {
     available:   !!process.env.PAYSTACK_SECRET_KEY,
   });
 
-  methods.push({
-    id:          'flutterwave',
-    label:       'Pay with Flutterwave',
-    description: 'Card, Bank, USSD, Barter, Mobile Money',
-    icon:        'flutterwave',
-    available:   !!process.env.FLUTTERWAVE_SECRET_KEY,
-  });
-
-  methods.push({
-    id:          'cod',
-    label:       'Cash on Delivery',
-    description: 'Pay when your order arrives',
-    icon:        'cash',
-    available:   true,
-    fee:         parseFloat(process.env.COD_FEE || 0),
-  });
+  // methods.push({
+  //   id:          'flutterwave',
+  //   label:       'Pay with Flutterwave',
+  //   description: 'Card, Bank, USSD, Barter, Mobile Money',
+  //   icon:        'flutterwave',
+  //   available:   !!process.env.FLUTTERWAVE_SECRET_KEY,
+  // });
 
   return methods.filter(m => m.available);
 }

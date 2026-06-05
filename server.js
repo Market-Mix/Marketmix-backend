@@ -5,7 +5,8 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const corsOptions = require('./config/cors');
 const db = require('./config/db');
-const { handlePaystackWithdrawalWebhook, handleFlutterwaveTransferWebhook } = require('./controllers/withdrawal.controller');
+const { handlePaystackWithdrawalWebhook } = require('./controllers/withdrawal.controller');
+// const { handleFlutterwaveTransferWebhook } = require('./controllers/withdrawal.controller');
 
 // Create Express app
 const app = express();
@@ -24,10 +25,10 @@ app.post('/api/webhooks/paystack',
   express.raw({ type: 'application/json' }),
   handlePaystackWithdrawalWebhook
 );
-app.post('/api/webhooks/flutterwave-transfer',
-  express.raw({ type: 'application/json' }),
-  handleFlutterwaveTransferWebhook
-);
+// app.post('/api/webhooks/flutterwave-transfer',
+//   express.raw({ type: 'application/json' }),
+//   handleFlutterwaveTransferWebhook
+// );
 
 // Body parsing middleware
 app.use(express.json());
