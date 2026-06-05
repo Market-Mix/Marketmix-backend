@@ -169,6 +169,14 @@ router.post('/create', async (req, res) => {
       complaint_text,
       evidence_url: evidence_url || null,
       status: 'pending',
+      resolution_status: 'pending',
+      seller_marked_resolved: false,
+      buyer_confirmed_resolution: false,
+      escalated_to_marketmix: false,
+      chat_started: false,
+      seller_resolved_at: null,
+      escalated_at: null,
+      buyer_confirmed_at: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -263,6 +271,209 @@ router.post('/create', async (req, res) => {
     console.error('❌ Error in /api/refunds/create:', error);
     console.error('Refund insert error:', error);
     console.error('Refund payload received:', req.body);
+    return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
+  }
+});
+
+async function fetchRefundCaseById(refundId) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refundId)}&select=*`, {
+    method: 'GET',
+    headers: getSupabaseHeaders()
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => 'Unable to read Supabase response');
+    throw new Error(`Supabase fetch failed: ${response.status} ${response.statusText} - ${text}`);
+  }
+
+  const data = await response.json();
+  return Array.isArray(data) && data.length > 0 ? data[0] : null;
+}
+
+router.post('/chat-started', async (req, res) => {
+  try {
+    const { refund_id } = req.body;
+    console.log('➡️ /api/refunds/chat-started hit with refund_id:', refund_id);
+
+    if (!refund_id) {
+      return res.status(400).json({ success: false, message: 'Missing refund_id' });
+    }
+
+    if (!ensureSupabaseConfigured(res)) return;
+
+    const refundCase = await fetchRefundCaseById(refund_id);
+    if (!refundCase) {
+      return res.status(404).json({ success: false, message: 'Refund case not found' });
+    }
+
+    if (refundCase.chat_started) {
+      console.log(`ℹ️ Chat already started for refund ${refund_id}`);
+      return res.status(200).json({ success: true, message: 'Chat already started', refundCase });
+    }
+
+    const updatePayload = {
+      chat_started: true,
+      updated_at: new Date().toISOString()
+    };
+
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refund_id)}`, {
+      method: 'PATCH',
+      headers: {
+        ...getSupabaseHeaders(),
+        Prefer: 'return=representation'
+      },
+      body: JSON.stringify(updatePayload)
+    });
+
+    const updatedData = await response.json().catch(async () => {
+      const text = await response.text().catch(() => 'No body');
+      return { errorBody: text };
+    });
+
+    if (!response.ok) {
+      console.error(`❌ Failed updating chat_started for refund ${refund_id}: ${response.status} ${response.statusText}`);
+      return res.status(response.status).json({ success: false, message: 'Failed to mark chat started', details: updatedData });
+    }
+
+    console.log(`✅ Chat started marked for refund ${refund_id}`);
+    return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
+  } catch (error) {
+    console.error('❌ Error in /api/refunds/chat-started:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
+  }
+});
+
+router.post('/mark-resolved', async (req, res) => {
+  try {
+    const { refund_id } = req.body;
+    console.log('➡️ /api/refunds/mark-resolved hit with refund_id:', refund_id);
+
+    if (!refund_id) {
+      return res.status(400).json({ success: false, message: 'Missing refund_id' });
+    }
+
+    if (!ensureSupabaseConfigured(res)) return;
+
+    const updatePayload = {
+      seller_marked_resolved: true,
+      seller_resolved_at: new Date().toISOString(),
+      resolution_status: 'waiting_buyer_confirmation',
+      updated_at: new Date().toISOString()
+    };
+
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refund_id)}`, {
+      method: 'PATCH',
+      headers: {
+        ...getSupabaseHeaders(),
+        Prefer: 'return=representation'
+      },
+      body: JSON.stringify(updatePayload)
+    });
+
+    const updatedData = await response.json().catch(async () => {
+      const text = await response.text().catch(() => 'No body');
+      return { errorBody: text };
+    });
+
+    if (!response.ok) {
+      console.error(`❌ Failed marking refund ${refund_id} resolved by seller: ${response.status} ${response.statusText}`);
+      return res.status(response.status).json({ success: false, message: 'Failed to mark refund resolved', details: updatedData });
+    }
+
+    console.log(`✅ Seller marked refund ${refund_id} resolved`);
+    return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
+  } catch (error) {
+    console.error('❌ Error in /api/refunds/mark-resolved:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
+  }
+});
+
+router.post('/buyer-satisfied', async (req, res) => {
+  try {
+    const { refund_id } = req.body;
+    console.log('➡️ /api/refunds/buyer-satisfied hit with refund_id:', refund_id);
+
+    if (!refund_id) {
+      return res.status(400).json({ success: false, message: 'Missing refund_id' });
+    }
+
+    if (!ensureSupabaseConfigured(res)) return;
+
+    const updatePayload = {
+      buyer_confirmed_resolution: true,
+      buyer_confirmed_at: new Date().toISOString(),
+      resolution_status: 'resolved',
+      updated_at: new Date().toISOString()
+    };
+
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refund_id)}`, {
+      method: 'PATCH',
+      headers: {
+        ...getSupabaseHeaders(),
+        Prefer: 'return=representation'
+      },
+      body: JSON.stringify(updatePayload)
+    });
+
+    const updatedData = await response.json().catch(async () => {
+      const text = await response.text().catch(() => 'No body');
+      return { errorBody: text };
+    });
+
+    if (!response.ok) {
+      console.error(`❌ Failed confirming buyer satisfaction for refund ${refund_id}: ${response.status} ${response.statusText}`);
+      return res.status(response.status).json({ success: false, message: 'Failed to confirm buyer satisfaction', details: updatedData });
+    }
+
+    console.log(`✅ Buyer confirmed resolution for refund ${refund_id}`);
+    return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
+  } catch (error) {
+    console.error('❌ Error in /api/refunds/buyer-satisfied:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
+  }
+});
+
+router.post('/escalate', async (req, res) => {
+  try {
+    const { refund_id, escalated_by } = req.body;
+    console.log('➡️ /api/refunds/escalate hit with refund_id:', refund_id, 'escalated_by:', escalated_by);
+
+    if (!refund_id || !escalated_by) {
+      return res.status(400).json({ success: false, message: 'Missing refund_id or escalated_by' });
+    }
+
+    if (!ensureSupabaseConfigured(res)) return;
+
+    const updatePayload = {
+      escalated_to_marketmix: true,
+      escalated_at: new Date().toISOString(),
+      resolution_status: 'escalated',
+      updated_at: new Date().toISOString()
+    };
+
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refund_id)}`, {
+      method: 'PATCH',
+      headers: {
+        ...getSupabaseHeaders(),
+        Prefer: 'return=representation'
+      },
+      body: JSON.stringify(updatePayload)
+    });
+
+    const updatedData = await response.json().catch(async () => {
+      const text = await response.text().catch(() => 'No body');
+      return { errorBody: text };
+    });
+
+    if (!response.ok) {
+      console.error(`❌ Failed escalating refund ${refund_id}: ${response.status} ${response.statusText}`);
+      return res.status(response.status).json({ success: false, message: 'Failed to escalate refund case', details: updatedData });
+    }
+
+    console.log(`✅ Refund ${refund_id} escalated to MarketMix by ${escalated_by}`);
+    return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
+  } catch (error) {
+    console.error('❌ Error in /api/refunds/escalate:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
   }
 });
