@@ -22,7 +22,7 @@ router.get('/:caseId', protect, async (req, res) => {
     if (!access.rows.length) return sendError(res, 403, 'Access denied');
 
     const msgs = await db.query(
-      `SELECT id, sender_id, sender_type, message, file_url, file_type, is_read, created_at
+      `SELECT id, sender_id, sender_type, message, is_read, created_at
        FROM refund_messages
        WHERE refund_case_id = $1
        ORDER BY created_at ASC`,
@@ -48,9 +48,9 @@ router.post('/:caseId', protect, async (req, res) => {
   try {
     const { caseId } = req.params;
     const userId = req.user.id;
-    const { message_text, file_url, file_type } = req.body;
+    const { message_text } = req.body;
 
-    if (!message_text && !file_url) return sendError(res, 400, 'Message or file required');
+    if (!message_text) return sendError(res, 400, 'Message required');
 
     // Determine sender_type and verify access
     const caseRes = await db.query(
@@ -67,10 +67,10 @@ router.post('/:caseId', protect, async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO refund_messages
-         (refund_case_id, sender_id, sender_type, message, file_url, file_type)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (refund_case_id, sender_id, sender_type, message)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [caseId, userId, senderType, message_text || null, file_url || null, file_type || null]
+      [caseId, userId, senderType, message_text || null]
     );
 
     const msg = result.rows[0];
@@ -85,7 +85,7 @@ router.post('/:caseId', protect, async (req, res) => {
         [
           notifyUserId,
           'New message in refund case',
-          message_text ? message_text.substring(0, 100) : 'Media shared'
+          (message_text || 'Message received').substring(0, 100)
         ]
       ).catch(() => {});
     }
