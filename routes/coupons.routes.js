@@ -17,8 +17,9 @@ router.post('/', protect, isSeller, async (req, res) => {
     );
     return sendSuccess(res, 201, 'Coupon created', { coupon: result.rows[0] });
   } catch (err) {
+    console.error('Coupon create error:', err.message, err.code, err.detail);
     if (err.code === '23505') return sendError(res, 409, 'Coupon code already exists');
-    return sendError(res, 500, 'Error creating coupon', err.message);
+    return sendError(res, 500, err.message);
   }
 });
 
