@@ -71,6 +71,7 @@ const refundsRoutes = require('./routes/refunds.routes');
 const refundChatRoutes = require('./routes/refund_chat.routes');
 const sellerRoutes = require('./routes/sellers.routes'); 
 const cronRoutes = require('./routes/cron.routes'); // ← keep last
+const couponsRoutes = require('./routes/coupons.routes');
 
 
 // Mount routes — ORDER MATTERS
@@ -100,7 +101,7 @@ app.use('/api/refund-chat', refundChatRoutes);
 app.use('/api/seller', sellerRoutes);           // ← AFTER /api/seller/stores
 app.use('/api/shops/following', shopFollowsRoutes);
 app.use('/api/cron', cronRoutes);
-app.use('/api/coupons', require('./routes/coupons.routes'));
+app.use('/api/coupons', couponsRoutes);
 
 
 
