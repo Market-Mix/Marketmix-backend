@@ -105,6 +105,52 @@ router.get('/profile', protect, isSeller, async (req, res) => {
   }
 });
 
+// ─── GET /api/seller/dashboard-stats ─────────────────────────────────────────
+router.get('/dashboard-stats', protect, isSeller, async (req, res) => {
+  const storeId = req.headers['x-store-id'];
+  const sellerId = req.user.id;
+
+  if (!storeId) return sendError(res, 400, 'X-Store-Id header required');
+
+  try {
+    const [orderStats, storeData] = await Promise.all([
+      db.query(
+        `SELECT COUNT(DISTINCT o.id) AS total_orders,
+                COUNT(DISTINCT o.id) FILTER (WHERE o.status='pending') AS pending,
+                COUNT(DISTINCT o.id) FILTER (WHERE o.status='delivered') AS delivered,
+                COALESCE(SUM(oi.quantity * oi.price_at_purchase), 0) AS total_revenue
+         FROM order_items oi JOIN orders o ON o.id = oi.order_id
+         WHERE oi.seller_id = $1 AND oi.store_id = $2`,
+        [sellerId, storeId]
+      ),
+      db.query(
+        `SELECT total_earnings, available_balance, rating, total_reviews, store_logo_url
+         FROM stores WHERE id = $1 AND user_id = $2`,
+        [storeId, sellerId]
+      )
+    ]);
+
+    const o = orderStats.rows[0] || {};
+    const s = storeData.rows[0] || {};
+
+    return sendSuccess(res, 200, 'Stats fetched', {
+      stats: {
+        totalOrders: parseInt(o.total_orders) || 0,
+        pending: parseInt(o.pending) || 0,
+        delivered: parseInt(o.delivered) || 0,
+        totalRevenue: parseFloat(o.total_revenue) || 0,
+        totalEarnings: parseFloat(s.total_earnings) || 0,
+        availableBalance: parseFloat(s.available_balance) || 0,
+        rating: parseFloat(s.rating) || 0,
+        totalReviews: parseInt(s.total_reviews) || 0,
+        storeLogoUrl: s.store_logo_url || null
+      }
+    });
+  } catch (err) {
+    return sendError(res, 500, 'Error fetching dashboard stats', err.message);
+  }
+});
+
 // ─── POST /api/seller/setup-profile ───────────────────────────────────────────
 router.post('/setup-profile', protect, isSeller, async (req, res) => {
   try {
@@ -825,46 +871,44 @@ router.get('/public', async (req, res) => {
 
     const result = await db.query(
       `SELECT
-          u.id             AS seller_id,
-          u.first_name,
-          u.last_name,
-          sp.business_name,
-          sp.business_description,
-          sp.rating,
-          sp.total_reviews,
-          sp.total_sales,
-          sp.is_verified,
-          sp.store_logo_url,
-          sp.kyc_document_urls,
-          (
-            SELECT COUNT(*) FROM products p
-            WHERE p.seller_id = u.id AND p.is_active = true AND p.is_deleted = false
+          s.id             AS store_id,
+          s.user_id        AS seller_id,
+          s.business_name,
+          s.business_description,
+          s.rating,
+          s.total_reviews,
+          s.total_sales,
+          s.is_verified,
+          s.store_logo_url,
+          s.category,
+          (SELECT COUNT(*) FROM products p
+           WHERE p.store_id = s.id AND p.is_active = true AND p.is_deleted = false
           ) AS product_count,
-          (
-            SELECT main_image_url FROM products p
-            WHERE p.seller_id = u.id AND p.is_active = true AND p.is_deleted = false
-            ORDER BY p.created_at DESC LIMIT 1
+          (SELECT main_image_url FROM products p
+           WHERE p.store_id = s.id AND p.is_active = true AND p.is_deleted = false
+           ORDER BY p.created_at DESC LIMIT 1
           ) AS featured_product_image
-       FROM users u
-       JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
-       WHERE u.is_deleted = false
-         AND u.role = 'seller'
-         AND sp.business_name IS NOT NULL
-       ORDER BY sp.total_sales DESC NULLS LAST, sp.rating DESC NULLS LAST, u.created_at DESC
+       FROM stores s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.is_active = true AND s.is_deleted = false
+         AND u.is_deleted = false AND u.role = 'seller'
+         AND s.business_name IS NOT NULL
+       ORDER BY s.total_sales DESC NULLS LAST, s.rating DESC NULLS LAST, s.created_at DESC
        LIMIT $1 OFFSET $2`,
       [parseInt(limit), offset]
     );
 
     const countRes = await db.query(
-      `SELECT COUNT(*) FROM users u
-       JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
-       WHERE u.is_deleted = false AND u.role = 'seller' AND sp.business_name IS NOT NULL`
+      `SELECT COUNT(*) FROM stores s JOIN users u ON u.id = s.user_id
+       WHERE s.is_active = true AND s.is_deleted = false AND u.is_deleted = false AND u.role = 'seller'
+         AND s.business_name IS NOT NULL`
     );
 
     return sendSuccess(res, 200, 'Sellers fetched', {
       sellers: result.rows.map(s => ({
         sellerId: s.seller_id,
-        businessName: s.business_name || `${s.first_name} ${s.last_name}`,
+        storeId: s.store_id,
+        businessName: s.business_name,
         businessDescription: s.business_description,
         storeLogo: s.store_logo_url,
         featuredProductImage: s.featured_product_image,
@@ -873,7 +917,7 @@ router.get('/public', async (req, res) => {
         totalSales: s.total_sales || 0,
         isVerified: s.is_verified,
         productCount: parseInt(s.product_count) || 0,
-        category: s.kyc_document_urls?.category || null
+        category: s.category || null
       })),
       total: parseInt(countRes.rows[0].count),
       page: parseInt(page),

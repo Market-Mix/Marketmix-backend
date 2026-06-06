@@ -79,8 +79,13 @@ router.get('/product/:productId', getProductReviews);
 router.get('/seller/:sellerId', async (req, res) => {
   try {
     const { sellerId } = req.params;
-    const { page = 1, limit = 10 } = req.query;
+    const { page = 1, limit = 10, store_id } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    const storeFilter = store_id ? ' AND p.store_id = $4' : '';
+    const resultParams = store_id
+      ? [sellerId, parseInt(limit), offset, store_id]
+      : [sellerId, parseInt(limit), offset];
 
     const result = await db.query(
       `SELECT
@@ -95,12 +100,14 @@ router.get('/seller/:sellerId', async (req, res) => {
        FROM reviews r
        JOIN users u ON r.user_id = u.id
        JOIN products p ON r.product_id = p.id
-       WHERE p.seller_id = $1 AND r.is_deleted = false AND r.is_approved = true
+       WHERE p.seller_id = $1 AND r.is_deleted = false AND r.is_approved = true${storeFilter}
        ORDER BY r.created_at DESC
        LIMIT $2 OFFSET $3`,
-      [sellerId, parseInt(limit), offset]
+      resultParams
     );
 
+    const countFilter = store_id ? ' AND p.store_id = $2' : '';
+    const countParams = store_id ? [sellerId, store_id] : [sellerId];
     const countRes = await db.query(
       `SELECT
           COUNT(*) AS total,
@@ -112,8 +119,8 @@ router.get('/seller/:sellerId', async (req, res) => {
           COUNT(*) FILTER (WHERE r.rating = 1) AS one_star
        FROM reviews r
        JOIN products p ON r.product_id = p.id
-       WHERE p.seller_id = $1 AND r.is_deleted = false AND r.is_approved = true`,
-      [sellerId]
+       WHERE p.seller_id = $1 AND r.is_deleted = false AND r.is_approved = true${countFilter}`,
+      countParams
     );
 
     const stats = countRes.rows[0];

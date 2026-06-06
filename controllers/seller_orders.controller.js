@@ -23,12 +23,18 @@ const ACTIVITY_TYPE_MAP = {
 const getSellerOrders = async (req, res) => {
   try {
     const sellerId = req.user.id;
+    const storeId = req.headers['x-store-id'] || req.query.storeId;
     const { status, page = 1, limit = 20, search } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     const conditions = [`oi.seller_id = $1`];
     const params = [sellerId];
     let idx = 2;
+
+    if (storeId) {
+      conditions.push(`oi.store_id = $${idx++}`);
+      params.push(storeId);
+    }
 
     const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
     if (status && status !== 'all' && validStatuses.includes(status.toLowerCase())) {

@@ -9,37 +9,42 @@ const { sendSuccess, sendError } = require('../utils/response');
 const getSellerEarnings = async (req, res) => {
   try {
     const sellerId = req.user.id;
+    const storeId = req.headers['x-store-id'] || req.query.storeId;
+    const storeFilter = storeId ? ' AND e.store_id = $2' : '';
 
     const profileResult = await db.query(
-      `SELECT 
-        COALESCE(total_earnings, 0) as total_earnings,
-        COALESCE(available_balance, 0) as available_balance
-       FROM seller_profiles WHERE user_id = $1`,
-      [sellerId]
+      storeId
+        ? `SELECT COALESCE(total_earnings, 0) as total_earnings,
+                  COALESCE(available_balance, 0) as available_balance
+           FROM stores WHERE id = $1 AND user_id = $2`
+        : `SELECT COALESCE(total_earnings, 0) as total_earnings,
+                  COALESCE(available_balance, 0) as available_balance
+           FROM seller_profiles WHERE user_id = $1`,
+      storeId ? [storeId, sellerId] : [sellerId]
     );
 
     // Pending = escrow held amounts (net of commission) - NOT yet released
     const pendingResult = await db.query(
       `SELECT COALESCE(SUM(amount * 0.95), 0) as pending_earnings
        FROM escrow_transactions 
-       WHERE seller_id = $1 AND status = 'held'`,
-      [sellerId]
+       WHERE seller_id = $1${storeId ? ' AND store_id = $2' : ''}`,
+      storeId ? [sellerId, storeId] : [sellerId]
     );
 
     // Total withdrawn = sum of withdrawal transactions
     const withdrawnResult = await db.query(
       `SELECT COALESCE(SUM(ABS(amount)), 0) as total_withdrawn
        FROM earnings 
-       WHERE seller_id = $1 AND status = 'withdrawn'`,
-      [sellerId]
+       WHERE seller_id = $1 AND status = 'withdrawn'${storeId ? ' AND store_id = $2' : ''}`,
+      storeId ? [sellerId, storeId] : [sellerId]
     );
 
     const debugEscrow = await db.query(
       `SELECT id, amount, status, held_at, released_at 
        FROM escrow_transactions 
-       WHERE seller_id = $1 
+       WHERE seller_id = $1${storeId ? ' AND store_id = $2' : ''}
        ORDER BY held_at DESC LIMIT 10`,
-      [sellerId]
+      storeId ? [sellerId, storeId] : [sellerId]
     );
     console.log('Escrow rows:', JSON.stringify(debugEscrow.rows, null, 2));
 
@@ -59,9 +64,9 @@ const getSellerEarnings = async (req, res) => {
        LEFT JOIN order_items oi ON e.order_item_id = oi.id
        LEFT JOIN products p ON oi.product_id = p.id
        LEFT JOIN orders o ON e.order_id = o.id
-       WHERE e.seller_id = $1
+       WHERE e.seller_id = $1${storeFilter}
        ORDER BY e.created_at DESC LIMIT 50`,
-      [sellerId]
+      storeId ? [sellerId, storeId] : [sellerId]
     );
 
     // Escrow pending transactions (show as pending in transaction list)
@@ -70,9 +75,9 @@ const getSellerEarnings = async (req, res) => {
         et.id, et.amount, et.held_at as created_at,
         et.auto_release_at, et.order_id
        FROM escrow_transactions et
-       WHERE et.seller_id = $1 AND et.status = 'held'
+       WHERE et.seller_id = $1 AND et.status = 'held'${storeId ? ' AND et.store_id = $2' : ''}
        ORDER BY et.held_at DESC`,
-      [sellerId]
+      storeId ? [sellerId, storeId] : [sellerId]
     );
 
     // Product earnings
@@ -81,10 +86,10 @@ const getSellerEarnings = async (req, res) => {
        FROM earnings e
        JOIN order_items oi ON e.order_item_id = oi.id
        JOIN products p ON oi.product_id = p.id
-       WHERE e.seller_id = $1
+       WHERE e.seller_id = $1${storeId ? ' AND e.store_id = $2' : ''}
        GROUP BY p.id, p.name
        ORDER BY revenue DESC`,
-      [sellerId]
+      storeId ? [sellerId, storeId] : [sellerId]
     );
 
     // Combine transactions + pending escrow into one list

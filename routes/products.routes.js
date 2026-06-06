@@ -2,9 +2,13 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const { isFlashSaleActive, formatFlashSaleInfo } = require('../utils/flashSaleHelper');
+const { getPublicProducts } = require('../controllers/stores_public.controller');
 
 // Get all products (with pagination)
-router.get('/', async (req, res) => {
+router.get('/', getPublicProducts);
+
+// Get single product by ID
+router.get('/:id', async (req, res) => {
 	try {
 		const page = parseInt(req.query.page) || 1;
 		const limit = parseInt(req.query.limit) || 20;
@@ -99,7 +103,7 @@ router.get('/:id', async (req, res) => {
 		let productResult;
 		try {
 			productResult = await pool.query(
-					`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
+					`SELECT id, seller_id, store_id, name, description, price, stock_quantity, main_image_url, 
 							images, category_meta, weight_kg,
 							is_active, category_id, color, size, views,
 							"flash start" as flash_start, "flash end" as flash_end,
@@ -112,7 +116,7 @@ router.get('/:id', async (req, res) => {
 			console.error('Product query error:', queryError.message);
 			// Fallback to minimal query
 			productResult = await pool.query(
-				`SELECT id, seller_id, name, price, main_image_url FROM products WHERE id = $1 LIMIT 1`,
+				`SELECT id, seller_id, store_id, name, price, main_image_url FROM products WHERE id = $1 LIMIT 1`,
 				[id]
 			);
 		}
@@ -131,14 +135,19 @@ router.get('/:id', async (req, res) => {
 				        u.email,
 				        u.first_name,
 				        u.last_name,
-				        COALESCE(sp.business_name, u.first_name || ' ' || u.last_name) AS name,
-				        COALESCE(sp.business_name, u.first_name || ' ' || u.last_name) AS shop_name,
-				        sp.store_logo_url AS shop_avatar_url,
-				        sp.rating
+				        COALESCE(s.business_name, u.first_name || ' ' || u.last_name) AS name,
+				        COALESCE(s.business_name, u.first_name || ' ' || u.last_name) AS shop_name,
+				        s.store_logo_url AS shop_avatar_url,
+				        s.rating,
+				        s.id AS store_id
 				 FROM users u
-				 LEFT JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
-				 WHERE u.id = $1`,
-				[product.seller_id]
+				 LEFT JOIN stores s ON s.user_id = u.id
+				   AND s.is_deleted = false
+				   AND ($2::uuid IS NULL OR s.id = $2::uuid)
+				 WHERE u.id = $1
+				 ORDER BY s.store_number ASC
+				 LIMIT 1`,
+				[product.seller_id, product.store_id || null]
 			);
 		} catch (err) {
 			console.warn('Could not fetch seller info:', err.message);
