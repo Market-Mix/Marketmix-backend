@@ -100,6 +100,7 @@ app.use('/api/refund-chat', refundChatRoutes);
 app.use('/api/seller', sellerRoutes);           // ← AFTER /api/seller/stores
 app.use('/api/shops/following', shopFollowsRoutes);
 app.use('/api/cron', cronRoutes);
+app.use('/api/coupons', require('./routes/coupons.routes'));
 
 
 
