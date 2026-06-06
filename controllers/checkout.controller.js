@@ -240,19 +240,16 @@ const applyCoupon = async (req, res) => {
     }
 
     // Look up coupon
-    let couponRes;
-    try {
-      couponRes = await db.query(
-        `SELECT * FROM coupons
-         WHERE UPPER(code) = UPPER($1)
-           AND is_active = true
-         LIMIT 1`,
-        [code.trim()]
-      );
-    } catch (_e) {
-      // coupons table may not exist yet
-      return sendError(res, 404, 'Invalid coupon code');
-    }
+    const couponRes = await db.query(
+      `SELECT * FROM coupons
+       WHERE UPPER(code) = UPPER($1)
+         AND is_active = true
+       LIMIT 1`,
+      [code.trim()]
+    );
+
+    console.log('Coupon found:', couponRes.rows[0]);
+    console.log('Session subtotal:', session.subtotal);
 
     if (!couponRes.rows.length) {
       return sendError(res, 404, 'Invalid coupon code');
@@ -277,6 +274,8 @@ const applyCoupon = async (req, res) => {
       0,
       subtotal - couponDiscount + shippingFee
     );
+
+    console.log('discount%:', discountPct, 'discount amount:', couponDiscount, 'newTotal:', newTotal);
 
     await db.query(
       `UPDATE checkout_sessions
