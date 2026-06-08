@@ -554,4 +554,73 @@ router.patch('/:caseId/status', async (req, res) => {
   }
 });
 
+// ─── GET /api/refunds/:refundId — Poll refund case for real-time updates ────
+router.get('/:refundId', protect, async (req, res) => {
+  try {
+    const { refundId } = req.params;
+    const userId = req.user.id;
+
+    if (!refundId) {
+      return res.status(400).json({ success: false, message: 'Missing refundId' });
+    }
+
+    if (!ensureSupabaseConfigured(res)) return;
+
+    // Fetch refund case
+    const caseRes = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refundId)}&select=*`, {
+      method: 'GET',
+      headers: getSupabaseHeaders()
+    });
+
+    if (!caseRes.ok) {
+      const text = await caseRes.text().catch(() => 'Unable to read response');
+      console.error(`❌ Failed to fetch refund case ${refundId}: ${caseRes.status}`);
+      return res.status(caseRes.status).json({ success: false, message: 'Failed to fetch refund case', details: text });
+    }
+
+    const cases = await caseRes.json();
+    const refundCase = Array.isArray(cases) && cases.length > 0 ? cases[0] : null;
+
+    if (!refundCase) {
+      return res.status(404).json({ success: false, message: 'Refund case not found' });
+    }
+
+    // Verify user has access (buyer, seller, or admin)
+    if (req.user.role !== 'admin' && refundCase.buyer_id !== userId && refundCase.seller_id !== userId) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    // Count unread messages from other party
+    let unreadCount = 0;
+    try {
+      let senderType = null;
+      if (refundCase.buyer_id === userId) senderType = 'seller';
+      else if (refundCase.seller_id === userId) senderType = 'buyer';
+      else if (req.user.role === 'admin') senderType = 'all'; // admins see all unread
+
+      let query = `SELECT COUNT(*) FROM refund_messages WHERE refund_case_id = '${refundId}' AND is_read = false`;
+      if (senderType !== 'all') {
+        query += ` AND sender_type = '${senderType}'`;
+      }
+
+      const countRes = await db.query(query);
+      unreadCount = parseInt(countRes.rows[0]?.count || 0, 10);
+    } catch (err) {
+      console.warn('⚠️ Failed to count unread messages:', err.message);
+    }
+
+    console.log(`✅ Refund case ${refundId} fetched for polling. Unread: ${unreadCount}`);
+    return res.status(200).json({
+      success: true,
+      refundCase: {
+        ...refundCase,
+        unreadCount
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error in GET /api/refunds/:refundId:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
+  }
+});
+
 module.exports = router;
