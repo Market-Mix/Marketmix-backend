@@ -99,8 +99,10 @@ router.get('/:id', async (req, res) => {
 		let productResult;
 		try {
 			productResult = await pool.query(
-					`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
-							images, category_meta, weight_kg,
+					`SELECT id, seller_id, store_id, name, description, price, stock_quantity, main_image_url, 
+							images, category_meta, dynamic_fields, variants,
+							product_video_url, vendor_location, return_accepted, delivery_available,
+							weight_kg, sku, discount_price,
 							is_active, category_id, color, size, views,
 							"flash start" as flash_start, "flash end" as flash_end,
 							created_at, updated_at
@@ -209,6 +211,21 @@ router.get('/:id', async (req, res) => {
 				time_remaining: flashInfo.timeRemaining,
 				flash_start: product.flash_start || null,
 				flash_end: product.flash_end || null,
+				dynamic_fields: (() => {
+				  try { return typeof product.dynamic_fields === 'string' ? JSON.parse(product.dynamic_fields) : (product.dynamic_fields || {}); } 
+				  catch { return {}; }
+				})(),
+				variants: (() => {
+				  try { return typeof product.variants === 'string' ? JSON.parse(product.variants) : (product.variants || []); }
+				  catch { return []; }
+				})(),
+				store_id: product.store_id || null,
+				product_video_url: product.product_video_url || null,
+				vendor_location: product.vendor_location || null,
+				return_accepted: product.return_accepted !== false,
+				delivery_available: product.delivery_available !== false,
+				sku: product.sku || null,
+				discount_price: product.discount_price ? parseFloat(product.discount_price) : null,
 				seller: sellerResult.rows[0] || null,
 				reviews: reviewsResult.rows,
 				relatedProducts: relatedResult.rows,
