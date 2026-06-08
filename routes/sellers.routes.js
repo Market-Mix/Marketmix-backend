@@ -6,6 +6,7 @@ const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
+const { createDedupedNotification } = require('../controllers/notification.controller');
 const multer = require('multer');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -373,6 +374,18 @@ router.post('/verify-otp', protect, isSeller, async (req, res) => {
        WHERE user_id = $1`,
       [userId]
     );
+
+    try {
+      await createDedupedNotification({
+        userId,
+        title: 'KYC Verified',
+        message: 'Your account verification is complete. You can now continue selling on MarketMix.',
+        type: 'account',
+        link: '/sellers/sellers notification page.html'
+      });
+    } catch (notifError) {
+      console.warn('Failed to create deduplicated KYC notification:', notifError);
+    }
 
     console.log(`✅ Email verified for user_id: ${userId}`);
     return sendSuccess(res, 200, 'Email verified successfully! ✅');
