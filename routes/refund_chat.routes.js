@@ -99,16 +99,25 @@ router.post('/:caseId', protect, async (req, res) => {
     // Notify the other party
     const notifyUserId = senderType === 'buyer' ? c.seller_id : c.buyer_id;
     if (notifyUserId) {
+      const notificationTitle = senderType === 'buyer' 
+        ? 'New Refund Message' 
+        : 'New Refund Message';
+      const notificationMessage = senderType === 'buyer'
+        ? 'The buyer sent a new message regarding a refund case.'
+        : 'The seller replied to your refund case.';
+      const refundLink = `/buyers/buyers%20return%20report.html?case=${caseId}`;
+      
       await db.query(
         `INSERT INTO notifications
-           (user_id, title, message, type, is_read, is_deleted, created_at, updated_at)
-         VALUES ($1, $2, $3, 'refund', false, false, NOW(), NOW())`,
+           (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
+         VALUES ($1, $2, $3, 'refund_chat', $4, false, false, NOW(), NOW())`,
         [
           notifyUserId,
-          'New message in refund case',
-          (message_text || 'Message received').substring(0, 100)
+          notificationTitle,
+          notificationMessage,
+          refundLink
         ]
-      ).catch(() => {});
+      ).catch(err => console.warn('Notification creation failed:', err.message));
     }
 
     console.log(`Refund chat message stored. refund_id=${caseId}, sender_type=${senderType}, sender_id=${userId}`);
@@ -131,6 +140,50 @@ router.get('/:caseId/unread-count', protect, async (req, res) => {
       [caseId, userId]
     );
     return sendSuccess(res, 200, 'OK', { count: parseInt(r.rows[0].count, 10) });
+  } catch (err) {
+    return sendError(res, 500, 'Error', err.message);
+  }
+});
+
+// GET /api/refund-chat/:caseId/unread-notification-count — unread refund_chat notifications for this case
+router.get('/:caseId/unread-notification-count', protect, async (req, res) => {
+  try {
+    const { caseId } = req.params;
+    const userId = req.user.id;
+    
+    const r = await db.query(
+      `SELECT COUNT(*) as count FROM notifications
+       WHERE user_id = $1 
+         AND type = 'refund_chat'
+         AND link LIKE '%case=' || $2 || '%'
+         AND is_read = false
+         AND is_deleted = false`,
+      [userId, caseId]
+    );
+    return sendSuccess(res, 200, 'OK', { count: parseInt(r.rows[0].count, 10) });
+  } catch (err) {
+    return sendError(res, 500, 'Error', err.message);
+  }
+});
+
+// PUT /api/refund-chat/:caseId/mark-notifications-read — mark refund_chat notifications as read for this case
+router.put('/:caseId/mark-notifications-read', protect, async (req, res) => {
+  try {
+    const { caseId } = req.params;
+    const userId = req.user.id;
+    
+    await db.query(
+      `UPDATE notifications
+       SET is_read = true, updated_at = NOW()
+       WHERE user_id = $1
+         AND type = 'refund_chat'
+         AND link LIKE '%case=' || $2 || '%'
+         AND is_read = false
+         AND is_deleted = false`,
+      [userId, caseId]
+    );
+    
+    return sendSuccess(res, 200, 'Notifications marked as read');
   } catch (err) {
     return sendError(res, 500, 'Error', err.message);
   }
