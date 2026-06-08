@@ -131,6 +131,14 @@ setInterval(async () => {
   } catch (e) { console.error('Withdrawal cron error:', e.message); }
 }, 15 * 60 * 1000); // Every 15 min
 
+// Auto-escalate refunds every 15 minutes (runs script)
+setInterval(() => {
+  execFile('node', ['scripts/auto_escalate_refunds.js'], (err, stdout) => {
+    if (err) console.error('Refund auto-escalation cron error:', err.message);
+    else if (stdout) console.log(stdout);
+  });
+}, 15 * 60 * 1000); // Every 15 minutes
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
