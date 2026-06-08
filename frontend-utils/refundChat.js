@@ -32,10 +32,10 @@ const RefundChat = (() => {
     return data.data?.messages || [];
   }
 
-  async function sendMessage(caseId, token, { message_text, file_url, file_type }) {
+  async function sendMessage(caseId, token, { message_text, media_url, media_type, file_url, file_type }) {
     return apiCall(`/refund-chat/${caseId}`, token, {
       method: 'POST',
-      body: JSON.stringify({ message_text, file_url, file_type })
+      body: JSON.stringify({ message_text, media_url, media_type, file_url, file_type })
     });
   }
 
@@ -71,15 +71,17 @@ const RefundChat = (() => {
       });
 
       let mediaHtml = '';
-      if (msg.file_url) {
-        const isImg = /\.(jpg|jpeg|png|webp|gif)$/i.test(msg.file_url) || msg.file_type === 'image';
-        const isVid = /\.(mp4|webm|mov)$/i.test(msg.file_url) || msg.file_type === 'video';
+      const mediaUrl = msg.media_url || msg.file_url || '';
+      const mediaType = msg.media_type || msg.file_type || '';
+      if (mediaUrl) {
+        const isImg = /\.(jpg|jpeg|png|webp|gif)$/i.test(mediaUrl) || mediaType === 'image';
+        const isVid = /\.(mp4|webm|mov)$/i.test(mediaUrl) || mediaType === 'video';
         if (isImg) {
-          mediaHtml = `<div class="message-media"><a href="${msg.file_url}" target="_blank"><img src="${msg.file_url}" alt="attachment" style="max-width:200px;border-radius:8px;margin-top:4px"></a></div>`;
+          mediaHtml = `<div class="message-media"><a href="${mediaUrl}" target="_blank" rel="noopener noreferrer"><img src="${mediaUrl}" alt="attachment" style="max-width:200px;border-radius:8px;margin-top:4px"></a></div>`;
         } else if (isVid) {
-          mediaHtml = `<div class="message-media"><video controls style="max-width:200px;border-radius:8px;margin-top:4px"><source src="${msg.file_url}"></video></div>`;
+          mediaHtml = `<div class="message-media"><video controls style="max-width:200px;border-radius:8px;margin-top:4px"><source src="${mediaUrl}"></video></div>`;
         } else {
-          mediaHtml = `<div class="message-media"><a href="${msg.file_url}" target="_blank" style="color:#f97316">📎 View attachment</a></div>`;
+          mediaHtml = `<div class="message-media"><a href="${mediaUrl}" target="_blank" rel="noopener noreferrer" style="color:#f97316">📎 View attachment</a></div>`;
         }
       }
 
