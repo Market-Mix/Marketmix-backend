@@ -248,7 +248,7 @@ async function sendOtpEmail(to, otp) {
   const resend = new Resend(process.env.RESEND_API_KEY);
   
   await resend.emails.send({
-    from: process.env.FROM_EMAIL || 'MarketMix <noreply@marketmix.com>',
+    from: process.env.FROM_EMAIL || 'MarketMix <onboarding@resend.dev>',
     to,
     subject: 'Your MarketMix Verification Code',
     html: `<p>Your code: <strong style="font-size:1.5rem;letter-spacing:8px">${otp}</strong></p><p>Expires in 10 minutes.</p>`
