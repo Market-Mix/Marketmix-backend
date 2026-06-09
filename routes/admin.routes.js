@@ -119,6 +119,56 @@ router.post('/withdrawals/:id/reject', protect, isAdmin, async (req, res) => {
   return sendSuccess(res, 200, 'Withdrawal rejected and balance restored');
 });
 
+// POST /api/admin/sellers/:sellerId/kyc/approve
+router.post('/sellers/:sellerId/kyc/approve', protect, isAdmin, async (req, res) => {
+  try {
+    const sellerId = req.params.sellerId;
+    const result = await db.query(
+      `UPDATE seller_profiles
+       SET is_verified = true,
+           kyc_status = 'approved',
+           kyc_document_urls = COALESCE(kyc_document_urls, '{}'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE user_id = $1 AND is_deleted = false
+       RETURNING user_id`,
+      [sellerId, JSON.stringify({ kyc_status: 'approved' })]
+    );
+
+    if (!result.rows.length) {
+      return sendError(res, 404, 'Seller profile not found');
+    }
+
+    return sendSuccess(res, 200, 'Seller KYC approved successfully');
+  } catch (err) {
+    return sendError(res, 500, err.message);
+  }
+});
+
+// POST /api/admin/sellers/:sellerId/kyc/reject
+router.post('/sellers/:sellerId/kyc/reject', protect, isAdmin, async (req, res) => {
+  try {
+    const sellerId = req.params.sellerId;
+    const result = await db.query(
+      `UPDATE seller_profiles
+       SET is_verified = false,
+           kyc_status = 'rejected',
+           kyc_document_urls = COALESCE(kyc_document_urls, '{}'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE user_id = $1 AND is_deleted = false
+       RETURNING user_id`,
+      [sellerId, JSON.stringify({ kyc_status: 'rejected' })]
+    );
+
+    if (!result.rows.length) {
+      return sendError(res, 404, 'Seller profile not found');
+    }
+
+    return sendSuccess(res, 200, 'Seller KYC rejected successfully');
+  } catch (err) {
+    return sendError(res, 500, err.message);
+  }
+});
+
 // GET /api/admin/withdrawals - list all withdrawals
 router.get('/withdrawals', protect, isAdmin, async (req, res) => {
   const { status, page = 1, limit = 20 } = req.query;

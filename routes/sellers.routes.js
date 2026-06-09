@@ -45,6 +45,7 @@ router.get('/profile', protect, isSeller, async (req, res) => {
           sp.rating,
           sp.total_reviews,
           sp.is_verified,
+          sp.kyc_status,
           sp.kyc_document_urls,
           sp.store_logo_url,
           sp.created_at
@@ -93,6 +94,7 @@ router.get('/profile', protect, isSeller, async (req, res) => {
           rating: parseFloat(row.rating) || 0,
           totalReviews: row.total_reviews || 0,
           isVerified: row.is_verified,
+          kycStatus: row.kyc_status || null,
           kycDocumentUrls: row.kyc_document_urls,
           storeLogo: row.store_logo_url,
           createdAt: row.created_at
@@ -660,6 +662,7 @@ router.post('/kyc', protect, isSeller, async (req, res) => {
     await db.query(
       `UPDATE seller_profiles
        SET kyc_document_urls = $1::jsonb,
+           kyc_status        = 'pending',
            business_email    = COALESCE(NULLIF($2, ''), business_email),
            updated_at        = NOW()
        WHERE user_id = $3`,
@@ -687,7 +690,7 @@ router.get('/kyc/status', protect, isSeller, async (req, res) => {
     const userId = req.user.id;
 
     const result = await db.query(
-      `SELECT is_verified, kyc_document_urls
+      `SELECT is_verified, kyc_status, kyc_document_urls
        FROM seller_profiles
        WHERE user_id = $1 AND is_deleted = false`,
       [userId]
@@ -697,12 +700,12 @@ router.get('/kyc/status', protect, isSeller, async (req, res) => {
       return sendError(res, 404, 'Seller profile not found');
     }
 
-    const { is_verified, kyc_document_urls } = result.rows[0];
+    const { is_verified, kyc_status, kyc_document_urls } = result.rows[0];
     const kyc = kyc_document_urls || {};
 
     return sendSuccess(res, 200, 'KYC status fetched', {
       isVerified:     is_verified,
-      kycStatus:      kyc.kyc_status || 'not_submitted',
+      kycStatus:      kyc.kyc_status || kyc_status || 'not_submitted',
       kycSubmittedAt: kyc.kyc_submitted_at || null,
     });
 
