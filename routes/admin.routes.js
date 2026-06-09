@@ -138,6 +138,7 @@ router.post('/sellers/:sellerId/kyc/approve', protect, isAdmin, async (req, res)
       return sendError(res, 404, 'Seller profile not found');
     }
 
+    console.log({ is_verified: true, kyc_status: 'approved' });
     return sendSuccess(res, 200, 'Seller KYC approved successfully');
   } catch (err) {
     return sendError(res, 500, err.message);
@@ -163,6 +164,7 @@ router.post('/sellers/:sellerId/kyc/reject', protect, isAdmin, async (req, res) 
       return sendError(res, 404, 'Seller profile not found');
     }
 
+    console.log({ is_verified: false, kyc_status: 'rejected' });
     return sendSuccess(res, 200, 'Seller KYC rejected successfully');
   } catch (err) {
     return sendError(res, 500, err.message);

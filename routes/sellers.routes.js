@@ -11,6 +11,32 @@ const multer = require('multer');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+function normalizeKycStatus(isVerified, status) {
+  const normalized = String(status || 'not_submitted').toLowerCase();
+  if (isVerified === true) return 'approved';
+  if (isVerified === false && ['approved', 'failed'].includes(normalized)) return 'rejected';
+  return normalized;
+}
+
+async function ensureKycStatusSync(userId, isVerified, status) {
+  const normalizedStatus = normalizeKycStatus(isVerified, status);
+  const currentStatus = String(status || 'not_submitted').toLowerCase();
+
+  if (normalizedStatus !== currentStatus) {
+    await db.query(
+      `UPDATE seller_profiles
+       SET kyc_status = $2,
+           kyc_document_urls = COALESCE(kyc_document_urls, '{}'::jsonb) || $3::jsonb,
+           updated_at = NOW()
+       WHERE user_id = $1 AND is_deleted = false`,
+      [userId, normalizedStatus, JSON.stringify({ kyc_status: normalizedStatus })]
+    );
+  }
+
+  console.log({ is_verified: isVerified, kyc_status: normalizedStatus });
+  return normalizedStatus;
+}
+
 
 router.get('/stores/public/test', (req, res) => res.json({ ok: true }));
 
@@ -60,6 +86,8 @@ router.get('/profile', protect, isSeller, async (req, res) => {
     }
 
     const row = result.rows[0];
+    const rawStatus = row.kyc_status || (row.kyc_document_urls?.kyc_status || null);
+    const normalizedStatus = await ensureKycStatusSync(userId, row.is_verified, rawStatus);
 
     let productCount = 0;
     try {
@@ -94,7 +122,7 @@ router.get('/profile', protect, isSeller, async (req, res) => {
           rating: parseFloat(row.rating) || 0,
           totalReviews: row.total_reviews || 0,
           isVerified: row.is_verified,
-          kycStatus: row.kyc_status || null,
+          kycStatus: normalizedStatus,
           kycDocumentUrls: row.kyc_document_urls,
           storeLogo: row.store_logo_url,
           createdAt: row.created_at
@@ -629,16 +657,20 @@ router.post('/kyc', protect, isSeller, async (req, res) => {
 
     // Ensure seller_profiles row exists
     const profileCheck = await db.query(
-      'SELECT id, kyc_document_urls FROM seller_profiles WHERE user_id = $1 AND is_deleted = false',
+      'SELECT id, is_verified, kyc_status, kyc_document_urls FROM seller_profiles WHERE user_id = $1 AND is_deleted = false',
       [userId]
     );
     if (profileCheck.rows.length === 0) {
       return sendError(res, 404, 'Seller profile not found. Please complete store setup first.');
     }
 
+    const profileRow = profileCheck.rows[0];
+    const existingKyc = profileRow.kyc_document_urls || {};
+    const currentKycStatus = existingKyc.kyc_status || profileRow.kyc_status;
+    const normalizedStatus = await ensureKycStatusSync(userId, profileRow.is_verified, currentKycStatus);
+
     // Block re-submission if already approved
-    const existingKyc = profileCheck.rows[0].kyc_document_urls || {};
-    if (existingKyc.kyc_status === 'approved') {
+    if (normalizedStatus === 'approved') {
       return sendError(res, 409, 'Your KYC has already been approved.');
     }
 
@@ -702,10 +734,12 @@ router.get('/kyc/status', protect, isSeller, async (req, res) => {
 
     const { is_verified, kyc_status, kyc_document_urls } = result.rows[0];
     const kyc = kyc_document_urls || {};
+    const rawStatus = kyc_status || kyc.kyc_status;
+    const normalizedStatus = await ensureKycStatusSync(userId, is_verified, rawStatus);
 
     return sendSuccess(res, 200, 'KYC status fetched', {
       isVerified:     is_verified,
-      kycStatus:      kyc.kyc_status || kyc_status || 'not_submitted',
+      kycStatus:      normalizedStatus,
       kycSubmittedAt: kyc.kyc_submitted_at || null,
     });
 
