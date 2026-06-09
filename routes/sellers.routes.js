@@ -254,17 +254,28 @@ async function sendOtpEmail(to, otp) {
   //   html: `<p>Your code: <strong style="font-size:1.5rem;letter-spacing:8px">${otp}</strong></p><p>Expires in 10 minutes.</p>`
   // });
 
-  const SibApiV3Sdk = require('@getbrevo/brevo');
-  const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
-  
-  apiInstance.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
-
-  await apiInstance.sendTransacEmail({
-    sender: { name: 'MarketMix', email: process.env.FROM_EMAIL || 'noreply@marketmix.com' },
-    to: [{ email: to }],
-    subject: 'Your MarketMix Verification Code',
-    htmlContent: `<p>Your code: <strong style="font-size:1.5rem;letter-spacing:8px">${otp}</strong></p><p>Expires in 10 minutes.</p>`
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': process.env.BREVO_API_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      sender: { name: 'MarketMix', email: process.env.FROM_EMAIL || 'noreply@marketmix.com' },
+      to: [{ email: to }],
+      subject: 'Your MarketMix Verification Code',
+      htmlContent: `<p>Your code: <strong style="font-size:1.5rem;letter-spacing:8px">${otp}</strong></p><p>Expires in 10 minutes.</p>`
+    })
   });
+
+  const result = await response.json();
+  console.log('Brevo result:', JSON.stringify(result));
+  
+  if (!response.ok) {
+    throw new Error(result.message || 'Brevo email failed');
+  }
+  
+  return result;
 }
 
 // ─── POST /api/seller/send-otp ────────────────────────────────────────────────
