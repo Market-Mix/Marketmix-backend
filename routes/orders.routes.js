@@ -32,5 +32,6 @@ router.put('/:orderId/cancel', protect, cancelOrder);
 // New routes for delivery confirmation and reports
 router.post('/:orderId/confirm-delivery', protect, confirmDelivery);
 router.post('/:orderId/report', protect, upload.single('evidence'), submitReport);
+router.post('/:orderId/retry-payment', protect, require('../controllers/orders.controller').retryOrderPayment);
 
 module.exports = router;

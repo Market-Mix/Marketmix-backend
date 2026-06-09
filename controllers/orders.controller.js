@@ -744,4 +744,61 @@ module.exports = {
   confirmDelivery,
   submitReport,
   getBuyerReports
+  , retryOrderPayment
 };
+
+/**
+ * @desc    Retry payment for an unpaid order
+ * @route   POST /api/orders/:orderId/retry-payment
+ * @access  Private (Buyer)
+ */
+async function retryOrderPayment(req, res) {
+  try {
+    const { orderId } = req.params;
+    const user_id = req.user.id;
+
+    // Verify order belongs to buyer and is unpaid
+    const orderRes = await db.query(
+      `SELECT o.*, u.email, u.first_name, u.last_name, u.phone
+       FROM orders o JOIN users u ON u.id = o.buyer_id
+       WHERE o.id = $1 AND o.buyer_id = $2 
+       AND o.payment_status = 'unpaid'
+       AND o.status = 'awaiting_payment'`,
+      [orderId, user_id]
+    );
+
+    if (!orderRes.rows.length) {
+      return sendError(res, 404, 'Order not found or already paid');
+    }
+
+    const order = orderRes.rows[0];
+    const marketpay = require('../services/marketpay.service');
+
+    const payResult = await marketpay.initiatePayment('paystack', {
+      orderId: order.id,
+      amount: parseFloat(order.total_amount),
+      currency: 'NGN',
+      email: order.email,
+      name: `${order.first_name} ${order.last_name}`.trim(),
+      phone: order.phone,
+      callbackUrl: `${process.env.APP_BASE_URL}/api/payments/paystack/callback`,
+      metadata: { userId: user_id, retry: true },
+    });
+
+    // Save new payment transaction attempt
+    await db.query(
+      `INSERT INTO payment_transactions
+         (order_id, user_id, provider, provider_reference, amount, currency, status, created_at)
+       VALUES ($1,$2,'paystack',$3,$4,'NGN','pending',NOW())`,
+      [order.id, user_id, payResult.reference, parseFloat(order.total_amount)]
+    );
+
+    return sendSuccess(res, 200, 'Payment retry initiated', {
+      paymentUrl: payResult.authorizationUrl,
+      reference: payResult.reference,
+    });
+  } catch (error) {
+    console.error('retryOrderPayment error:', error);
+    return sendError(res, 500, 'Error retrying payment', error.message);
+  }
+}
