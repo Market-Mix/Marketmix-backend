@@ -151,23 +151,12 @@ const confirmCheckout = async (req, res) => {
     const session = sessionRes.rows[0];
 
     if (session.order_id) {
-      const existingOrderRes = await client.query(
-        `SELECT id, status, payment_status FROM orders WHERE id = $1 AND buyer_id = $2`,
-        [session.order_id, userId]
-      );
-      const ord = existingOrderRes.rows[0];
-      if (ord && ord.status === 'awaiting_payment' && ord.payment_status === 'unpaid') {
-        await client.query('ROLLBACK');
-        return sendError(res, 409, 'Payment not yet completed. Please use /api/payments/initiate to retry payment.', {
-          orderId: ord.id,
-          retryPayment: true,
-        });
-      }
-
-      // Already confirmed (or in another final state)
-      const fullOrder = await fetchOrderSummary(client, session.order_id, userId);
+      const existingOrder = await fetchOrderSummary(client, session.order_id, userId);
       await client.query('COMMIT');
-      return sendSuccess(res, 200, 'Checkout already confirmed', { order: fullOrder, idempotent: true });
+      return sendSuccess(res, 200, 'Checkout already confirmed', {
+        order: existingOrder,
+        idempotent: true,
+      });
     }
 
     if (['expired', 'abandoned'].includes(session.status) || new Date(session.expires_at) <= new Date()) {

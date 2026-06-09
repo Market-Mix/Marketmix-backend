@@ -74,52 +74,6 @@ const initiatePayment = async (req, res) => {
       return sendError(res, 400, 'Invalid order total');
     }
 
-    // If session already has an order in awaiting_payment/unpaid state, re-initiate payment
-    if (session.order_id) {
-      const existingOrderRes = await client.query(
-        `SELECT o.*, u.email, u.first_name, u.last_name, u.phone
-         FROM orders o
-         JOIN users u ON u.id = o.buyer_id
-         WHERE o.id = $1 AND o.buyer_id = $2 AND o.payment_status = 'unpaid'`
-      , [session.order_id, userId]);
-
-      if (existingOrderRes.rows.length) {
-        const existingOrder = existingOrderRes.rows[0];
-        const retryAmount = parseFloat(existingOrder.total_amount || 0);
-
-        const payResult = await marketpay.initiatePayment(method, {
-          orderId: existingOrder.id,
-          amount: retryAmount,
-          currency: 'NGN',
-          email: existingOrder.email || session.email,
-          name: `${existingOrder.first_name || ''} ${existingOrder.last_name || ''}`.trim(),
-          phone: existingOrder.phone || session.phone,
-          callbackUrl: callbackUrl || `${process.env.APP_BASE_URL}/api/payments/${method}/callback`,
-          metadata: { sessionId, userId, retry: true },
-        });
-
-        // Save new payment transaction attempt
-        await client.query(
-          `INSERT INTO payment_transactions
-             (order_id, user_id, provider, provider_reference, provider_transaction_id, amount, currency, status, raw_response, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
-          [existingOrder.id, userId, method, payResult.reference, payResult.transactionId || null, retryAmount, 'NGN', 'pending', JSON.stringify(payResult.raw || {})]
-        );
-
-        await client.query('COMMIT');
-        return sendSuccess(res, 200, 'Payment retry initiated', {
-          orderId: existingOrder.id,
-          reference: payResult.reference,
-          method,
-          amount: retryAmount,
-          paymentUrl: payResult.authorizationUrl || payResult.paymentLink,
-          accessCode: payResult.accessCode,
-          publicKey: process.env.PAYSTACK_PUBLIC_KEY,
-          isRetry: true,
-        });
-      }
-    }
-
     await client.query('BEGIN');
 
     // 2. Create master order
