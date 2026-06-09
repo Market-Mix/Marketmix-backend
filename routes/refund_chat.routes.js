@@ -25,7 +25,7 @@ router.get('/:caseId', protect, async (req, res) => {
     }
 
     const msgs = await db.query(
-      `SELECT id, sender_id, sender_type, message AS message_text, is_read, created_at
+      `SELECT id, sender_id, sender_type, message AS message_text, media_url, media_type, is_read, created_at
        FROM refund_messages
        WHERE refund_case_id = $1
        ORDER BY created_at ASC`,
@@ -61,9 +61,9 @@ router.post('/:caseId', protect, async (req, res) => {
   try {
     const { caseId } = req.params;
     const userId = req.user.id;
-    const { message_text } = req.body;
+    const { message_text, media_url, media_type } = req.body;
 
-    if (!message_text) return sendError(res, 400, 'Message required');
+    if (!message_text && !media_url) return sendError(res, 400, 'Message or media required');
 
     // Determine sender_type and verify access
     const caseRes = await db.query(
@@ -88,10 +88,10 @@ router.post('/:caseId', protect, async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO refund_messages
-         (refund_case_id, sender_id, sender_type, message)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, refund_case_id, sender_id, sender_type, message AS message_text, is_read, created_at`,
-      [caseId, userId, senderType, message_text || null]
+         (refund_case_id, sender_id, sender_type, message, media_url, media_type)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, refund_case_id, sender_id, sender_type, message AS message_text, media_url, media_type, is_read, created_at`,
+      [caseId, userId, senderType, message_text || null, media_url || null, media_type || null]
     );
 
     const msg = result.rows[0];

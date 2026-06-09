@@ -19,6 +19,42 @@ async function notificationHasLinkColumn() {
   return notificationHasLinkColumnCache;
 }
 
+async function createDedupedNotification({ userId, title, message, type = 'account', link = null }) {
+  if (!userId || !title || !message) {
+    throw new Error('Missing required fields for deduped notification');
+  }
+
+  const existingQuery = `
+    SELECT id FROM notifications
+    WHERE user_id = $1 AND type = $2 AND title = $3 AND message = $4
+      AND is_deleted = FALSE
+    LIMIT 1
+  `;
+  const existingResult = await db.query(existingQuery, [userId, type, title, message]);
+  if (existingResult.rows.length > 0) {
+    return existingResult.rows[0];
+  }
+
+  const hasLink = await notificationHasLinkColumn();
+  if (hasLink) {
+    const insertQuery = `
+      INSERT INTO notifications (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, NOW(), NOW())
+      RETURNING id
+    `;
+    const result = await db.query(insertQuery, [userId, title, message, type, link || null]);
+    return result.rows[0];
+  }
+
+  const insertQuery = `
+    INSERT INTO notifications (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5), FALSE, FALSE, NOW(), NOW())
+    RETURNING id
+  `;
+  const result = await db.query(insertQuery, [userId, title, message, type, link || null]);
+  return result.rows[0];
+}
+
 /**
  * @desc    Create a notification for a user
  * @route   POST /api/notifications
@@ -326,5 +362,6 @@ module.exports = {
   markAsRead,
   markAllAsRead,
   deleteNotification,
-  deleteAllNotifications
+  deleteAllNotifications,
+  createDedupedNotification
 };
