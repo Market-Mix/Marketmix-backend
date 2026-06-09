@@ -244,14 +244,26 @@ router.post('/setup-profile', protect, isSeller, async (req, res) => {
 
 // ─── sendOtpEmail Helper Function ──────────────────────────────────────────────
 async function sendOtpEmail(to, otp) {
-  const { Resend } = require('resend');
-  const resend = new Resend(process.env.RESEND_API_KEY);
+  // // Former Resend implementation (commented out)
+  // const { Resend } = require('resend');
+  // const resend = new Resend(process.env.RESEND_API_KEY);
+  // await resend.emails.send({
+  //   from: process.env.FROM_EMAIL || 'MarketMix <onboarding@resend.dev>',
+  //   to,
+  //   subject: 'Your MarketMix Verification Code',
+  //   html: `<p>Your code: <strong style="font-size:1.5rem;letter-spacing:8px">${otp}</strong></p><p>Expires in 10 minutes.</p>`
+  // });
+
+  const SibApiV3Sdk = require('@getbrevo/brevo');
+  const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
   
-  await resend.emails.send({
-    from: process.env.FROM_EMAIL || 'MarketMix <onboarding@resend.dev>',
-    to,
+  apiInstance.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
+
+  await apiInstance.sendTransacEmail({
+    sender: { name: 'MarketMix', email: process.env.FROM_EMAIL || 'noreply@marketmix.com' },
+    to: [{ email: to }],
     subject: 'Your MarketMix Verification Code',
-    html: `<p>Your code: <strong style="font-size:1.5rem;letter-spacing:8px">${otp}</strong></p><p>Expires in 10 minutes.</p>`
+    htmlContent: `<p>Your code: <strong style="font-size:1.5rem;letter-spacing:8px">${otp}</strong></p><p>Expires in 10 minutes.</p>`
   });
 }
 
