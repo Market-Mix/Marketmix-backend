@@ -241,8 +241,21 @@ router.post('/setup-profile', protect, isSeller, async (req, res) => {
   }
 });
 
+// ─── sendOtpEmail Helper Function ──────────────────────────────────────────────
+async function sendOtpEmail(to, otp) {
+  const { Resend } = require('resend');
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  
+  await resend.emails.send({
+    from: process.env.FROM_EMAIL || 'MarketMix <noreply@marketmix.com>',
+    to,
+    subject: 'Your MarketMix Verification Code',
+    html: `<p>Your code: <strong style="font-size:1.5rem;letter-spacing:8px">${otp}</strong></p><p>Expires in 10 minutes.</p>`
+  });
+}
+
 // ─── POST /api/seller/send-otp ────────────────────────────────────────────────
-// Generates a 6-digit OTP, stores it in seller_profiles, sends via SendGrid
+// Generates a 6-digit OTP, stores it in seller_profiles, sends via Resend
 router.post('/send-otp', protect, isSeller, async (req, res) => {
   try {
     const { email } = req.body;
@@ -282,35 +295,14 @@ router.post('/send-otp', protect, isSeller, async (req, res) => {
       [otp, expiresAt.toISOString(), email, userId]
     );
 
-    // Send via SendGrid HTTP API (works on Render free tier — no SMTP ports needed)
-    const sgMail = require('@sendgrid/mail');
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-
-    await sgMail.send({
-      to: email,
-      from: process.env.SENDGRID_FROM_EMAIL,
-      subject: 'MarketMix — Your Email Verification Code',
-      html: `
-        <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;border:1px solid #eee;border-radius:8px;">
-          <h2 style="color:#667eea;">MarketMix</h2>
-          <p>Hi there,</p>
-          <p>Use the code below to verify your email address. It expires in <strong>10 minutes</strong>.</p>
-          <div style="text-align:center;margin:32px 0;">
-            <span style="font-size:2.5rem;font-weight:bold;letter-spacing:12px;color:#333;">${otp}</span>
-          </div>
-          <p style="color:#888;font-size:0.85rem;">If you didn't request this, you can safely ignore this email.</p>
-        </div>
-      `
-    });
+    // Send via Resend
+    await sendOtpEmail(email, otp);
 
     console.log(`✅ OTP sent to ${email} for user_id: ${userId}`);
     return sendSuccess(res, 200, 'Verification code sent to your email');
 
   } catch (error) {
     console.error('Send OTP error:', error);
-    if (error.response?.body?.errors) {
-      console.error('SendGrid errors:', JSON.stringify(error.response.body.errors));
-    }
     return sendError(res, 500, 'Failed to send verification email. Please try again.');
   }
 });
