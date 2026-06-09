@@ -26,10 +26,9 @@ async function ensureKycStatusSync(userId, isVerified, status) {
     await db.query(
       `UPDATE seller_profiles
        SET kyc_status = $2,
-           kyc_document_urls = COALESCE(kyc_document_urls, '{}'::jsonb) || $3::jsonb,
            updated_at = NOW()
        WHERE user_id = $1 AND is_deleted = false`,
-      [userId, normalizedStatus, JSON.stringify({ kyc_status: normalizedStatus })]
+      [userId, normalizedStatus]
     );
   }
 
@@ -371,7 +370,7 @@ router.post('/verify-otp', protect, isSeller, async (req, res) => {
 
     // Fetch stored OTP data from seller_profiles
     const result = await db.query(
-      `SELECT kyc_document_urls, is_verified
+      `SELECT kyc_document_urls, email_verified
        FROM seller_profiles
        WHERE user_id = $1 AND is_deleted = false`,
       [userId]
@@ -381,9 +380,9 @@ router.post('/verify-otp', protect, isSeller, async (req, res) => {
       return sendError(res, 404, 'Seller profile not found');
     }
 
-    const { kyc_document_urls, is_verified } = result.rows[0];
+    const { kyc_document_urls, email_verified } = result.rows[0];
 
-    if (is_verified) {
+    if (email_verified) {
       return sendSuccess(res, 200, 'Email already verified');
     }
 
@@ -413,7 +412,7 @@ router.post('/verify-otp', protect, isSeller, async (req, res) => {
     // Mark as verified — clear OTP data from kyc_document_urls
     await db.query(
       `UPDATE seller_profiles
-       SET is_verified = true,
+       SET email_verified = true,
            kyc_document_urls = kyc_document_urls - 'otp_code' - 'otp_expires_at' - 'otp_email',
            updated_at = NOW()
        WHERE user_id = $1`,
@@ -423,8 +422,8 @@ router.post('/verify-otp', protect, isSeller, async (req, res) => {
     try {
       await createDedupedNotification({
         userId,
-        title: 'KYC Verified',
-        message: 'Your account verification is complete. You can now continue selling on MarketMix.',
+        title: 'Email Verified',
+        message: 'Your email verification is complete. You can now continue selling on MarketMix.',
         type: 'account',
         link: '/sellers/sellers notification page.html'
       });
@@ -678,7 +677,6 @@ router.post('/kyc', protect, isSeller, async (req, res) => {
     // (e.g. OTP fields, social links stored by /update-store)
     const kycData = {
       ...existingKyc,
-      kyc_status:           'pending',
       kyc_submitted_at:     new Date().toISOString(),
       kyc_full_name:        fullName.trim(),
       kyc_dob:              dob || null,

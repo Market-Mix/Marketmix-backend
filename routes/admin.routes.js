@@ -127,11 +127,10 @@ router.post('/sellers/:sellerId/kyc/approve', protect, isAdmin, async (req, res)
       `UPDATE seller_profiles
        SET is_verified = true,
            kyc_status = 'approved',
-           kyc_document_urls = COALESCE(kyc_document_urls, '{}'::jsonb) || $2::jsonb,
            updated_at = NOW()
        WHERE user_id = $1 AND is_deleted = false
        RETURNING user_id`,
-      [sellerId, JSON.stringify({ kyc_status: 'approved' })]
+      [sellerId]
     );
 
     if (!result.rows.length) {
@@ -153,11 +152,10 @@ router.post('/sellers/:sellerId/kyc/reject', protect, isAdmin, async (req, res) 
       `UPDATE seller_profiles
        SET is_verified = false,
            kyc_status = 'rejected',
-           kyc_document_urls = COALESCE(kyc_document_urls, '{}'::jsonb) || $2::jsonb,
            updated_at = NOW()
        WHERE user_id = $1 AND is_deleted = false
        RETURNING user_id`,
-      [sellerId, JSON.stringify({ kyc_status: 'rejected' })]
+      [sellerId]
     );
 
     if (!result.rows.length) {
