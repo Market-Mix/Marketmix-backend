@@ -131,6 +131,23 @@ setInterval(async () => {
   } catch (e) { console.error('Withdrawal cron error:', e.message); }
 }, 15 * 60 * 1000); // Every 15 min
 
+// Extend session expiry for abandoned/unpaid payment sessions — runs every 30 min
+setInterval(async () => {
+  try {
+    // Extend sessions tied to unpaid orders so buyers can retry
+    await db.query(
+      `UPDATE checkout_sessions cs
+       SET expires_at = NOW() + INTERVAL '2 hours', updated_at = NOW()
+       FROM orders o
+       WHERE cs.order_id = o.id
+         AND o.payment_status = 'unpaid'
+         AND o.status = 'awaiting_payment'
+         AND cs.expires_at < NOW() + INTERVAL '30 minutes'
+         AND cs.status NOT IN ('completed', 'expired', 'abandoned')`
+    );
+  } catch (e) { console.error('Session extend cron error:', e.message); }
+}, 30 * 60 * 1000);
+
 // Auto-escalate refunds every 15 minutes (runs script)
 setInterval(() => {
   execFile('node', ['scripts/auto_escalate_refunds.js'], (err, stdout) => {

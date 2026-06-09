@@ -106,7 +106,7 @@ const createOrResumeSession = async (req, res) => {
       `SELECT id, status, address_id, delivery_method,
               shipping_fee, coupon_code, coupon_discount,
               subtotal, total, payment_method, payment_status,
-              address_snapshot, expires_at
+              address_snapshot, expires_at, order_id
        FROM checkout_sessions
        WHERE user_id   = $1
          AND status    NOT IN ('completed', 'expired', 'abandoned')
