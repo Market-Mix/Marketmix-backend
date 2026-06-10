@@ -94,7 +94,7 @@ app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/seller/products', sellerProductsRoutes);
 app.use('/api/seller/orders', sellerOrdersRoutes);
 app.use('/api/seller/activity', sellerActivityRoutes);
-app.use('/api/seller/stores', storesRoloutes);   // ← BEFORE /api/seller
+app.use('/api/seller/stores', storesRoutes);  // ← BEFORE /api/seller
 app.use('/api/seller/shipping', vendorRoutes);
 app.use('/api/refunds', refundsRoutes);
 app.use('/api/refund-chat', refundChatRoutes);
