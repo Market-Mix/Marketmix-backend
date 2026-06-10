@@ -1,19 +1,42 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 
+function stableStringify(value) {
+  if (value === undefined || value === null) return 'null';
+  if (typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+}
+
 function normalizeCartItems(items) {
   const itemMap = new Map();
 
   for (const item of items) {
-    const { product_id } = item;
+    const product_id = item.product_id;
     const quantity = parseInt(item.quantity, 10);
-    itemMap.set(product_id, (itemMap.get(product_id) || 0) + quantity);
+    if (!product_id || !Number.isInteger(quantity) || quantity < 1) continue;
+
+    const color = item.color || null;
+    const size = item.size || null;
+    const selected_specifications = item.selected_specifications || item.specifications || null;
+    const specsKey = stableStringify(selected_specifications);
+    const key = `${product_id}|${color || ''}|${size || ''}|${specsKey}`;
+
+    const existing = itemMap.get(key);
+    if (existing) {
+      existing.quantity += quantity;
+    } else {
+      itemMap.set(key, {
+        product_id,
+        quantity,
+        color,
+        size,
+        selected_specifications
+      });
+    }
   }
 
-  return [...itemMap.entries()].map(([product_id, quantity]) => ({
-    product_id,
-    quantity
-  }));
+  return [...itemMap.values()];
 }
 
 /**
@@ -23,10 +46,11 @@ function normalizeCartItems(items) {
  */
 const addToCart = async (req, res) => {
   try {
-    const { product_id, quantity } = req.body;
+    const { product_id, quantity, color = null, size = null, selected_specifications = null } = req.body;
     const user_id = req.user.id;
+    const specs = selected_specifications || req.body.specifications || null;
 
-    console.log('🛒 Add to cart request:', { product_id, quantity, user_id });
+    console.log('🛒 Add to cart request:', { product_id, quantity, color, size, selected_specifications: specs, user_id });
 
     // Validate user_id
     if (!user_id) {
@@ -87,11 +111,15 @@ const addToCart = async (req, res) => {
       );
     }
 
-    // Check if item already exists in cart
+    // Check if item already exists in cart with the same spec combination
     const existingCartItem = await db.query(
-      `SELECT id, quantity FROM cart_items 
-       WHERE cart_id = $1 AND product_id = $2`,
-      [cartId, product_id]
+      `SELECT id, quantity, color, size, selected_specifications FROM cart_items 
+       WHERE cart_id = $1 AND product_id = $2
+         AND color IS NOT DISTINCT FROM $3
+         AND size IS NOT DISTINCT FROM $4
+         AND selected_specifications IS NOT DISTINCT FROM $5
+       LIMIT 1`,
+      [cartId, product_id, color, size, specs]
     );
 
     let cartItem;
@@ -114,7 +142,7 @@ const addToCart = async (req, res) => {
         `UPDATE cart_items 
          SET quantity = $1, updated_at = NOW() 
          WHERE id = $2 
-         RETURNING id, cart_id, product_id, quantity, updated_at`,
+         RETURNING id, cart_id, product_id, quantity, color, size, selected_specifications, updated_at`,
         [newQuantity, existingItem.id]
       );
 
@@ -122,14 +150,24 @@ const addToCart = async (req, res) => {
     } else {
       // Insert new cart item
       const insertResult = await db.query(
-        `INSERT INTO cart_items (cart_id, product_id, quantity, created_at, updated_at) 
-         VALUES ($1, $2, $3, NOW(), NOW()) 
-         RETURNING id, cart_id, product_id, quantity, created_at, updated_at`,
-        [cartId, product_id, quantity]
+        `INSERT INTO cart_items (cart_id, product_id, quantity, color, size, selected_specifications, created_at, updated_at) 
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) 
+         RETURNING id, cart_id, product_id, quantity, color, size, selected_specifications, created_at, updated_at`,
+        [cartId, product_id, quantity, color, size, specs]
       );
 
       cartItem = insertResult.rows[0];
     }
+
+    console.log('Cart item specs saved', {
+      cartItem: {
+        id: cartItem.id,
+        product_id: cartItem.product_id,
+        color: cartItem.color,
+        size: cartItem.size,
+        selected_specifications: cartItem.selected_specifications
+      }
+    });
 
     return sendSuccess(res, 201, 'Item added to cart successfully', {
       cartItem: {
@@ -187,7 +225,7 @@ const mergeCart = async (req, res) => {
 
     client = await db.pool.connect();
 
-    const normalizedItems = normalizeCartItems(items);
+const normalizedItems = normalizeCartItems(items);
     const mergedItems = [];
     const adjustments = [];
 
@@ -241,8 +279,11 @@ const mergeCart = async (req, res) => {
       const existingCartItem = await client.query(
         `SELECT id, quantity FROM cart_items
          WHERE cart_id = $1 AND product_id = $2
+           AND color IS NOT DISTINCT FROM $3
+           AND size IS NOT DISTINCT FROM $4
+           AND selected_specifications IS NOT DISTINCT FROM $5
          FOR UPDATE`,
-        [cartId, item.product_id]
+        [cartId, item.product_id, item.color, item.size, item.selected_specifications]
       );
 
       const existingQuantity = existingCartItem.rows.length
@@ -275,16 +316,16 @@ const mergeCart = async (req, res) => {
           `UPDATE cart_items
            SET quantity = $1, updated_at = NOW()
            WHERE id = $2
-           RETURNING id, cart_id, product_id, quantity, updated_at`,
+           RETURNING id, cart_id, product_id, quantity, color, size, selected_specifications, updated_at`,
           [adjustedQuantity, existingCartItem.rows[0].id]
         );
         cartItem = updateResult.rows[0];
       } else {
         const insertResult = await client.query(
-          `INSERT INTO cart_items (cart_id, product_id, quantity, created_at, updated_at)
-           VALUES ($1, $2, $3, NOW(), NOW())
-           RETURNING id, cart_id, product_id, quantity, created_at, updated_at`,
-          [cartId, item.product_id, adjustedQuantity]
+          `INSERT INTO cart_items (cart_id, product_id, quantity, color, size, selected_specifications, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+           RETURNING id, cart_id, product_id, quantity, color, size, selected_specifications, created_at, updated_at`,
+          [cartId, item.product_id, adjustedQuantity, item.color, item.size, item.selected_specifications]
         );
         cartItem = insertResult.rows[0];
       }
@@ -296,7 +337,10 @@ const mergeCart = async (req, res) => {
         productName: product.name,
         productImage: product.main_image_url,
         price: parseFloat(product.price),
-        totalPrice: parseFloat(product.price) * cartItem.quantity
+        totalPrice: parseFloat(product.price) * cartItem.quantity,
+        color: cartItem.color || null,
+        size: cartItem.size || null,
+        selected_specifications: cartItem.selected_specifications || null
       });
     }
 
@@ -355,6 +399,9 @@ const getCart = async (req, res) => {
         ci.id,
         ci.product_id,
         ci.quantity,
+        ci.color,
+        ci.size,
+        ci.selected_specifications,
         p.name,
         p.main_image_url,
         p.price,
@@ -375,8 +422,18 @@ const getCart = async (req, res) => {
       price: parseFloat(item.price),
       quantity: item.quantity,
       stockAvailable: item.stock_quantity,
-      totalPrice: parseFloat(item.total_price)
+      totalPrice: parseFloat(item.total_price),
+      color: item.color || null,
+      size: item.size || null,
+      selected_specifications: item.selected_specifications || {}
     }));
+
+    console.log('Cart item specs returned', cartItems.map(item => ({
+      id: item.id,
+      color: item.color,
+      size: item.size,
+      selected_specifications: item.selected_specifications
+    })));
 
     const totalCartPrice = cartItems.reduce((sum, item) => sum + item.totalPrice, 0);
 
