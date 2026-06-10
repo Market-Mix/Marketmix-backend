@@ -129,6 +129,17 @@ const addToCart = async (req, res) => {
       const existingItem = existingCartItem.rows[0];
       const newQuantity = existingItem.quantity + quantity;
 
+      console.log('Increasing quantity for existing variant', {
+        cartItemId: existingItem.id,
+        product_id,
+        color,
+        size,
+        selected_specifications: specs,
+        oldQuantity: existingItem.quantity,
+        addingQuantity: quantity,
+        newQuantity
+      });
+
       // Check stock again with new quantity
       if (product.stock_quantity < newQuantity) {
         return sendError(
@@ -149,6 +160,14 @@ const addToCart = async (req, res) => {
       cartItem = updateResult.rows[0];
     } else {
       // Insert new cart item
+      console.log('Creating new cart variant', {
+        product_id,
+        quantity,
+        color,
+        size,
+        selected_specifications: specs
+      });
+
       const insertResult = await db.query(
         `INSERT INTO cart_items (cart_id, product_id, quantity, color, size, selected_specifications, created_at, updated_at) 
          VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) 
@@ -277,7 +296,7 @@ const normalizedItems = normalizeCartItems(items);
       const stockQuantity = parseInt(product.stock_quantity || 0, 10);
 
       const existingCartItem = await client.query(
-        `SELECT id, quantity FROM cart_items
+        `SELECT id, quantity, color, size, selected_specifications FROM cart_items
          WHERE cart_id = $1 AND product_id = $2
            AND color IS NOT DISTINCT FROM $3
            AND size IS NOT DISTINCT FROM $4
@@ -312,6 +331,15 @@ const normalizedItems = normalizeCartItems(items);
 
       let cartItem;
       if (existingCartItem.rows.length) {
+        console.log('Increasing quantity for existing variant (merge)', {
+          cartItemId: existingCartItem.rows[0].id,
+          product_id: item.product_id,
+          color: item.color,
+          size: item.size,
+          selected_specifications: item.selected_specifications,
+          adjustedQuantity
+        });
+
         const updateResult = await client.query(
           `UPDATE cart_items
            SET quantity = $1, updated_at = NOW()
@@ -321,6 +349,14 @@ const normalizedItems = normalizeCartItems(items);
         );
         cartItem = updateResult.rows[0];
       } else {
+        console.log('Creating new cart variant (merge)', {
+          product_id: item.product_id,
+          quantity: adjustedQuantity,
+          color: item.color,
+          size: item.size,
+          selected_specifications: item.selected_specifications
+        });
+
         const insertResult = await client.query(
           `INSERT INTO cart_items (cart_id, product_id, quantity, color, size, selected_specifications, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
@@ -480,7 +516,7 @@ const updateCartItem = async (req, res) => {
 
     // Check if cart item exists and belongs to user's cart
     const cartItemResult = await db.query(
-      `SELECT ci.id, ci.product_id, p.stock_quantity, p.price, p.name, p.main_image_url
+      `SELECT ci.id, ci.product_id, ci.color, ci.size, ci.selected_specifications, p.stock_quantity, p.price, p.name, p.main_image_url
        FROM cart_items ci
        JOIN products p ON ci.product_id = p.id
        WHERE ci.id = $1 AND ci.cart_id = $2`,
@@ -507,7 +543,7 @@ const updateCartItem = async (req, res) => {
       `UPDATE cart_items 
        SET quantity = $1, updated_at = NOW() 
        WHERE id = $2 
-       RETURNING id, product_id, quantity, updated_at`,
+       RETURNING id, product_id, quantity, color, size, selected_specifications, updated_at`,
       [quantity, cartItemId]
     );
 
@@ -521,7 +557,10 @@ const updateCartItem = async (req, res) => {
         productName: cartItem.name,
         productImage: cartItem.main_image_url,
         price: parseFloat(cartItem.price),
-        totalPrice: parseFloat(cartItem.price) * updatedItem.quantity
+        totalPrice: parseFloat(cartItem.price) * updatedItem.quantity,
+        color: updatedItem.color || null,
+        size: updatedItem.size || null,
+        selected_specifications: updatedItem.selected_specifications || {}
       }
     });
   } catch (error) {
