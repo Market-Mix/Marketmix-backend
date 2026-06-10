@@ -6,6 +6,7 @@ const { isAdmin } = require('../middlewares/role.middleware');
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { processWithdrawal } = require('../services/payout.service');
+const { createDedupedNotification } = require('../controllers/notification.controller');
 
 // POST /api/admin/escrow/:escrowId/resolve
 // body: { action: 'release' | 'refund', notes: string }
@@ -137,6 +138,14 @@ router.post('/sellers/:sellerId/kyc/approve', protect, isAdmin, async (req, res)
       return sendError(res, 404, 'Seller profile not found');
     }
 
+    await createDedupedNotification({
+      userId: sellerId,
+      title: 'KYC Approved',
+      message: 'Your KYC has been approved. Your seller account is now fully verified.',
+      type: 'account',
+      link: '/sellers/sellers%20notification%20page.html'
+    });
+
     console.log({ is_verified: true, kyc_status: 'approved' });
     return sendSuccess(res, 200, 'Seller KYC approved successfully');
   } catch (err) {
@@ -161,6 +170,14 @@ router.post('/sellers/:sellerId/kyc/reject', protect, isAdmin, async (req, res) 
     if (!result.rows.length) {
       return sendError(res, 404, 'Seller profile not found');
     }
+
+    await createDedupedNotification({
+      userId: sellerId,
+      title: 'KYC Rejected',
+      message: 'Your KYC was rejected. Please resubmit your documents to continue onboarding.',
+      type: 'account',
+      link: '/sellers/kyc-verification.html'
+    });
 
     console.log({ is_verified: false, kyc_status: 'rejected' });
     return sendSuccess(res, 200, 'Seller KYC rejected successfully');
