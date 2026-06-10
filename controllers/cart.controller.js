@@ -49,8 +49,9 @@ const addToCart = async (req, res) => {
     const { product_id, quantity, color = null, size = null, selected_specifications = null } = req.body;
     const user_id = req.user.id;
     const specs = selected_specifications || req.body.specifications || null;
+    const specsText = specs ? JSON.stringify(specs) : null;
 
-    console.log('🛒 Add to cart request:', { product_id, quantity, color, size, selected_specifications: specs, user_id });
+    console.log('🛒 Add to cart request:', { product_id, quantity, color, size, selected_specifications: specs, specsText, user_id });
 
     // Validate user_id
     if (!user_id) {
@@ -117,9 +118,9 @@ const addToCart = async (req, res) => {
        WHERE cart_id = $1 AND product_id = $2
          AND COALESCE(color, '__null__') = COALESCE($3, '__null__')
          AND COALESCE(size, '__null__') = COALESCE($4, '__null__')
-         AND COALESCE(selected_specifications::text, '__null__') = COALESCE($5::text, '__null__')
+         AND COALESCE(selected_specifications::text, '__null__') = COALESCE($5, '__null__')
        LIMIT 1`,
-      [cartId, product_id, color, size, specs]
+      [cartId, product_id, color, size, specsText]
     );
 
     let cartItem;
@@ -135,6 +136,7 @@ const addToCart = async (req, res) => {
         color,
         size,
         selected_specifications: specs,
+        specsText,
         oldQuantity: existingItem.quantity,
         addingQuantity: quantity,
         newQuantity
@@ -165,7 +167,8 @@ const addToCart = async (req, res) => {
         quantity,
         color,
         size,
-        selected_specifications: specs
+        selected_specifications: specs,
+        specsText
       });
 
       const insertResult = await db.query(
@@ -295,14 +298,15 @@ const normalizedItems = normalizeCartItems(items);
       const product = productResult.rows[0];
       const stockQuantity = parseInt(product.stock_quantity || 0, 10);
 
+      const itemSpecsText = item.selected_specifications ? JSON.stringify(item.selected_specifications) : null;
       const existingCartItem = await client.query(
         `SELECT id, quantity, color, size, selected_specifications FROM cart_items
          WHERE cart_id = $1 AND product_id = $2
            AND COALESCE(color, '__null__') = COALESCE($3, '__null__')
            AND COALESCE(size, '__null__') = COALESCE($4, '__null__')
-           AND COALESCE(selected_specifications::text, '__null__') = COALESCE($5::text, '__null__')
+           AND COALESCE(selected_specifications::text, '__null__') = COALESCE($5, '__null__')
          FOR UPDATE`,
-        [cartId, item.product_id, item.color, item.size, item.selected_specifications]
+        [cartId, item.product_id, item.color, item.size, itemSpecsText]
       );
 
       const existingQuantity = existingCartItem.rows.length
