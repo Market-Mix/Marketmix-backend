@@ -184,33 +184,38 @@ const updateStore = async (req, res) => {
 
     if (!storeName) return sendError(res, 400, 'Store name is required');
 
-    const result = await db.query(
-      `UPDATE stores SET
-         business_name        = $1,
-         business_description = $2,
-         business_email       = $3,
-         business_phone       = $4,
-         business_address     = $5,
-         store_logo_url       = COALESCE($6, store_logo_url),
-         website              = $7,
-         facebook             = $8,
-         twitter              = $9,
-         instagram            = $10,
-         tiktok               = $11,
-         telegram             = $12,
-         category             = $13,
-         updated_at           = NOW()
-       WHERE id = $14
-       RETURNING id, store_number, business_name, store_logo_url, updated_at`,
-      [
-        storeName, storeDescription || null, businessEmail || null,
-        businessPhone || null, businessAddress || null,
-        storeLogoUrl || null, website || null,
-        facebook || null, twitter || null, instagram || null,
-        tiktok || null, telegram || null, category || null,
-        storeId
-      ]
-    );
+  // In updateStore(), replace the db.query UPDATE with:
+const result = await db.query(
+  `UPDATE stores SET
+     business_name        = $1,
+     business_description = $2,
+     business_email       = $3,
+     business_phone       = $4,
+     business_address     = $5,
+     store_logo_url       = COALESCE($6, store_logo_url),
+     website              = $7,
+     facebook             = $8,
+     twitter              = $9,
+     instagram            = $10,
+     tiktok               = $11,
+     telegram             = $12,
+     category             = $13,
+     store_banner_url     = COALESCE($14, store_banner_url),
+     store_theme          = COALESCE($15, store_theme),
+     updated_at           = NOW()
+   WHERE id = $16
+   RETURNING id, store_number, business_name, store_logo_url, store_banner_url, store_theme, updated_at`,
+  [
+    storeName, storeDescription || null, businessEmail || null,
+    businessPhone || null, businessAddress || null,
+    storeLogoUrl || null, website || null,
+    facebook || null, twitter || null, instagram || null,
+    tiktok || null, telegram || null, category || null,
+    req.body.storeBannerUrl || null,
+    req.body.storeTheme ? JSON.stringify(req.body.storeTheme) : null,
+    storeId
+  ]
+);
 
     console.log(`✅ Store ${storeId} updated by user ${userId}`);
     return sendSuccess(res, 200, 'Store updated successfully', { store: result.rows[0] });
@@ -303,7 +308,8 @@ const getPublicStore = async (req, res) => {
          s.id, s.user_id AS seller_id, s.store_number,
          s.business_name, s.business_description,
          s.business_address, s.business_email, s.business_phone,
-         s.store_logo_url, s.website, s.facebook, s.twitter,
+         s.store_logo_url, s.store_banner_url, s.store_theme,
+         s.website, s.facebook, s.twitter,
          s.instagram, s.tiktok, s.telegram, s.category,
          s.rating, s.total_reviews, s.total_sales, s.is_verified,
          s.created_at,
@@ -331,6 +337,8 @@ const getPublicStore = async (req, res) => {
         businessEmail:       s.business_email,
         businessPhone:       s.business_phone,
         storeLogo:           s.store_logo_url,
+        storeBannerUrl:      s.store_banner_url,
+        storeTheme:          s.store_theme,
         website:             s.website,
         socialLinks: {
           facebook:  s.facebook,

@@ -617,6 +617,18 @@ router.post('/logo/upload', protect, isSeller, upload.single('file'), async (req
   }
 });
 
+// ─── POST /api/seller/banner/upload ───────────────────────────────────────────
+// Similar to logo upload but for store banners.
+router.post('/banner/upload', protect, isSeller, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return sendError(res, 400, 'No file provided');
+    const fileUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype, 'store-banners');
+    return sendSuccess(res, 200, 'Banner uploaded', { url: fileUrl });
+  } catch (error) {
+    return sendError(res, 500, 'Error uploading banner', error);
+  }
+});
+
 
 // ─── POST /api/seller/kyc ─────────────────────────────────────────────────────
 // Saves KYC form data + Supabase Storage file URLs into
