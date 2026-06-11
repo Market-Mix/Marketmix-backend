@@ -17,6 +17,17 @@ app.use(helmet());
 // CORS configuration
 app.use(cors(corsOptions));
 
+// Cache public read-only routes at CDN/browser level
+app.use((req, res, next) => {
+  const publicRoutes = ['/api/products', '/api/categories', '/api/seller/public'];
+  const isPublicGet = req.method === 'GET' &&
+    publicRoutes.some(r => req.path.startsWith(r));
+  if (isPublicGet) {
+    res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=60');
+  }
+  next();
+});
+
 // Logging middleware
 app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'));
 
