@@ -136,7 +136,9 @@ const getUserOrders = async (req, res) => {
       o.total_amount,
       o.status,
       o.created_at,
-     o.delivery_confirmed_at,
+      o.delivery_confirmed_at,
+      o.payment_status,
+      o.payment_method,
       COALESCE((
         SELECT COALESCE(sp2.business_name, u2.first_name || ' ' || u2.last_name)
         FROM order_items oi2
@@ -734,18 +736,7 @@ const notify = (title, message) => {
   console.log(`📧 Notification: ${title} - ${message}`);
 };
 
-module.exports = {
-  createOrder,
-  getUserOrders,
-  getOrderById,
-  updateOrderStatus,
-  cancelOrder,
-  getPurchasedProducts,
-  confirmDelivery,
-  submitReport,
-  getBuyerReports
-  , retryOrderPayment
-};
+
 
 /**
  * @desc    Retry payment for an unpaid order
@@ -763,7 +754,7 @@ async function retryOrderPayment(req, res) {
        FROM orders o JOIN users u ON u.id = o.buyer_id
        WHERE o.id = $1 AND o.buyer_id = $2 
        AND o.payment_status = 'unpaid'
-       AND o.status = 'awaiting_payment'`,
+      AND o.status IN ('awaiting_payment', 'pending')`,
       [orderId, user_id]
     );
 
@@ -802,3 +793,17 @@ async function retryOrderPayment(req, res) {
     return sendError(res, 500, 'Error retrying payment', error.message);
   }
 }
+
+
+module.exports = {
+  createOrder,
+  getUserOrders,
+  getOrderById,
+  updateOrderStatus,
+  cancelOrder,
+  getPurchasedProducts,
+  confirmDelivery,
+  submitReport,
+  getBuyerReports,
+  retryOrderPayment
+};
