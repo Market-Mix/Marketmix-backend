@@ -143,12 +143,18 @@ const orderRes = await client.query(
       const voId = voRes.rows[0].id;
 
       for (const item of v.items) {
+        console.log('Saving order item specifications', {
+          orderId: order.id,
+          productId: item.product_id,
+          color: item.color || null,
+          size: item.size || null,
+        });
         await client.query(
           `INSERT INTO order_items
              (order_id, vendor_order_id, product_id, seller_id, store_id,
-              quantity, price_at_purchase, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
-          [order.id, voId, item.product_id, v.seller_id, v.store_id || null, item.quantity, item.price]
+              quantity, price_at_purchase, color, size, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
+          [order.id, voId, item.product_id, v.seller_id, v.store_id || null, item.quantity, item.price, item.color || null, item.size || null]
         );
 
         // Reserve stock

@@ -61,11 +61,17 @@ const createOrder = async (req, res) => {
       const sellerId = product.rows[0].seller_id;
       sellerIds.add(sellerId);
 
+      console.log('Saving order item specifications', {
+        orderId: order.id,
+        productId: item.product_id,
+        color: item.color || null,
+        size: item.size || null,
+      });
       await db.query(
         `INSERT INTO order_items (
-          order_id, product_id, seller_id, quantity, price_at_purchase
-        ) VALUES ($1, $2, $3, $4, $5)`,
-        [order.id, item.product_id, sellerId, item.quantity, product.rows[0].price]
+          order_id, product_id, seller_id, quantity, price_at_purchase, color, size
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [order.id, item.product_id, sellerId, item.quantity, product.rows[0].price, item.color || null, item.size || null]
       );
 
       // Update stock
@@ -162,7 +168,9 @@ const getUserOrders = async (req, res) => {
             'quantity', oi.quantity,
             'price', oi.price_at_purchase,
             'seller_id', oi.seller_id,
-            'seller_name', COALESCE(sp.business_name, su.first_name || ' ' || su.last_name)
+            'seller_name', COALESCE(sp.business_name, su.first_name || ' ' || su.last_name),
+            'color', oi.color,
+            'size', oi.size
           ) ORDER BY oi.created_at
         ) FILTER (WHERE oi.id IS NOT NULL), '[]'
       ) as items
@@ -257,7 +265,9 @@ const getOrderById = async (req, res) => {
               'quantity', oi.quantity,
               'price', oi.price_at_purchase,
               'seller_id', oi.seller_id,
-              'seller_name', COALESCE(sp.business_name, su.first_name || ' ' || su.last_name)
+              'seller_name', COALESCE(sp.business_name, su.first_name || ' ' || su.last_name),
+              'color', oi.color,
+              'size', oi.size
             )
           ) FILTER (WHERE oi.id IS NOT NULL), '[]'
         ) as items
@@ -275,8 +285,14 @@ const getOrderById = async (req, res) => {
       return sendError(res, 404, 'Order not found');
     }
 
+    const order = result.rows[0];
+    console.log('Loaded order item specifications', {
+      orderId,
+      items: order.items || []
+    });
+
     return sendSuccess(res, 200, 'Order fetched successfully', {
-      order: result.rows[0]
+      order
     });
 
   } catch (error) {

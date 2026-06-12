@@ -63,6 +63,8 @@ const getSellerOrders = async (req, res) => {
         oi.id              AS order_item_id,
         oi.quantity,
         oi.price_at_purchase,
+        oi.color,
+        oi.size,
         p.id               AS product_id,
         p.name             AS product_name,
         p.main_image_url   AS product_image,
@@ -118,6 +120,8 @@ const getSellerOrders = async (req, res) => {
         quantity: row.quantity,
         priceAtPurchase: parseFloat(row.price_at_purchase),
         lineTotal: parseFloat(row.line_total),
+        color: row.color,
+        size: row.size,
       });
       order.totalAmount += parseFloat(row.line_total);
     }
@@ -157,6 +161,8 @@ const getSellerOrderById = async (req, res) => {
         oi.id              AS order_item_id,
         oi.quantity,
         oi.price_at_purchase,
+        oi.color,
+        oi.size,
         p.id               AS product_id,
         p.name             AS product_name,
         p.main_image_url   AS product_image
@@ -193,10 +199,17 @@ const getSellerOrderById = async (req, res) => {
         quantity:    r.quantity,
         priceAtPurchase: parseFloat(r.price_at_purchase),
         lineTotal:   r.quantity * parseFloat(r.price_at_purchase),
+        color: r.color,
+        size: r.size,
       })),
       totalAmount: result.rows.reduce((sum, r) => sum + r.quantity * parseFloat(r.price_at_purchase), 0),
     };
 
+    console.log('Loaded order item specifications', {
+      orderId,
+      sellerId,
+      items: order.items,
+    });
     return sendSuccess(res, 200, 'Order detail fetched', { order });
   } catch (error) {
     console.error('getSellerOrderById error:', error);

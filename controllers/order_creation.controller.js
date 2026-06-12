@@ -300,6 +300,12 @@ const confirmCheckout = async (req, res) => {
         const itemShare = vendor.subtotal > 0 ? itemTotal / vendor.subtotal : 0;
         const itemShipping = money(vendor.shippingFee * itemShare);
 
+        console.log('Saving order item specifications', {
+          orderId: order.id,
+          productId: item.product_id,
+          color: item.color || null,
+          size: item.size || null,
+        });
         await client.query(
           `INSERT INTO order_items
              (order_id, vendor_order_id, product_id, seller_id, store_id,
