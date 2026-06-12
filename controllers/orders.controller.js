@@ -172,7 +172,8 @@ const getUserOrders = async (req, res) => {
             'seller_id', oi.seller_id,
             'seller_name', COALESCE(sp.business_name, su.first_name || ' ' || su.last_name),
             'color', oi.color,
-            'size', oi.size
+            'size', oi.size,
+            'product_snapshot', oi.product_snapshot
           ) ORDER BY oi.created_at
         ) FILTER (WHERE oi.id IS NOT NULL), '[]'
       ) as items
@@ -269,7 +270,8 @@ const getOrderById = async (req, res) => {
               'seller_id', oi.seller_id,
               'seller_name', COALESCE(sp.business_name, su.first_name || ' ' || su.last_name),
               'color', oi.color,
-              'size', oi.size
+              'size', oi.size,
+              'product_snapshot', oi.product_snapshot
             )
           ) FILTER (WHERE oi.id IS NOT NULL), '[]'
         ) as items

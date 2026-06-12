@@ -306,6 +306,7 @@ const confirmCheckout = async (req, res) => {
           color: item.color || null,
           size: item.size || null,
         });
+        console.log('ORDER ITEM SPECS', { color: item.color || null, size: item.size || null });
         await client.query(
           `INSERT INTO order_items
              (order_id, vendor_order_id, product_id, seller_id, store_id,
@@ -327,6 +328,8 @@ const confirmCheckout = async (req, res) => {
               price: item.price,
               seller_id: item.seller_id,
               store_id: item.store_id || null,
+              color: item.color || null,
+              size: item.size || null,
             }),
             itemTotal,
             itemShipping,

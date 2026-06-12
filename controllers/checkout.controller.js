@@ -18,6 +18,8 @@ async function fetchCartItems(userId) {
   const itemsRes = await db.query(
     `SELECT
        ci.id            AS cart_item_id,
+         ci.color,
+         ci.size,
        ci.product_id,
        ci.quantity,
        p.name,
@@ -98,8 +100,13 @@ const createOrResumeSession = async (req, res) => {
       name:         it.name,
       price:        parseFloat(it.price),
       quantity:     parseInt(it.quantity),
+      color:        it.color || null,
+      size:         it.size || null,
       image:        it.main_image_url || null,
     }));
+
+    // Temporary verification log
+    if (snapshot.length) console.log('CHECKOUT SNAPSHOT ITEM', snapshot[0]);
 
     // 3. Try to resume an existing valid session with the same cart
     const existingRes = await db.query(
