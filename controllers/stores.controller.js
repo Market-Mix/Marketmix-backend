@@ -35,7 +35,7 @@ const getMyStores = async (req, res) => {
       `SELECT
          id, store_number, business_name, business_description,
          business_address, business_phone, business_email,
-         store_logo_url, website, facebook, twitter, instagram,
+         store_logo_url, store_banner_url, store_theme, website, facebook, twitter, instagram,
          tiktok, telegram, category,
          is_verified, rating, total_reviews, total_sales,
          total_earnings, available_balance, is_active, created_at,
@@ -99,7 +99,7 @@ const createStore = async (req, res) => {
       `INSERT INTO stores (
          user_id, store_number, business_name, business_description,
          business_address, business_phone, business_email,
-         store_logo_url, website, facebook, twitter, instagram,
+         store_logo_url, store_banner_url, store_theme, website, facebook, twitter, instagram,
          tiktok, telegram, category, is_verified
        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        RETURNING id, store_number, business_name, store_logo_url, is_verified, created_at`,
