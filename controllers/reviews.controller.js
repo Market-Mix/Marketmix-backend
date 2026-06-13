@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
+const { notifySeller } = require('../utils/sellerEmailService');
 
 /**
  * @desc    Get all reviews for current user (buyer)
@@ -158,6 +159,15 @@ const createReview = async (req, res) => {
     });
 
     console.log(`✅ Review created by user ${userId} for product ${product_id}`);
+
+    const prod = await db.query('SELECT seller_id, name FROM products WHERE id=$1', [product_id]);
+    if (prod.rows.length) {
+      notifySeller(prod.rows[0].seller_id, 'newReview', {
+        productName: prod.rows[0].name,
+        rating, comment: body,
+        reviewerName: 'A buyer'
+      }).catch(() => {});
+    }
 
     return sendSuccess(res, 201, 'Review created successfully', {
       review: result

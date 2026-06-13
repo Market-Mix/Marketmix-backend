@@ -16,6 +16,7 @@
 const db         = require('../config/db');
 const marketpay  = require('../services/marketpay.service');
 const { sendSuccess, sendError } = require('../utils/response');
+const { notifySeller } = require('../utils/sellerEmailService');
 
 // ── GET /api/payments/methods ─────────────────────────────────────────────────
 const getPaymentMethods = (req, res) => {
@@ -494,6 +495,10 @@ async function _fulfillOrder(reference, payResult) {
         [tx.order_id, seller_id, buyer_id, total_amount,
          reference, tx.provider, autoReleaseAt]
       );
+
+      notifySeller(seller_id, 'paymentReceived', {
+        orderId: tx.order_id, amount: total_amount
+      }).catch(() => {});
     }
 
     // Update vendor orders

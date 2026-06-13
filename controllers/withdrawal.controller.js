@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const { sendSuccess, sendError } = require('../utils/response');
+ const { notifySeller } = require('../utils/sellerEmailService');
 
 const MIN_WITHDRAWAL = parseFloat(process.env.MIN_WITHDRAWAL || '1000');
 const WITHDRAWAL_DELAY_HOURS = parseInt(process.env.WITHDRAWAL_DELAY_HOURS || '24');
@@ -221,6 +222,7 @@ const handlePaystackWithdrawalWebhook = async (req, res) => {
 
   const withdrawal = wd.rows[0];
 
+
   if (event === 'transfer.success') {
     await db.query(
       `UPDATE withdrawals SET status='success', processed_at=NOW() WHERE id=$1`,
@@ -249,6 +251,19 @@ const handlePaystackWithdrawalWebhook = async (req, res) => {
        `Withdrawal of ₦${Number(withdrawal.amount).toFixed(2)} failed: ${data.reason || 'Bank declined'}.`]
     );
   }
+   
+// after transfer.success branch:
+  notifySeller(withdrawal.seller_id, 'withdrawalSuccess', {
+  amount: withdrawal.amount,
+  bankName: withdrawal.bank_name,
+  accountNumber: withdrawal.bank_account_number
+  }).catch(() => {});
+
+// after failed/reversed branch:
+ notifySeller(withdrawal.seller_id, 'withdrawalFailed', {
+  amount: withdrawal.amount, reason: data.reason
+ }).catch(() => {});
+
 };
 
 // const handleFlutterwaveTransferWebhook = async (req, res) => {

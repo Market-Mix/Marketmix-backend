@@ -9,6 +9,7 @@ const { sendSuccess, sendError } = require('../utils/response');
 const multer       = require('multer');
 const { logActivity } = require('./seller_activity.controller');
 const { uploadToCloudinary } = require('../utils/cloudinary');
+const { notifySeller } = require('../utils/sellerEmailService');
 
 // ─── Multer ──────────────────────────────────────────────────────────────────
 const upload = multer({
@@ -321,6 +322,12 @@ const updateSellerProduct = async (req, res) => {
     product.stockStatus =
       product.stock_quantity === 0  ? 'Out of Stock' :
       product.stock_quantity <= 10  ? 'Low Stock'    : 'In Stock';
+
+    if (parseInt(stock_quantity) === 0) {
+      notifySeller(sellerId, 'outOfStock', {
+        productName: existing.name, productId
+      }).catch(() => {});
+    }
 
     await logActivity({
       sellerId, storeId,

@@ -2,6 +2,7 @@ const bcrypt = require('bcrypt');
 const db = require('../config/db');
 const { generateToken } = require('../utils/jwt');
 const { sendSuccess, sendError } = require('../utils/response');
+const { notifySeller } = require('../utils/sellerEmailService');
 
 const createSellerWelcomeNotification = async (userId) => {
   try {
@@ -289,6 +290,14 @@ const googleLogin = async (req, res) => {
       email: user.email,
       role: user.role
     });
+
+    if (user.role === 'seller') {
+      notifySeller(user.id, 'newLogin', {
+        ip: req.ip,
+        device: req.headers['user-agent']?.substring(0, 80),
+        time: new Date().toLocaleString()
+      }).catch(() => {});
+    }
 
     return sendSuccess(res, 200, 'Login successful', {
       user: {

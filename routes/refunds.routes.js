@@ -4,6 +4,7 @@ const { sendSuccess, sendError } = require('../utils/response');
 const db = require('../config/db');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
+const { notifySeller } = require('../utils/sellerEmailService');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -213,6 +214,13 @@ router.post('/create', async (req, res) => {
     }
 
     console.log('✅ Refund case inserted successfully:', { id: refundCase.id, buyer_id: refundCase.buyer_id, order_id: refundCase.order_id });
+
+    if (resolvedSellerId) {
+      notifySeller(resolvedSellerId, 'refundRequest', {
+        orderId: order_id, buyerName: 'A buyer',
+        productName: product_name, reason: complaint_text
+      }).catch(() => {});
+    }
 
     const buyerNotification = {
       user_id: buyer_id,

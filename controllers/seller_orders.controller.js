@@ -9,6 +9,7 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { logActivity } = require('./seller_activity.controller');
+const { notifySeller } = require('../utils/sellerEmailService');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const ACTIVITY_TYPE_MAP = {
@@ -284,6 +285,25 @@ const updateSellerOrderStatus = async (req, res) => {
         'order'
       ]
     );
+
+    const orderSummaryResult = await db.query(
+      `SELECT
+         COALESCE(SUM(oi.quantity * oi.price_at_purchase), 0) AS total_amount,
+         COALESCE(json_agg(json_build_object('productName', p.name)) FILTER (WHERE p.id IS NOT NULL), '[]') AS items
+       FROM order_items oi
+       JOIN products p ON p.id = oi.product_id
+       WHERE oi.order_id = $1 AND oi.seller_id = $2`,
+      [orderId, sellerId]
+    );
+    const order = {
+      totalAmount: parseFloat(orderSummaryResult.rows[0].total_amount),
+      items: orderSummaryResult.rows[0].items,
+    };
+
+    notifySeller(sellerId, 'newOrder', {
+      orderId, buyerName: 'Buyer', amount: order.totalAmount,
+      items: order.items?.map(i => i.productName).join(', ') || '—'
+    }).catch(() => {});
 
     // ── Create buyer notification for tracking status update ──
     const statusMessages = {

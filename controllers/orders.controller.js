@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
+ const { notifySeller } = require('../utils/sellerEmailService');
 
 /**
  * @desc    Create a new order
@@ -448,6 +449,12 @@ const cancelOrder = async (req, res) => {
     console.error('❌ Cancel order error:', error);
     return sendError(res, 500, 'Error cancelling order', error);
   }
+
+ 
+// get sellerId from order items, then:
+notifySeller(sellerId, 'orderCancelled', {
+  orderId, buyerName: 'Buyer'
+}).catch(() => {});
 };
 
 /**
