@@ -19,6 +19,9 @@ async function getSellerEmail(sellerId) {
 }
 
 async function notifySeller(sellerId, type, data) {
+  console.log(`📬 notifySeller called: type=${type} sellerId=${sellerId}`);
+  // ... rest of function
+
   try {
     const seller = await getSellerEmail(sellerId);
     if (!seller) return;

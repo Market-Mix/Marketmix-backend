@@ -1,5 +1,5 @@
 const nodemailer = require('nodemailer');
-
+console.log('📧 sendEmail module loaded, SMTP_HOST:', process.env.SMTP_HOST ? 'SET' : 'MISSING');
 let transporter;
 
 async function getTransporter() {
