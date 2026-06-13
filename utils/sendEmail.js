@@ -18,6 +18,8 @@ async function getTransporter() {
       auth: { user: test.user, pass: test.pass }
     });
   }
+  await transporter.verify();
+  console.log('✅ SMTP transporter ready');
   return transporter;
 }
 
@@ -29,10 +31,10 @@ async function sendEmail({ to, subject, html }) {
     const info = await t.sendMail({ from: FROM, to, subject, html });
     if (!process.env.SMTP_HOST) console.log('Email preview:', nodemailer.getTestMessageUrl(info));
     return true;
-  } catch (err) {
-    console.error('sendEmail error:', err.message);
-    return false;
-  }
+} catch (err) {
+  console.error('sendEmail error:', err.message);
+  throw err; // ← let the caller see it
+}
 }
 
 module.exports = { sendEmail };

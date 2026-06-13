@@ -39,9 +39,9 @@ async function notifySeller(sellerId, type, data) {
     const p = payloads[type];
     if (!p) return;
     await sendEmail({ to: seller.email, ...p });
-  } catch (err) {
-    console.error(`sellerEmailService[${type}] error:`, err.message);
-  }
+ } catch (err) {
+  console.error(`sellerEmailService[${type}] error:`, err); // remove .message
+}
 }
 
 module.exports = { notifySeller };
