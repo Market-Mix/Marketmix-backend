@@ -1183,6 +1183,39 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
           }
         }
 
+        // Fetch color, size, and product_snapshot from order_items for seller refund cases
+        if (caseCopy.order_item_id) {
+          try {
+            const itemSpecRes = await db.query(
+              'SELECT color, size, product_snapshot FROM order_items WHERE id = $1 LIMIT 1',
+              [caseCopy.order_item_id]
+            );
+            if (itemSpecRes.rows.length > 0) {
+              const r = itemSpecRes.rows[0];
+              caseCopy.color = r.color ?? caseCopy.color ?? null;
+              caseCopy.size = r.size ?? caseCopy.size ?? null;
+              caseCopy.product_snapshot = r.product_snapshot ?? caseCopy.product_snapshot ?? null;
+            }
+          } catch (err) {
+            console.warn('⚠️ Could not resolve specifications for refund case', caseCopy.id, err.message);
+          }
+        } else if (caseCopy.order_id) {
+          try {
+            const itemSpecRes = await db.query(
+              'SELECT color, size, product_snapshot FROM order_items WHERE order_id = $1 LIMIT 1',
+              [caseCopy.order_id]
+            );
+            if (itemSpecRes.rows.length > 0) {
+              const r = itemSpecRes.rows[0];
+              caseCopy.color = r.color ?? caseCopy.color ?? null;
+              caseCopy.size = r.size ?? caseCopy.size ?? null;
+              caseCopy.product_snapshot = r.product_snapshot ?? caseCopy.product_snapshot ?? null;
+            }
+          } catch (err) {
+            console.warn('⚠️ Could not resolve specifications for refund case fallback', caseCopy.id, err.message);
+          }
+        }
+
         return caseCopy;
       } catch (err) {
         console.warn('⚠️ Failed to enrich refund case', c?.id, err?.message || err);
