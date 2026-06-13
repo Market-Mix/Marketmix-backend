@@ -21,7 +21,7 @@ async function getTransporter() {
   return transporter;
 }
 
-const FROM = process.env.EMAIL_FROM || 'MarketMix <noreply@marketmix.com>';
+const FROM = process.env.FROM_EMAIL || process.env.EMAIL_FROM || 'MarketMix <noreply@marketmix.com>';
 
 async function sendEmail({ to, subject, html }) {
   try {
