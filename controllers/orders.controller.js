@@ -91,7 +91,7 @@ const createOrder = async (req, res) => {
       ? `${buyerResult.rows[0].first_name || ''} ${buyerResult.rows[0].last_name || ''}`.trim()
       : 'a buyer';
 
-    for (const sellerId of sellerIds) {
+   for (const sellerId of sellerIds) {
       await db.query(
         `INSERT INTO notifications
            (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
@@ -104,6 +104,10 @@ const createOrder = async (req, res) => {
           JSON.stringify({ orderId: order.id, link: '/sellers/sellers order.html' })
         ]
       );
+
+      notifySeller(sellerId, 'newOrder', {
+        orderId: order.id, buyerName, amount: total_amount,
+      }).catch(() => {});
     }
 
     console.log(`✅ Order created: ID ${order.id} by user ${user_id}`);
@@ -123,6 +127,7 @@ const createOrder = async (req, res) => {
   }
 };
 
+ 
 /**
  * @desc    Get user's orders
  * @route   GET /api/orders
@@ -443,19 +448,22 @@ const cancelOrder = async (req, res) => {
 
     console.log(`✅ Order ${orderId} cancelled by user ${user_id}`);
 
+    const sellerRows = await db.query(
+  `SELECT DISTINCT seller_id FROM order_items WHERE order_id = $1`, [orderId]
+);
+for (const row of sellerRows.rows) {
+  notifySeller(row.seller_id, 'orderCancelled', { orderId, buyerName: 'Buyer' }).catch(() => {});
+}
+
     return sendSuccess(res, 200, 'Order cancelled successfully');
 
   } catch (error) {
     console.error('❌ Cancel order error:', error);
     return sendError(res, 500, 'Error cancelling order', error);
   }
-
- 
-// get sellerId from order items, then:
-notifySeller(sellerId, 'orderCancelled', {
-  orderId, buyerName: 'Buyer'
-}).catch(() => {});
 };
+ 
+
 
 /**
  * @desc    Get all purchased products for review (delivered orders only)
@@ -539,9 +547,9 @@ const confirmDelivery = async (req, res) => {
     );
 
     // Credit seller balance
-    if (escrowUpdate.rows.length) {
+   if (escrowUpdate.rows.length) {
       const { seller_id, amount } = escrowUpdate.rows[0];
-      const COMMISSION = 0.05; // 5% platform fee
+      const COMMISSION = 0.05;
       const netAmount = parseFloat(amount) * (1 - COMMISSION);
 
       await db.query(
@@ -553,7 +561,6 @@ const confirmDelivery = async (req, res) => {
         [netAmount, seller_id]
       );
 
-      // Notify seller
       await db.query(
         `INSERT INTO notifications
            (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
@@ -565,6 +572,10 @@ const confirmDelivery = async (req, res) => {
          `₦${netAmount.toFixed(2)} has been released to your account for order #${orderId.toString().slice(0,8).toUpperCase()}.`,
          orderId, netAmount]
       );
+
+      notifySeller(seller_id, 'paymentReceived', {
+        orderId, amount: netAmount
+      }).catch(() => {});
     }
 
     console.log(`✅ Delivery confirmed for order ${orderId} by user ${user_id}`);

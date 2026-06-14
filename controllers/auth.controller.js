@@ -373,6 +373,14 @@ const login = async (req, res) => {
       role: user.role
     });
 
+     if (user.role === 'seller') {
+     notifySeller(user.id, 'newLogin', {
+      ip: req.ip,
+     device: req.headers['user-agent']?.substring(0, 80),
+       time: new Date().toLocaleString()
+      }).catch(() => {});
+}
+
     return sendSuccess(res, 200, 'Login successful', {
       user: {
         id: user.id,
