@@ -1,4 +1,4 @@
-const { sendEmail } = require('./sendEmail');
+const sendEmail = require('./sendEmail');
 const templates = require('./emailTemplates');
 const db = require('../config/db');
 
