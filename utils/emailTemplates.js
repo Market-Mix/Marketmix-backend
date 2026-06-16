@@ -99,3 +99,56 @@ module.exports = {
     <p>Please respond within 2 days to avoid automatic escalation.</p>
     ${btn(`${BASE}/sellers/sellers returns.html`, 'View Refund')}`),
 };
+
+// Add these to the existing module.exports object:
+
+orderConfirmed: ({ buyerName, orderId, items, total, estimatedDelivery }) => wrap(`
+  <h2>Order Confirmed! 🎉</h2>
+  <p>Hi ${buyerName}, your order has been confirmed.</p>
+  <table style="width:100%;border-collapse:collapse;margin:15px 0">
+    <tr><td style="padding:8px;border:1px solid #e2e8f0"><strong>Order ID</strong></td><td style="padding:8px;border:1px solid #e2e8f0">#${String(orderId).slice(0,8).toUpperCase()}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e2e8f0"><strong>Items</strong></td><td style="padding:8px;border:1px solid #e2e8f0">${items}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e2e8f0"><strong>Total</strong></td><td style="padding:8px;border:1px solid #e2e8f0">₦${Number(total).toLocaleString()}</td></tr>
+    ${estimatedDelivery ? `<tr><td style="padding:8px;border:1px solid #e2e8f0"><strong>Est. Delivery</strong></td><td style="padding:8px;border:1px solid #e2e8f0">${estimatedDelivery}</td></tr>` : ''}
+  </table>
+  ${btn(`${BASE}/buyers/buyers%20order%20&%20tracking.html`, 'Track Order')}`),
+
+orderProcessing: ({ buyerName, orderId }) => wrap(`
+  <h2>Order Being Prepared 📦</h2>
+  <p>Hi ${buyerName}, the seller is preparing your order <strong>#${String(orderId).slice(0,8).toUpperCase()}</strong>.</p>
+  ${btn(`${BASE}/buyers/buyers%20order%20&%20tracking.html`, 'Track Order')}`),
+
+orderShipped: ({ buyerName, orderId, trackingId, courierName, trackingLink, estimatedDelivery }) => wrap(`
+  <h2>Your Order is On the Way! 🚚</h2>
+  <p>Hi ${buyerName}, your order <strong>#${String(orderId).slice(0,8).toUpperCase()}</strong> has been shipped.</p>
+  <table style="width:100%;border-collapse:collapse;margin:15px 0">
+    <tr><td style="padding:8px;border:1px solid #e2e8f0"><strong>Courier</strong></td><td style="padding:8px;border:1px solid #e2e8f0">${courierName || 'N/A'}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e2e8f0"><strong>Tracking ID</strong></td><td style="padding:8px;border:1px solid #e2e8f0">${trackingId || 'N/A'}</td></tr>
+    ${estimatedDelivery ? `<tr><td style="padding:8px;border:1px solid #e2e8f0"><strong>Est. Delivery</strong></td><td style="padding:8px;border:1px solid #e2e8f0">${estimatedDelivery}</td></tr>` : ''}
+  </table>
+  ${trackingLink ? btn(trackingLink, 'Track Shipment') : ''}
+  ${btn(`${BASE}/buyers/buyers%20order%20&%20tracking.html`, 'View Order')}`),
+
+orderDelivered: ({ buyerName, orderId }) => wrap(`
+  <h2>Order Delivered! ✅</h2>
+  <p>Hi ${buyerName}, your order <strong>#${String(orderId).slice(0,8).toUpperCase()}</strong> has been delivered.</p>
+  <p>If you have any issues, you have <strong>24 hours</strong> to open a dispute.</p>
+  ${btn(`${BASE}/buyers/buyers%20order%20&%20tracking.html`, 'View Order')}`),
+
+paymentFailed: ({ buyerName, orderId, amount }) => wrap(`
+  <h2>Payment Failed ❌</h2>
+  <p>Hi ${buyerName}, your payment of <strong>₦${Number(amount).toLocaleString()}</strong> for order <strong>#${String(orderId).slice(0,8).toUpperCase()}</strong> failed.</p>
+  <p>Please retry your payment to complete the order.</p>
+  ${btn(`${BASE}/buyers/buyers%20order%20&%20tracking.html`, 'Retry Payment')}`),
+
+disputeOpened: ({ buyerName, orderId, caseId }) => wrap(`
+  <h2>Dispute Received 🔍</h2>
+  <p>Hi ${buyerName}, we've received your dispute for order <strong>#${String(orderId).slice(0,8).toUpperCase()}</strong>.</p>
+  <p><strong>Case ID:</strong> ${caseId}</p>
+  <h3>Next Steps:</h3>
+  <ol>
+    <li>The seller has been notified and has <strong>2 days</strong> to respond.</li>
+    <li>You can chat with the seller in the dispute portal.</li>
+    <li>If unresolved, MarketMix will step in after 48 hours.</li>
+  </ol>
+  ${btn(`${BASE}/buyers/buyers%20return%20report.html?case=${caseId}`, 'View Dispute')}`)

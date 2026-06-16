@@ -5,6 +5,7 @@ const db = require('../config/db');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 const { notifySeller } = require('../utils/sellerEmailService');
+const { notifyBuyer } = require('../utils/sellerEmailService');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -246,6 +247,11 @@ router.post('/create', async (req, res) => {
     } else {
       console.log('✅ Buyer notification created successfully');
     }
+
+    notifyBuyer(buyer_id, 'disputeOpened', {
+     orderId: order_id,
+     caseId: refundCase.id
+    }).catch(() => {});
 
     if (seller_id) {
       const sellerNotification = {

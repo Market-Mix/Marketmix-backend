@@ -1,6 +1,6 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
-const { notifySeller } = require('../utils/sellerEmailService');
+const { notifySeller, notifyBuyer } = require('../utils/sellerEmailService');
 
 function parseJson(value, fallback) {
   if (!value) return fallback;
@@ -154,6 +154,13 @@ const confirmCheckout = async (req, res) => {
     if (session.order_id) {
       const existingOrder = await fetchOrderSummary(client, session.order_id, userId);
       await client.query('COMMIT');
+      notifyBuyer(userId, 'orderConfirmed', {
+  orderId: order.id,
+  items: items.map(i => i.name).join(', '),
+  total: totalAmount,
+  estimatedDelivery: session.estimated_delivery || null
+}).catch(() => {});
+
       return sendSuccess(res, 200, 'Checkout already confirmed', {
         order: existingOrder,
         idempotent: true,

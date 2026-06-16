@@ -60,4 +60,37 @@ console.log('sendEmail result:', result); // ADD THIS
 }
 }
 
-module.exports = { notifySeller };
+// Add after the existing notifySeller function:
+
+async function getBuyerEmail(buyerId) {
+  const r = await db.query(
+    `SELECT email, first_name, last_name FROM users WHERE id = $1`, [buyerId]
+  );
+  if (!r.rows.length) return null;
+  const row = r.rows[0];
+  return { email: row.email, name: `${row.first_name} ${row.last_name}`.trim() };
+}
+
+async function notifyBuyer(buyerId, type, data) {
+  try {
+    const buyer = await getBuyerEmail(buyerId);
+    if (!buyer) return;
+
+    const payloads = {
+      orderConfirmed:  { subject: '🎉 Order Confirmed', html: templates.orderConfirmed({ buyerName: buyer.name, ...data }) },
+      orderProcessing: { subject: '📦 Order Being Prepared', html: templates.orderProcessing({ buyerName: buyer.name, ...data }) },
+      orderShipped:    { subject: '🚚 Your Order Has Shipped', html: templates.orderShipped({ buyerName: buyer.name, ...data }) },
+      orderDelivered:  { subject: '✅ Order Delivered', html: templates.orderDelivered({ buyerName: buyer.name, ...data }) },
+      paymentFailed:   { subject: '❌ Payment Failed', html: templates.paymentFailed({ buyerName: buyer.name, ...data }) },
+      disputeOpened:   { subject: '🔍 Dispute Received', html: templates.disputeOpened({ buyerName: buyer.name, ...data }) },
+    };
+
+    const p = payloads[type];
+    if (!p) return;
+    await sendEmail({ to: buyer.email, ...p });
+  } catch (err) {
+    console.error(`buyerEmailService[${type}] error:`, err);
+  }
+}
+
+module.exports = { notifySeller, notifyBuyer };

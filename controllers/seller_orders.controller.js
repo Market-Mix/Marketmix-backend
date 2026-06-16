@@ -9,7 +9,7 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { logActivity } = require('./seller_activity.controller');
-const { notifySeller } = require('../utils/sellerEmailService');
+const { notifySeller, notifyBuyer } = require('../utils/sellerEmailService');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const ACTIVITY_TYPE_MAP = {
@@ -286,6 +286,8 @@ const updateSellerOrderStatus = async (req, res) => {
       ]
     );
 
+    
+
     const orderSummaryResult = await db.query(
       `SELECT
          COALESCE(SUM(oi.quantity * oi.price_at_purchase), 0) AS total_amount,
@@ -300,6 +302,7 @@ const updateSellerOrderStatus = async (req, res) => {
       items: orderSummaryResult.rows[0].items,
     };
 
+    
     // ── Create buyer notification for tracking status update ──
     const statusMessages = {
       confirmed:  `Your order #${shortId} has been confirmed! Seller is preparing it for shipment.`,
@@ -333,6 +336,26 @@ const updateSellerOrderStatus = async (req, res) => {
           '/buyers/buyers%20order%20&%20tracking.html'
         ]
       );
+
+      const buyerRow = await db.query(`SELECT buyer_id FROM orders WHERE id = $1`, [orderId]);
+const buyerId = buyerRow.rows[0]?.buyer_id;
+
+if (buyerId) {
+  if (newStatusLower === 'processing') {
+    notifyBuyer(buyerId, 'orderProcessing', { orderId }).catch(() => {});
+  }
+  if (newStatusLower === 'shipped') {
+    // Fetch shipping info if stored (add tracking fields to your orders table or pass via req.body)
+    const { trackingId, courierName, trackingLink, estimatedDelivery } = req.body;
+    notifyBuyer(buyerId, 'orderShipped', {
+      orderId, trackingId, courierName, trackingLink, estimatedDelivery
+    }).catch(() => {});
+  }
+  if (newStatusLower === 'delivered') {
+    notifyBuyer(buyerId, 'orderDelivered', { orderId }).catch(() => {});
+  }
+}
+
       console.log(`✅ Buyer notification created for order #${shortId}`);
     } catch (notifErr) {
       console.error(`⚠️ Failed to create buyer notification:`, notifErr.message);

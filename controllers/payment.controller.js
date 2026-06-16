@@ -16,7 +16,7 @@
 const db         = require('../config/db');
 const marketpay  = require('../services/marketpay.service');
 const { sendSuccess, sendError } = require('../utils/response');
-const { notifySeller } = require('../utils/sellerEmailService');
+const { notifySeller, notifyBuyer } = require('../utils/sellerEmailService');
 
 // ── GET /api/payments/methods ─────────────────────────────────────────────────
 const getPaymentMethods = (req, res) => {
@@ -535,6 +535,19 @@ async function _markPaymentFailed(reference, provider) {
       `SELECT order_id FROM payment_transactions WHERE provider_reference = $1 LIMIT 1`,
       [reference]
     );
+    
+    if (txRes.rows.length) {
+  const orderId = txRes.rows[0].order_id;
+  const orderRow = await db.query(
+    `SELECT buyer_id, total_amount FROM orders WHERE id = $1`, [orderId]
+  );
+  if (orderRow.rows.length) {
+    notifyBuyer(orderRow.rows[0].buyer_id, 'paymentFailed', {
+      orderId,
+      amount: orderRow.rows[0].total_amount
+    }).catch(() => {});
+  }
+}
     if (txRes.rows.length) {
       await db.query(
         `UPDATE orders SET payment_status = 'failed', status = 'payment_failed', updated_at = NOW()
