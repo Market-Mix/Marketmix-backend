@@ -300,11 +300,6 @@ const updateSellerOrderStatus = async (req, res) => {
       items: orderSummaryResult.rows[0].items,
     };
 
-    notifySeller(sellerId, 'newOrder', {
-      orderId, buyerName: 'Buyer', amount: order.totalAmount,
-      items: order.items?.map(i => i.productName).join(', ') || '—'
-    }).catch(() => {});
-
     // ── Create buyer notification for tracking status update ──
     const statusMessages = {
       confirmed:  `Your order #${shortId} has been confirmed! Seller is preparing it for shipment.`,

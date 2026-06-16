@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
+const { notifySeller } = require('../utils/sellerEmailService');
 
 function parseJson(value, fallback) {
   if (!value) return fallback;
@@ -374,6 +375,13 @@ const confirmCheckout = async (req, res) => {
           }),
         ]
       );
+    // controllers/order_creation.controller.js — inside confirmCheckout, after the notifications INSERT in the vendor loop:
+      notifySeller(vendor.sellerId, 'newOrder', {
+     orderId: order.id,
+     buyerName,
+     amount: vendor.subtotal,
+      items: vendor.items.map(i => i.name).join(', ')
+    }).catch(err => console.error('EMAIL FAIL:', err));
     }
 
     await client.query(

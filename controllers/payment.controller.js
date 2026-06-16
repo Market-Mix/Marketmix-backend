@@ -496,6 +496,13 @@ async function _fulfillOrder(reference, payResult) {
          reference, tx.provider, autoReleaseAt]
       );
 
+       notifySeller(vendor.sellerId, 'newOrder', {
+     orderId: order.id,
+     buyerName,
+     amount: vendor.subtotal,
+      items: vendor.items.map(i => i.name).join(', ')
+    }).catch(err => console.error('EMAIL FAIL:', err));
+
       notifySeller(seller_id, 'paymentReceived', {
         orderId: tx.order_id, amount: total_amount
       }).catch(() => {});

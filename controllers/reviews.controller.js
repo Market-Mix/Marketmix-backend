@@ -166,7 +166,7 @@ const createReview = async (req, res) => {
         productName: prod.rows[0].name,
         rating, comment: body,
         reviewerName: 'A buyer'
-      }).catch(() => {});
+      }).catch(err => console.error('EMAIL FAIL:', err));
     }
 
     return sendSuccess(res, 201, 'Review created successfully', {
