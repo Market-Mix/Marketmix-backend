@@ -151,6 +151,7 @@ const getUserOrders = async (req, res) => {
       o.delivery_confirmed_at,
       o.payment_status,
       o.payment_method,
+      o.tracking_id, o.courier_name, o.tracking_link,
       COALESCE((
         SELECT COALESCE(sp2.business_name, u2.first_name || ' ' || u2.last_name)
         FROM order_items oi2
@@ -250,7 +251,10 @@ const getOrderById = async (req, res) => {
     const result = await db.query(
       `SELECT 
         o.id, o.total_amount, o.status, o.shipping_address, 
-        o.payment_method, o.notes, o.created_at, o.updated_at,
+        o.payment_method,
+        o.tracking_id, o.courier_name, o.tracking_link,
+        o.notes, o.created_at, o.updated_at,
+
         COALESCE((
           SELECT COALESCE(sp2.business_name, u2.first_name || ' ' || u2.last_name)
           FROM order_items oi2

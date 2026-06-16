@@ -263,10 +263,18 @@ const updateSellerOrderStatus = async (req, res) => {
       return sendSuccess(res, 200, `Order is already "${status}"`, { order: { id: existingRow.id, status: currentStatus, updated_at: new Date() } });
     }
 
-    const result = await db.query(
-      `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING id, status, updated_at, buyer_id`,
-      [status.toLowerCase(), orderId]
-    );
+    // After validation, replace the UPDATE query:
+const result = await db.query(
+  `UPDATE orders SET status = $1, updated_at = NOW(),
+    tracking_id = COALESCE($3, tracking_id),
+    courier_name = COALESCE($4, courier_name),
+    tracking_link = COALESCE($5, tracking_link)
+   WHERE id = $2 RETURNING id, status, updated_at, buyer_id, tracking_id, courier_name, tracking_link`,
+  [status.toLowerCase(), orderId,
+   req.body.trackingId || null,
+   req.body.courierName || null,
+   req.body.trackingLink || null]
+);
 
     const shortId   = String(orderId).substring(0, 8);
     const actType   = ACTIVITY_TYPE_MAP[status.toLowerCase()] || 'order_updated';
@@ -338,7 +346,12 @@ const updateSellerOrderStatus = async (req, res) => {
       );
 
       const buyerRow = await db.query(`SELECT buyer_id FROM orders WHERE id = $1`, [orderId]);
-const buyerId = buyerRow.rows[0]?.buyer_id;
+const resolvedBuyerId = buyerRow.rows[0]?.buyer_id;
+if (resolvedBuyerId) {
+  if (newStatusLower === 'processing') notifyBuyer(resolvedBuyerId, 'orderProcessing', { orderId }).catch(() => {});
+  if (newStatusLower === 'shipped') notifyBuyer(resolvedBuyerId, 'orderShipped', { orderId, ...req.body }).catch(() => {});
+  if (newStatusLower === 'delivered') notifyBuyer(resolvedBuyerId, 'orderDelivered', { orderId }).catch(() => {});
+}
 
 if (buyerId) {
   if (newStatusLower === 'processing') {
