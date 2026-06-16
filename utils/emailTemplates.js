@@ -98,8 +98,9 @@ module.exports = {
     <p><strong>Reason:</strong> ${reason}</p>
     <p>Please respond within 2 days to avoid automatic escalation.</p>
     ${btn(`${BASE}/sellers/sellers returns.html`, 'View Refund')}`),
-};
 
+
+    
 // Add these to the existing module.exports object:
 
 orderConfirmed: ({ buyerName, orderId, items, total, estimatedDelivery }) => wrap(`
@@ -152,3 +153,5 @@ disputeOpened: ({ buyerName, orderId, caseId }) => wrap(`
     <li>If unresolved, MarketMix will step in after 48 hours.</li>
   </ol>
   ${btn(`${BASE}/buyers/buyers%20return%20report.html?case=${caseId}`, 'View Dispute')}`)
+  
+};
