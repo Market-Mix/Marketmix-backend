@@ -1,7 +1,11 @@
 // utils/sendEmail.js
+
+console.log('sendEmail.js version: HTTPS-direct-v2');
 const https = require('https');
 
 async function sendEmail({ to, subject, html }) {
+  console.log('sendEmail called →', to, subject);
+
   const body = JSON.stringify({
     sender: { email: process.env.FROM_EMAIL, name: process.env.EMAIL_FROM_NAME },
     to: [{ email: to }],
@@ -23,11 +27,21 @@ async function sendEmail({ to, subject, html }) {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
-        if (res.statusCode >= 400) reject(new Error(`Brevo error: ${data}`));
-        else resolve(JSON.parse(data));
+        console.log('Brevo response status:', res.statusCode, 'body:', data);
+        if (res.statusCode >= 400) return reject(new Error(`Brevo error: ${data}`));
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          reject(new Error(`Brevo parse error: ${data}`));
+        }
       });
     });
-    req.on('error', reject);
+
+    req.on('error', (e) => {
+      console.error('sendEmail req error:', e.message);
+      reject(e);
+    });
+
     req.write(body);
     req.end();
   });

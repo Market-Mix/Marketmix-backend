@@ -378,7 +378,7 @@ const login = async (req, res) => {
       ip: req.ip,
      device: req.headers['user-agent']?.substring(0, 80),
        time: new Date().toLocaleString()
-      }).catch(() => {});
+      }).catch(err => console.error('EMAIL FAIL:', err));
 }
 
     return sendSuccess(res, 200, 'Login successful', {
