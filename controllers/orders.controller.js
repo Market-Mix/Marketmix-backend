@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
  const { notifySeller } = require('../utils/sellerEmailService');
+ const { notifyBuyer } = require('../utils/sellerEmailService');
 
 /**
  * @desc    Create a new order
@@ -385,6 +386,17 @@ const updateOrderStatus = async (req, res) => {
           '/buyers/buyers%20order%20&%20tracking.html'
         ]
       );
+    
+
+     // inside updateOrderStatus, after the buyer notification INSERT succeeds
+        if (status === 'processing') notifyBuyer(buyerId, 'orderProcessing', { orderId }).catch(() => {});
+        if (status === 'shipped')    notifyBuyer(buyerId, 'orderShipped', {
+        orderId,
+        trackingId: req.body.trackingId,
+        courierName: req.body.courierName,
+         trackingLink: req.body.trackingLink
+          }).catch(() => {});
+           if (status === 'delivered')  notifyBuyer(buyerId, 'orderDelivered', { orderId }).catch(() => {});
       console.log(`✅ Buyer notification created for order #${shortId} status: ${status}`);
     } catch (notifErr) {
       console.error(`⚠️ Failed to create buyer notification for order #${shortId}:`, notifErr.message);

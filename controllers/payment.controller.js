@@ -499,6 +499,13 @@ if (orderData.rows.length) {
      reference, tx.provider, autoReleaseAt]
   );
 
+
+notifyBuyer(buyer_id, 'orderConfirmed', {
+  orderId: tx.order_id,
+  items: 'your items',
+  total: total_amount
+}).catch(() => {});
+
   notifySeller(seller_id, 'newOrder', {
     orderId: tx.order_id,
     buyerName,
@@ -535,7 +542,7 @@ async function _markPaymentFailed(reference, provider) {
       `SELECT order_id FROM payment_transactions WHERE provider_reference = $1 LIMIT 1`,
       [reference]
     );
-    
+
     if (txRes.rows.length) {
   const orderId = txRes.rows[0].order_id;
   const orderRow = await db.query(
