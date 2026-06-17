@@ -380,10 +380,6 @@ const updateOrderStatus = async (req, res) => {
      VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, NOW(), NOW())`,
     [buyerId, buyerTitle, buyerMessage, 'order', '/buyers/buyers%20order%20&%20tracking.html']
   );
-  console.log(`✅ Buyer notification created for order #${shortId} status: ${status}`);
-} catch (notifErr) {
-  console.error(`⚠️ Failed to create buyer notification for order #${shortId}:`, notifErr.message);
-}
 
 if (status === 'processing') notifyBuyer(buyerId, 'orderProcessing', { orderId }).catch(e => console.error('EMAIL FAIL:', e));
 if (status === 'shipped')    notifyBuyer(buyerId, 'orderShipped', {
@@ -400,15 +396,22 @@ if (status === 'delivered')  notifyBuyer(buyerId, 'orderDelivered', { orderId })
       // Don't fail the entire request if notification fails - just log it
     }
 
-    console.log(`✅ Order ${orderId} status updated to ${status}`);
+   console.log(`✅ Order ${orderId} status updated to ${status}`);
 
-    return sendSuccess(res, 200, 'Order status updated successfully', {
-      order: {
-        id: order.id,
-        status: order.status,
-        updated_at: order.updated_at
-      }
-    });
+return sendSuccess(res, 200, 'Order status updated successfully', {
+  order: {
+    id: order.id,
+    status: order.status,
+    updated_at: order.updated_at
+  }
+});
+
+} catch (error) {
+  console.error('❌ Update order status error:', error);
+  return sendError(res, 500, 'Error updating order status', error);
+}
+};
+
 /**
  * @desc    Cancel order
  * @route   PUT /api/orders/:orderId/cancel
