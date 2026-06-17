@@ -27,6 +27,7 @@ async function fetchCartItems(userId) {
        p.stock_quantity,
        p.main_image_url,
        p.seller_id,
+       p.weight_kg
        p.store_id
      FROM cart_items ci
      JOIN products p ON p.id = ci.product_id
@@ -102,6 +103,7 @@ const createOrResumeSession = async (req, res) => {
       quantity:     parseInt(it.quantity),
       color:        it.color || null,
       size:         it.size || null,
+      weight_kg:    parseFloat(it.weight_kg) || 0.5,
       image:        it.main_image_url || null,
     }));
 

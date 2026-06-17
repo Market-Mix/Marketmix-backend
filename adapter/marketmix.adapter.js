@@ -31,7 +31,6 @@
 // Wrap in try-catch so a broken provider never crashes the whole system.
 
 const PROVIDERS = {
-  shipbubble: tryLoad('./providers/shipbubble'),
   kwik:       tryLoad('./providers/kwik'),
   sendbox:    tryLoad('./providers/sendbox'),
   gig:        tryLoad('./providers/gig'),
@@ -62,7 +61,7 @@ async function getQuotes(sessionId, items, address) {
   const results = await Promise.allSettled(
     activeProviders.map(([name, mod]) =>
       mod.getQuotes(sessionId, items, address).then(quotes =>
-        quotes.map(q => ({ ...q, provider: 'marketmix', providerId: name }))
+        quotes.map(q => ({ ...q, provider: 'marketmix', providerId: q.providerId || name }))
       )
     )
   );

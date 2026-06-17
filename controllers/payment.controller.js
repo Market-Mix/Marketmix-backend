@@ -498,7 +498,13 @@ if (orderData.rows.length) {
     [tx.order_id, seller_id, buyer_id, total_amount,
      reference, tx.provider, autoReleaseAt]
   );
-
+  
+const dm = await db.query(`SELECT delivery_method FROM orders WHERE id=$1`, [tx.order_id]);
+if (dm.rows[0]?.delivery_method === 'marketmix') {
+  require('../services/sendboxFulfillment.service')
+    .bookSendboxShipmentsForOrder(tx.order_id)
+    .catch(e => console.error('Sendbox booking error:', e.message));
+}
 
 notifyBuyer(buyer_id, 'orderConfirmed', {
   orderId: tx.order_id,
