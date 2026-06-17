@@ -72,6 +72,7 @@ async function getBuyerEmail(buyerId) {
 }
 
 async function notifyBuyer(buyerId, type, data) {
+   console.log(`📬 notifyBuyer called: type=${type} buyerId=${buyerId}`);
   try {
     const buyer = await getBuyerEmail(buyerId);
     if (!buyer) return;
@@ -86,8 +87,11 @@ async function notifyBuyer(buyerId, type, data) {
     };
 
     const p = payloads[type];
-    if (!p) return;
-    await sendEmail({ to: buyer.email, ...p });
+   if (!p) { console.warn('notifyBuyer: no template for type', type); return; }
+
+    console.log('notifyBuyer sending to:', buyer.email, 'subject:', p.subject);
+    const result = await sendEmail({ to: buyer.email, ...p });
+      console.log('notifyBuyer sendEmail result:', result);
   } catch (err) {
     console.error(`buyerEmailService[${type}] error:`, err);
   }
