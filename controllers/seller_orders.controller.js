@@ -345,29 +345,20 @@ const result = await db.query(
         ]
       );
 
-      const buyerRow = await db.query(`SELECT buyer_id FROM orders WHERE id = $1`, [orderId]);
-const resolvedBuyerId = buyerRow.rows[0]?.buyer_id;
-if (resolvedBuyerId) {
-  if (newStatusLower === 'processing') notifyBuyer(resolvedBuyerId, 'orderProcessing', { orderId }).catch(() => {});
-  if (newStatusLower === 'shipped') notifyBuyer(resolvedBuyerId, 'orderShipped', { orderId, ...req.body }).catch(() => {});
-  if (newStatusLower === 'delivered') notifyBuyer(resolvedBuyerId, 'orderDelivered', { orderId }).catch(() => {});
-}
-
-if (buyerId) {
-  if (newStatusLower === 'processing') {
-    notifyBuyer(buyerId, 'orderProcessing', { orderId }).catch(() => {});
-  }
-  if (newStatusLower === 'shipped') {
-    // Fetch shipping info if stored (add tracking fields to your orders table or pass via req.body)
-    const { trackingId, courierName, trackingLink, estimatedDelivery } = req.body;
-    notifyBuyer(buyerId, 'orderShipped', {
-      orderId, trackingId, courierName, trackingLink, estimatedDelivery
-    }).catch(() => {});
-  }
-  if (newStatusLower === 'delivered') {
-    notifyBuyer(buyerId, 'orderDelivered', { orderId }).catch(() => {});
-  }
-}
+    if (buyerId) {
+        if (newStatusLower === 'processing') {
+          notifyBuyer(buyerId, 'orderProcessing', { orderId }).catch(() => {});
+        }
+        if (newStatusLower === 'shipped') {
+          const { trackingId, courierName, trackingLink, estimatedDelivery } = req.body;
+          notifyBuyer(buyerId, 'orderShipped', {
+            orderId, trackingId, courierName, trackingLink, estimatedDelivery
+          }).catch(() => {});
+        }
+        if (newStatusLower === 'delivered') {
+          notifyBuyer(buyerId, 'orderDelivered', { orderId }).catch(() => {});
+        }
+      }
 
       console.log(`✅ Buyer notification created for order #${shortId}`);
     } catch (notifErr) {
