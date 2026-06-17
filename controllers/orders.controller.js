@@ -392,6 +392,7 @@ if (status === 'shipped')    notifyBuyer(buyerId, 'orderShipped', {
   courierName: req.body.courierName,
   trackingLink: req.body.trackingLink
 }).catch(e => console.error('EMAIL FAIL:', e));
+
 if (status === 'delivered')  notifyBuyer(buyerId, 'orderDelivered', { orderId }).catch(e => console.error('EMAIL FAIL:', e));
           console.log(`✅ Buyer notification created for order #${shortId} status: ${status}`);
     } catch (notifErr) {
@@ -408,13 +409,6 @@ if (status === 'delivered')  notifyBuyer(buyerId, 'orderDelivered', { orderId })
         updated_at: order.updated_at
       }
     });
-
-  } catch (error) {
-    console.error('❌ Update order status error:', error);
-    return sendError(res, 500, 'Error updating order status', error);
-  }
-};
-
 /**
  * @desc    Cancel order
  * @route   PUT /api/orders/:orderId/cancel
