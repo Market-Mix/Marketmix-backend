@@ -359,22 +359,18 @@ const confirmCheckout = async (req, res) => {
 
       const title = 'New Order Received';
       const message = `You have a new order from ${buyerName} for ${vendor.items.length} item${vendor.items.length === 1 ? '' : 's'}.`;
-      await client.query(
-        `INSERT INTO notifications
-           (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5, FALSE, FALSE, NOW(), NOW())`,
-        [
-          vendor.sellerId,
-          title,
-          message,
-          'order',
-          JSON.stringify({
-            orderId: order.id,
-            vendorOrderId: vendorOrder.id,
-            link: '/sellers/sellers order.html'
-          }),
-        ]
-      );
+     await client.query(
+  `INSERT INTO notifications
+     (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
+   VALUES ($1,$2,$3,$4,$5, FALSE, FALSE, NOW(), NOW())`,
+  [
+    vendor.sellerId,
+    title,
+    message,
+    'order',
+    '/sellers/sellers%20order.html',
+  ]
+);
     // controllers/order_creation.controller.js — inside confirmCheckout, after the notifications INSERT in the vendor loop:
       notifySeller(vendor.sellerId, 'newOrder', {
      orderId: order.id,

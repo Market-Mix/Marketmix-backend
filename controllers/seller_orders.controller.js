@@ -332,39 +332,26 @@ const result = await db.query(
     const buyerTitle = statusBuyerTitle[newStatusLower] || `Order Update: ${label}`;
 
     try {
-      await db.query(
-        `INSERT INTO notifications 
-           (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5), FALSE, FALSE, NOW(), NOW())`,
-        [
-          buyerId,
-          buyerTitle,
-          buyerMessage,
-          'order',
-          '/buyers/buyers%20order%20&%20tracking.html'
-        ]
-      );
+  await db.query(
+    `INSERT INTO notifications (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, NOW(), NOW())`,
+    [buyerId, 
+      buyerTitle, 
+      buyerMessage, 'order', '/buyers/buyers%20order%20&%20tracking.html']
+  );
+} catch (notifErr) {
+  console.error(`⚠️ Failed to create buyer notification:`, notifErr.message);
+}
 
-    if (buyerId) {
-        if (newStatusLower === 'processing') {
-          notifyBuyer(buyerId, 'orderProcessing', { orderId }).catch(() => {});
-        }
-        if (newStatusLower === 'shipped') {
-          const { trackingId, courierName, trackingLink, estimatedDelivery } = req.body;
-          notifyBuyer(buyerId, 'orderShipped', {
-            orderId, trackingId, courierName, trackingLink, estimatedDelivery
-          }).catch(() => {});
-        }
-        if (newStatusLower === 'delivered') {
-          notifyBuyer(buyerId, 'orderDelivered', { orderId }).catch(() => {});
-        }
-      }
-
-      console.log(`✅ Buyer notification created for order #${shortId}`);
-    } catch (notifErr) {
-      console.error(`⚠️ Failed to create buyer notification:`, notifErr.message);
-      // Don't fail the entire request if notification fails - just log it
-    }
+// Run independently — a notifications-table failure must never block these
+if (buyerId) {
+  if (newStatusLower === 'processing') notifyBuyer(buyerId, 'orderProcessing', { orderId }).catch(e => console.error('EMAIL FAIL:', e));
+  if (newStatusLower === 'shipped') {
+    const { trackingId, courierName, trackingLink, estimatedDelivery } = req.body;
+    notifyBuyer(buyerId, 'orderShipped', { orderId, trackingId, courierName, trackingLink, estimatedDelivery }).catch(e => console.error('EMAIL FAIL:', e));
+  }
+  if (newStatusLower === 'delivered') notifyBuyer(buyerId, 'orderDelivered', { orderId }).catch(e => console.error('EMAIL FAIL:', e));
+}
 
     // ── Activity log ──
     await logActivity({

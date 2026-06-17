@@ -374,30 +374,26 @@ const updateOrderStatus = async (req, res) => {
     const buyerTitle = statusBuyerTitle[status] || `Order Update: ${label}`;
 
     try {
-      await db.query(
-        `INSERT INTO notifications 
-           (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5), FALSE, FALSE, NOW(), NOW())`,
-        [
-          buyerId,
-          buyerTitle,
-          buyerMessage,
-          'order',
-          '/buyers/buyers%20order%20&%20tracking.html'
-        ]
-      );
-    
+  await db.query(
+    `INSERT INTO notifications 
+       (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, NOW(), NOW())`,
+    [buyerId, buyerTitle, buyerMessage, 'order', '/buyers/buyers%20order%20&%20tracking.html']
+  );
+  console.log(`✅ Buyer notification created for order #${shortId} status: ${status}`);
+} catch (notifErr) {
+  console.error(`⚠️ Failed to create buyer notification for order #${shortId}:`, notifErr.message);
+}
 
-     // inside updateOrderStatus, after the buyer notification INSERT succeeds
-        if (status === 'processing') notifyBuyer(buyerId, 'orderProcessing', { orderId }).catch(() => {});
-        if (status === 'shipped')    notifyBuyer(buyerId, 'orderShipped', {
-        orderId,
-        trackingId: req.body.trackingId,
-        courierName: req.body.courierName,
-         trackingLink: req.body.trackingLink
-          }).catch(() => {});
-           if (status === 'delivered')  notifyBuyer(buyerId, 'orderDelivered', { orderId }).catch(() => {});
-      console.log(`✅ Buyer notification created for order #${shortId} status: ${status}`);
+if (status === 'processing') notifyBuyer(buyerId, 'orderProcessing', { orderId }).catch(e => console.error('EMAIL FAIL:', e));
+if (status === 'shipped')    notifyBuyer(buyerId, 'orderShipped', {
+  orderId,
+  trackingId: req.body.trackingId,
+  courierName: req.body.courierName,
+  trackingLink: req.body.trackingLink
+}).catch(e => console.error('EMAIL FAIL:', e));
+if (status === 'delivered')  notifyBuyer(buyerId, 'orderDelivered', { orderId }).catch(e => console.error('EMAIL FAIL:', e));
+          console.log(`✅ Buyer notification created for order #${shortId} status: ${status}`);
     } catch (notifErr) {
       console.error(`⚠️ Failed to create buyer notification for order #${shortId}:`, notifErr.message);
       // Don't fail the entire request if notification fails - just log it
@@ -551,6 +547,10 @@ const confirmDelivery = async (req, res) => {
       [orderId]
     );
 
+       notifyBuyer(user_id, 'orderDelivered', { 
+      orderId 
+     }).catch(e => console.error('EMAIL FAIL:', e));
+    
     // Release escrow when buyer confirms delivery
     const escrowUpdate = await db.query(
       `UPDATE escrow_transactions
@@ -577,22 +577,26 @@ const confirmDelivery = async (req, res) => {
         [netAmount, seller_id]
       );
 
-      await db.query(
-        `INSERT INTO notifications
-           (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
-         VALUES ($1,'Funds Released',
-           $2,'payment',
-           jsonb_build_object('orderId',$3,'amount',$4,'link','/sellers/sellers earning.html'),
-           FALSE,FALSE,NOW(),NOW())`,
-        [seller_id,
-         `₦${netAmount.toFixed(2)} has been released to your account for order #${orderId.toString().slice(0,8).toUpperCase()}.`,
-         orderId, netAmount]
-      );
+      try {
+  await db.query(
+    `INSERT INTO notifications
+       (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
+     VALUES ($1,'Funds Released',$2,'payment',$3,FALSE,FALSE,NOW(),NOW())`,
+    [
+      seller_id,
+      `₦${netAmount.toFixed(2)} has been released to your account for order #${orderId.toString().slice(0,8).toUpperCase()}.`,
+      '/sellers/sellers%20earning.html'
+    ]
+  );
+} catch (e) {
+  console.error('Notification insert failed:', e.message);
+}
 
       notifySeller(seller_id, 'paymentReceived', {
         orderId, amount: netAmount
       }).catch(() => {});
     }
+  
 
     console.log(`✅ Delivery confirmed for order ${orderId} by user ${user_id}`);
 
