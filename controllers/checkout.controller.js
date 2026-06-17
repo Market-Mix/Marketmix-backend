@@ -27,7 +27,7 @@ async function fetchCartItems(userId) {
        p.stock_quantity,
        p.main_image_url,
        p.seller_id,
-       p.weight_kg
+       p.weight_kg,
        p.store_id
      FROM cart_items ci
      JOIN products p ON p.id = ci.product_id
