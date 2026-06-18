@@ -53,6 +53,12 @@ async function getQuotes(sessionId, items, address, sellerId) {
     const origin = await getSellerOrigin(sellerId);  // ← only one const origin
     if (!origin) return [];
 // adapter/shipbubble.adapter.js — inside getQuotes(), replace the two validateAddress calls
+
+// adapter/shipbubble.adapter.js — inside getQuotes(), before the Promise.all
+console.log('[shipbubble] sender address raw:', origin.address);
+console.log('[shipbubble] sender address sanitized:', sanitizeAddress(origin.address));
+console.log('[shipbubble] receiver address:', sanitizeAddress(`${address.address_line1 || ''}, ${address.city || ''}, ${address.state || ''}`));
+
 const [senderCode, receiverCode] = await Promise.all([
   validateAddress({
     name:    sanitizeName(origin.name),
