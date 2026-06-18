@@ -493,12 +493,21 @@ router.post('/escalate', async (req, res) => {
 });
 
 // ─── GET /api/refunds/buyer/:buyerId — Fetch buyer refund cases ─────────────
-router.get('/buyer/:buyerId', async (req, res) => {
+router.get('/buyer/:buyerId', protect, async (req, res) => {
   try {
     const { buyerId } = req.params;
+    const currentUserId = String(req.user?.id || '');
+
     console.log('➡️ /api/refunds/buyer/:buyerId hit for buyerId:', buyerId);
+    console.log('Current buyer:', currentUserId);
+
     if (!buyerId) {
       return res.status(400).json({ success: false, message: 'Missing buyerId parameter' });
+    }
+
+    if (currentUserId !== String(buyerId)) {
+      console.warn(`⚠️ Unauthorized refund fetch attempt: current user ${currentUserId} requested buyerId ${buyerId}`);
+      return res.status(403).json({ success: false, message: 'Forbidden: buyer may only access their own refund cases' });
     }
 
     if (!ensureSupabaseConfigured(res)) return;
@@ -518,6 +527,8 @@ router.get('/buyer/:buyerId', async (req, res) => {
     }
 
     const refundCases = await response.json();
+    console.log('Refund cases loaded:', refundCases);
+    console.log('Refund owners:', refundCases.map(r => r.buyer_id));
     console.log('✅ Refund cases fetched successfully:', refundCases.length);
     return res.status(200).json({ success: true, refundCases });
   } catch (error) {
