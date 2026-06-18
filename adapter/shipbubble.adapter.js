@@ -49,13 +49,10 @@ async function getQuotes(sessionId, items, address, sellerId) {
   try {
     const sellerItems = items.filter(i => i.seller_id === sellerId);
     if (!sellerItems.length) return [];
-    const origin = await getSellerOrigin(sellerId);
-    // adapter/shipbubble.adapter.js — replace the guard
-const origin = await getSellerOrigin(sellerId);
-if (!origin) return [];  // no seller record at all — bail
-// don't bail on missing address, sanitizeAddress handles it
-
-    // adapter/shipbubble.adapter.js — inside getQuotes(), replace the two validateAddress calls
+    
+    const origin = await getSellerOrigin(sellerId);  // ← only one const origin
+    if (!origin) return [];
+// adapter/shipbubble.adapter.js — inside getQuotes(), replace the two validateAddress calls
 const [senderCode, receiverCode] = await Promise.all([
   validateAddress({
     name:    sanitizeName(origin.name),
