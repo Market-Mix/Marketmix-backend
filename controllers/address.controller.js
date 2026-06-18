@@ -251,17 +251,23 @@ const setSessionAddress = async (req, res) => {
       delivery_instructions: addr.delivery_instructions,
     };
 
-    await db.query(
-      `UPDATE checkout_sessions
-       SET address_id       = $1,
-           address_snapshot = $2,
-           status           = CASE WHEN status = 'pending'
-                               THEN 'address_set'
-                               ELSE status END,
-           updated_at       = NOW()
-       WHERE id = $3`,
-      [addressId, JSON.stringify(addressSnapshot), sessionId]
-    );
+   // controllers/address.controller.js — setSessionAddress
+const updateResult = await db.query(
+  `UPDATE checkout_sessions
+   SET address_id       = $1,
+       address_snapshot = $2,
+       status           = CASE WHEN status = 'pending'
+                           THEN 'address_set'
+                           ELSE status END,
+       updated_at       = NOW()
+   WHERE id = $3
+   RETURNING id, address_id`,   // ← add RETURNING
+  [addressId, JSON.stringify(addressSnapshot), sessionId]
+);
+
+if (!updateResult.rows.length) {
+  return sendError(res, 500, 'Failed to attach address to session');
+}
 
     return sendSuccess(res, 200, 'Address set on session', {
       addressId,
