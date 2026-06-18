@@ -2,6 +2,20 @@ const db = require('../config/db');
 const BASE = 'https://api.shipbubble.com/v1';
 const KEY = process.env.SHIPBUBBLE_API_KEY;
 
+
+// adapter/shipbubble.adapter.js — replace getSellerOrigin usage in getQuotes()
+// Add these two sanitizer helpers at the top of the file:
+
+function sanitizeName(name = '') {
+  return name.replace(/[^a-zA-Z\s]/g, '').replace(/\s+/g, ' ').trim() || 'Seller Name';
+}
+
+function sanitizeAddress(address = '') {
+  // Shipbubble needs at least a street + city — pad if too short
+  const cleaned = address.trim();
+  return cleaned.length >= 10 ? cleaned : `${cleaned}, Lagos, Nigeria`.trim();
+}
+
 function headers() {
   if (!KEY) throw new Error('SHIPBUBBLE_API_KEY not configured');
   return { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' };
@@ -36,12 +50,26 @@ async function getQuotes(sessionId, items, address, sellerId) {
     const sellerItems = items.filter(i => i.seller_id === sellerId);
     if (!sellerItems.length) return [];
     const origin = await getSellerOrigin(sellerId);
-    if (!origin?.address) return [];
+    // adapter/shipbubble.adapter.js — replace the guard
+const origin = await getSellerOrigin(sellerId);
+if (!origin) return [];  // no seller record at all — bail
+// don't bail on missing address, sanitizeAddress handles it
 
-    const [senderCode, receiverCode] = await Promise.all([
-      validateAddress({ name: origin.name, phone: origin.phone, email: origin.email, address: origin.address }),
-      validateAddress({ name: address.full_name, phone: address.phone, email: address.email || 'buyer@marketmix.com', address: `${address.address_line1}, ${address.city}, ${address.state}` })
-    ]);
+    // adapter/shipbubble.adapter.js — inside getQuotes(), replace the two validateAddress calls
+const [senderCode, receiverCode] = await Promise.all([
+  validateAddress({
+    name:    sanitizeName(origin.name),
+    phone:   origin.phone || '08000000000',
+    email:   origin.email || 'seller@marketmix.com',
+    address: sanitizeAddress(origin.address)
+  }),
+  validateAddress({
+    name:    sanitizeName(address.full_name || 'Buyer'),
+    phone:   address.phone || '08000000000',
+    email:   address.email || 'buyer@marketmix.com',
+    address: sanitizeAddress(`${address.address_line1 || ''}, ${address.city || ''}, ${address.state || ''}`)
+  })
+]);
 
     const payload = {
       sender_address_code: senderCode,
