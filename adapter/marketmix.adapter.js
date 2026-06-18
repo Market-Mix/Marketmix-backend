@@ -85,7 +85,7 @@ async function getQuotes(sessionId, items, address) {
 async function bookShipment(providerId, shipmentData) {
   const provider = PROVIDERS[providerId];
 
-  if (!provider || process.env.LOGISTICS_MOCK === 'true') {
+  if (!provider || process.env.LOGISTICS_MOCK === 'false') {
     return mockBookShipment(providerId, shipmentData);
   }
 

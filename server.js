@@ -93,6 +93,7 @@ app.use('/api/products', productsRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/checkout', checkoutRoutes);
+app.use('/api/webhooks/shipbubble', require('./routes/shipbubble_webhook.routes'));
 app.use('/api/webhooks/sendbox', require('./routes/sendbox_webhook.routes'));
 app.use('/api/checkout', deliveryRoutes);
 app.use('/api/payments', paymentRoutes);

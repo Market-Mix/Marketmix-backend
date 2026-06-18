@@ -499,12 +499,14 @@ if (orderData.rows.length) {
      reference, tx.provider, autoReleaseAt]
   );
   
+// replace the sendbox block in _fulfillOrder:
 const dm = await db.query(`SELECT delivery_method FROM orders WHERE id=$1`, [tx.order_id]);
-if (dm.rows[0]?.delivery_method === 'marketmix') {
-  require('../services/sendboxFulfillment.service')
-    .bookSendboxShipmentsForOrder(tx.order_id)
-    .catch(e => console.error('Sendbox booking error:', e.message));
+if (dm.rows[0]?.delivery_method === 'shipbubble') {
+  require('../services/shipbubbleFulfillment.service')
+    .bookShipbubbleShipmentsForOrder(tx.order_id)
+    .catch(e => console.error('Shipbubble booking error:', e.message));
 }
+
 
 notifyBuyer(buyer_id, 'orderConfirmed', {
   orderId: tx.order_id,

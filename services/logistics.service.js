@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const sellerAdapter = require('../adapter/seller.adapter');
 const marketmixAdapter = require('../adapter/marketmix.adapter');
+const shipbubbleAdapter = require('../adapter/shipbubble.adapter');
 
 async function getDeliveryOptions(sessionId, items, address) {
   const quotes = [];
@@ -12,6 +13,11 @@ async function getDeliveryOptions(sessionId, items, address) {
       if (q) quotes.push(q);
     } catch (e) { console.warn('[logistics] seller quote:', e.message); }
   }
+
+  try {
+  const sbQuotes = await shipbubbleAdapter.getQuotes(sessionId, items, address, sellerId);
+  quotes.push(...sbQuotes);
+} catch (e) { console.warn('[logistics] shipbubble quote:', e.message); }
 
   try {
     const mmQuotes = await marketmixAdapter.getQuotes(sessionId, items, address);
