@@ -55,6 +55,15 @@ async function getQuote(sessionId, items, address, sellerId) {
       quoteReference:    `SELLER-${sellerId}-${Date.now()}`,
       rawSettings:       s,
     };
+
+    // Quick debug — add this temporarily in seller.adapter.js getQuote()
+console.log('[seller.adapter] settings for', sellerId, ':', {
+  base_fee: s.base_fee,
+  free_above: s.free_above,
+  subtotal,
+  isFreeShipping
+});
+
   } catch (err) {
     console.error('[seller.adapter] getQuote error:', err.message);
     return null;

@@ -14,13 +14,17 @@ async function getDeliveryOptions(sessionId, items, address) {
     } catch (e) { console.warn('[logistics] seller quote:', e.message); }
   }
 
-  for (const sellerId of sellerIds) {
-    try {
-      const sbQuotes = await shipbubbleAdapter.getQuotes(sessionId, items, address, sellerId);
-      quotes.push(...sbQuotes);
-    } catch (e) { console.warn('[logistics] shipbubble quote:', e.message); }
+ // services/logistics.service.js — replace the shipbubble loop
+for (const sellerId of sellerIds) {
+  try {
+    const sbQuotes = await shipbubbleAdapter.getQuotes(sessionId, items, address, sellerId);
+    console.log(`[logistics] shipbubble quotes for seller ${sellerId}:`, sbQuotes?.length, sbQuotes);
+    if (sbQuotes?.length) quotes.push(...sbQuotes);
+  } catch (e) {
+    console.error('[logistics] shipbubble error for seller', sellerId, ':', e.message);
   }
-  
+}
+
   try {
     const mmQuotes = await marketmixAdapter.getQuotes(sessionId, items, address);
     if (Array.isArray(mmQuotes)) quotes.push(...mmQuotes);
