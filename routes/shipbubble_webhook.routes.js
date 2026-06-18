@@ -1,8 +1,13 @@
+// routes/shipbubble_webhook.routes.js
+const express = require('express');
+const router = express.Router();
 const crypto = require('crypto');
+const db = require('../config/db');
+const { notifyBuyer } = require('../utils/sellerEmailService');
 
 router.post('/', express.json(), async (req, res) => {
   const signature = req.headers['x-ship-signature'];
-  const key = process.env.SHIPBUBBLE_API_KEY; // use test/live key as signing secret
+  const key = process.env.SHIPBUBBLE_API_KEY;
   if (signature && key) {
     const expected = crypto.createHmac('sha512', key).update(JSON.stringify(req.body)).digest('hex');
     if (signature !== expected) {
@@ -10,7 +15,7 @@ router.post('/', express.json(), async (req, res) => {
     }
   }
 
-  res.status(200).json({ received: true }); // ack within 15s
+  res.status(200).json({ received: true });
 
   try {
     const { order_id, status, courier } = req.body;
@@ -35,3 +40,5 @@ router.post('/', express.json(), async (req, res) => {
     }
   } catch (e) { console.error('Shipbubble webhook error:', e.message); }
 });
+
+module.exports = router;
