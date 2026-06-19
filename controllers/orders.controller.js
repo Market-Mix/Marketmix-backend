@@ -152,6 +152,7 @@ const getUserOrders = async (req, res) => {
       o.delivery_confirmed_at,
       o.payment_status,
       o.payment_method,
+      o.delivery_method,
       o.tracking_id, o.courier_name, o.tracking_link,
       COALESCE((
         SELECT COALESCE(sp2.business_name, u2.first_name || ' ' || u2.last_name)
