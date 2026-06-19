@@ -11,9 +11,13 @@ function sanitizeName(name = '') {
 }
 
 function sanitizeAddress(address = '') {
-  // Shipbubble needs at least a street + city — pad if too short
-  const cleaned = address.trim();
-  return cleaned.length >= 10 ? cleaned : `${cleaned}, Lagos, Nigeria`.trim();
+  let cleaned = address
+    .replace(/(\d+)\.\s*/g, '$1 ')      // "19." → "19 "
+    .replace(/[^\w\s,.-]/g, '')
+    .trim();
+  if (!cleaned) return cleaned;
+  if (!/nigeria/i.test(cleaned)) cleaned += ', Nigeria';
+  return cleaned;
 }
 
 function headers() {
