@@ -738,6 +738,34 @@ const updateAddress = async (req, res) => {
     const user = result.rows[0];
     console.log(`✅ Address updated for user: ${user.email}`);
 
+    // controllers/auth.controller.js — inside updateAddress, after the existing users UPDATE succeeds
+const user = result.rows[0];
+
+// Also sync into addresses table so it shows up in checkout
+if (user.address_line1) {
+  const existingAddr = await db.query(
+    `SELECT id FROM addresses WHERE user_id = $1 AND is_deleted = false ORDER BY is_default DESC, created_at ASC LIMIT 1`,
+    [req.user.id]
+  );
+
+  if (existingAddr.rows.length) {
+    await db.query(
+      `UPDATE addresses SET
+         full_name = COALESCE(full_name, $1),
+         address_line1 = $2, city = $3, state = $4,
+         postal_code = $5, country = $6, updated_at = NOW()
+       WHERE id = $7`,
+      [`${user.first_name || ''} ${user.last_name || ''}`.trim(), user.address_line1, user.city, user.state, user.postal_code, user.country, existingAddr.rows[0].id]
+    );
+  } else {
+    await db.query(
+      `INSERT INTO addresses (user_id, full_name, phone, address_line1, city, state, country, postal_code, is_default)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true)`,
+      [req.user.id, `${user.first_name || ''} ${user.last_name || ''}`.trim(), user.phone || null, user.address_line1, user.city, user.state, user.country || 'Nigeria', user.postal_code]
+    );
+  }
+}
+
     return sendSuccess(res, 200, 'Address updated successfully', { 
       address: {
         address: user.address_line1,
