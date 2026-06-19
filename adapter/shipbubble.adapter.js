@@ -90,17 +90,13 @@ const [senderCode, receiverCode] = await Promise.all([
 ]);
 
     const payload = {
-      sender_address_code: senderCode,
-      reciever_address_code: receiverCode,
-      pickup_date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
-      category_id: 1,
-      package_items: sellerItems.map(i => ({
-        name: i.name || 'Item', description: i.name || 'Item',
-        unit_weight: String(parseFloat(i.weight_kg) || 0.5),
-        unit_amount: String(parseFloat(i.price)), quantity: String(i.quantity)
-      })),
-      package_dimension: { length: 10, width: 10, height: 10 }
-    };
+  sender_address_code: senderCode,
+  reciever_address_code: receiverCode,
+  pickup_date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+  category_id: await getCategoryId(sellerItems[0]?.name),
+  package_items: sellerItems.map(i => ({...})),
+  package_dimension: { length: 10, width: 10, height: 10 }
+};
 
     const res = await fetch(`${BASE}/shipping/fetch_rates`, { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
     const data = await res.json();
@@ -133,6 +129,25 @@ async function bookShipment({ requestToken, courierId, serviceCode }) {
     provider: 'shipbubble', isMock: false,
     estimatedDelivery: data.data.delivery_eta || null, raw: data.data,
   };
+}
+
+let categoryCache = null;
+
+async function getCategoryId(productName = '') {
+  if (!categoryCache) {
+    const res = await fetch(`${BASE}/shipping/labels/categories`, { headers: headers() });
+    const data = await res.json();
+    if (data.status !== 'success') throw new Error('Could not fetch package categories');
+    categoryCache = data.data; // [{ category_id, category }]
+  }
+
+  const name = productName.toLowerCase();
+  const match = categoryCache.find(c => name.includes(c.category.toLowerCase().split(' ')[0]));
+  if (match) return match.category_id;
+
+  // sensible fallback — "Accessories" tends to be the catch-all
+  const fallback = categoryCache.find(c => /accessor/i.test(c.category)) || categoryCache[0];
+  return fallback.category_id;
 }
 
 module.exports = { getQuotes, bookShipment };
