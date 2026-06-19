@@ -90,13 +90,17 @@ const [senderCode, receiverCode] = await Promise.all([
 ]);
 
     const payload = {
-  sender_address_code: senderCode,
-  reciever_address_code: receiverCode,
-  pickup_date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
-  category_id: await getCategoryId(sellerItems[0]?.name),
-  package_items: sellerItems.map(i => ({...})),
-  package_dimension: { length: 10, width: 10, height: 10 }
-};
+      sender_address_code: senderCode,
+      reciever_address_code: receiverCode,
+      pickup_date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+        category_id: await getCategoryId(sellerItems[0]?.name),
+      package_items: sellerItems.map(i => ({
+        name: i.name || 'Item', description: i.name || 'Item',
+        unit_weight: String(parseFloat(i.weight_kg) || 0.5),
+        unit_amount: String(parseFloat(i.price)), quantity: String(i.quantity)
+      })),
+      package_dimension: { length: 10, width: 10, height: 10 }
+    };
 
     const res = await fetch(`${BASE}/shipping/fetch_rates`, { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
     const data = await res.json();
