@@ -45,12 +45,15 @@ async function getSellerOrigin(sellerId) {
   return r.rows[0] || null;
 }
 
+// adapter/shipbubble.adapter.js — top of getQuotes()
 async function getQuotes(sessionId, items, address, sellerId) {
   try {
     const sellerItems = items.filter(i => i.seller_id === sellerId);
+    console.log('[shipbubble] sellerItems:', sellerItems.length, 'sellerId:', sellerId);
     if (!sellerItems.length) return [];
-    
-    const origin = await getSellerOrigin(sellerId);  // ← only one const origin
+
+    const origin = await getSellerOrigin(sellerId);
+    console.log('[shipbubble] origin:', origin);
     if (!origin) return [];
 // adapter/shipbubble.adapter.js — inside getQuotes(), replace the two validateAddress calls
 
