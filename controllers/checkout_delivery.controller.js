@@ -37,16 +37,15 @@ const getDeliveryOptions = async (req, res) => {
 
     // Group for cleaner frontend consumption
     const sellerOptions    = quotes.filter(q => q.provider === 'seller');
-    const marketmixOptions = quotes.filter(q => q.provider === 'marketmix');
-    const shipbubbleOptions = quotes.filter(q => q.provider === 'shipbubble');
+    const marketmixOptions = quotes.filter(q => q.provider === 'marketmix' || q.provider === 'shipbubble')
 
-      return sendSuccess(res, 200, 'Delivery options fetched', {
-      sellerDelivery:      sellerOptions,
-      marketmixDelivery:   marketmixOptions,
-      shipbubbleDelivery:  shipbubbleOptions,
-      all:                 quotes,
-      address,
-    });
+   return sendSuccess(res, 200, 'Delivery options fetched', {
+  sellerDelivery:    sellerOptions,
+  marketmixDelivery: marketmixOptions,   // shipbubble + any other aggregator quotes live here
+  all:               quotes,
+  address,
+});
+
 
   } catch (err) {
     console.error('getDeliveryOptions error:', err);

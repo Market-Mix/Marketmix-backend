@@ -1,34 +1,4 @@
-/**
- * MarketMix Logistics Adapter
- *
- * Central router for all third-party courier integrations.
- * Add a new provider by dropping a file into providers/ and
- * registering it in PROVIDERS below — zero changes elsewhere.
- *
- * Interface every provider must implement:
- *   getQuotes(sessionId, items, address)  → QuoteResult[]
- *   bookShipment(shipmentData)            → BookingResult
- *
- * QuoteResult shape:
- * {
- *   provider:          'marketmix',
- *   providerId:        'shipbubble' | 'kwik' | 'sendbox' | 'gig' | 'mock',
- *   providerLabel:     string,
- *   fee:               number,
- *   insuranceFee:      number,
- *   totalFee:          number,
- *   estimatedDelivery: string,   // '2025-08-10'
- *   estimatedDays:     string,   // '2–4 business days'
- *   serviceType:       string,
- *   quoteReference:    string,
- *   isMock:            boolean,
- *   rawResponse:       object,
- * }
- */
 
-// ─── Provider registry ────────────────────────────────────────
-// Each provider is a module that exports { getQuotes, bookShipment }
-// Wrap in try-catch so a broken provider never crashes the whole system.
 
 const PROVIDERS = {
   kwik:       tryLoad('./providers/kwik'),
@@ -51,12 +21,10 @@ function tryLoad(path) {
  * @returns {Promise<QuoteResult[]>}
  */
 async function getQuotes(sessionId, items, address) {
+  // Mocks retired now that Shipbubble is live.
+  // Real providers (sendbox, gig, etc.) still aggregate here if configured.
   const activeProviders = Object.entries(PROVIDERS).filter(([, mod]) => mod !== null);
-
-  // No real providers configured → return mock quotes so checkout still works
-  if (activeProviders.length === 0 || process.env.LOGISTICS_MOCK === 'true') {
-    return getMockQuotes(items, address);
-  }
+  if (activeProviders.length === 0) return [];
 
   const results = await Promise.allSettled(
     activeProviders.map(([name, mod]) =>
@@ -65,13 +33,7 @@ async function getQuotes(sessionId, items, address) {
       )
     )
   );
-
-  const quotes = results
-    .filter(r => r.status === 'fulfilled')
-    .flatMap(r => r.value);
-
-  // If all providers failed, fall back to mock
-  return quotes.length > 0 ? quotes : getMockQuotes(items, address);
+  return results.filter(r => r.status === 'fulfilled').flatMap(r => r.value);
 }
 
 // ─── Public: bookShipment ─────────────────────────────────────
