@@ -45,19 +45,20 @@ console.log('[seller.adapter] settings for', sellerId, ':', settingsRes.rows[0])
     const etaDate = new Date();
     etaDate.setDate(etaDate.getDate() + maxDays);
 
-    return {
-      provider:          'seller',
-      providerId:        'seller',
-      providerLabel:     'Seller Delivery',
-      sellerId,
-      fee,
-      isFreeShipping,
-      estimatedDelivery: etaDate.toISOString().split('T')[0],
-      estimatedDays:     `${minDays}–${maxDays} business days`,
-      notes:             s.notes || null,
-      quoteReference:    `SELLER-${sellerId}-${Date.now()}`,
-      rawSettings:       s,
-    };
+   // adapter/seller.adapter.js — inside getQuote(), replace the return object
+return {
+  provider:          'seller',
+  providerId:        `seller-${sellerId}`,        // was: 'seller'
+  providerLabel:     'Seller Delivery',
+  sellerId,
+  fee,
+  isFreeShipping,
+  estimatedDelivery: etaDate.toISOString().split('T')[0],
+  estimatedDays:     `${minDays}–${maxDays} business days`,
+  notes:             s.notes || null,
+  quoteReference:    `seller-${sellerId}-${Date.now()}`,  // was: `SELLER-${sellerId}-${Date.now()}`
+  rawSettings:       s,
+};
 
     // Quick debug — add this temporarily in seller.adapter.js getQuote()
 console.log('[seller.adapter] settings for', sellerId, ':', {
