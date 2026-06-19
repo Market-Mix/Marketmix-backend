@@ -23,6 +23,9 @@ async function getQuote(sessionId, items, address, sellerId) {
       [sellerId]
     );
 
+     // adapter/seller.adapter.js — top of getQuote(), after the db query
+console.log('[seller.adapter] settings for', sellerId, ':', settingsRes.rows[0]);
+
     if (!settingsRes.rows.length) return null;
 
     const s = settingsRes.rows[0];
