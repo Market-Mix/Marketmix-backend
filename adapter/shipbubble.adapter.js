@@ -27,7 +27,10 @@ async function validateAddress({ name, phone, email, address }) {
     body: JSON.stringify({ name, email, phone, address })
   });
   const data = await res.json();
-  if (data.status !== 'success') throw new Error(data.message || 'Address validation failed');
+  if (data.status !== 'success') {
+    console.error('[shipbubble] validateAddress failed for:', { name, address }, 'response:', data);
+    throw new Error(data.message || 'Address validation failed');
+  }
   return data.data.address_code;
 }
 
@@ -62,19 +65,24 @@ console.log('[shipbubble] sender address raw:', origin.address);
 console.log('[shipbubble] sender address sanitized:', sanitizeAddress(origin.address));
 console.log('[shipbubble] receiver address:', sanitizeAddress(`${address.address_line1 || ''}, ${address.city || ''}, ${address.state || ''}`));
 
+const senderPayload = {
+  name:    sanitizeName(origin.name),
+  phone:   origin.phone || '08000000000',
+  email:   origin.email || 'seller@marketmix.com',
+  address: sanitizeAddress(origin.address)
+};
+const receiverPayload = {
+  name:    sanitizeName(address.full_name || 'Buyer'),
+  phone:   address.phone || '08000000000',
+  email:   address.email || 'buyer@marketmix.com',
+  address: sanitizeAddress(`${address.address_line1 || ''}, ${address.city || ''}, ${address.state || ''}`)
+};
+console.log('[shipbubble] sender payload:', senderPayload);
+console.log('[shipbubble] receiver payload:', receiverPayload);
+
 const [senderCode, receiverCode] = await Promise.all([
-  validateAddress({
-    name:    sanitizeName(origin.name),
-    phone:   origin.phone || '08000000000',
-    email:   origin.email || 'seller@marketmix.com',
-    address: sanitizeAddress(origin.address)
-  }),
-  validateAddress({
-    name:    sanitizeName(address.full_name || 'Buyer'),
-    phone:   address.phone || '08000000000',
-    email:   address.email || 'buyer@marketmix.com',
-    address: sanitizeAddress(`${address.address_line1 || ''}, ${address.city || ''}, ${address.state || ''}`)
-  })
+  validateAddress(senderPayload),
+  validateAddress(receiverPayload)
 ]);
 
     const payload = {
