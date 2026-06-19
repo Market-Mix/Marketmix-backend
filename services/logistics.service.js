@@ -37,6 +37,12 @@ for (const sellerId of sellerIds) {
   return quotes;
 }
 
+function toSafeDate(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 async function applyDelivery(session, method, providerId) {
 let quote = null;
 try {
@@ -58,18 +64,18 @@ const shippingFee = parseFloat(quote.total_fee || 0);
   const newTotal = subtotal - discount + shippingFee;
 
   const updated = await db.query(
-    `UPDATE checkout_sessions SET
-       delivery_method    = $1,
-       delivery_provider  = $2,
-       shipping_fee       = $3,
-       total              = $4,
-       estimated_delivery = $5,
-       status             = 'delivery_set',
-       updated_at         = NOW()
-     WHERE id = $6
-     RETURNING *`,
-    [method, providerId, shippingFee, newTotal, quote.estimated_delivery, session.id]
-  );
+  `UPDATE checkout_sessions SET
+     delivery_method    = $1,
+     delivery_provider  = $2,
+     shipping_fee       = $3,
+     total              = $4,
+     estimated_delivery = $5,
+     status             = 'delivery_set',
+     updated_at         = NOW()
+   WHERE id = $6
+   RETURNING *`,
+  [method, providerId, shippingFee, newTotal, toSafeDate(quote.estimated_delivery), session.id]
+);
 
   return updated.rows[0];
 }

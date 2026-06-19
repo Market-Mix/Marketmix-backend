@@ -96,6 +96,15 @@ const shippingAddress = [
   addrSnap.country
 ].filter(Boolean).join(', ') || 'Address on file';
 
+// near where you build orderRes INSERT, before the query:
+function toSafeDate(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+const safeEstimatedDelivery = toSafeDate(session.estimated_delivery);
+
 const orderRes = await client.query(
   `INSERT INTO orders
      (buyer_id, checkout_session_id, status, payment_method,
@@ -115,7 +124,7 @@ const orderRes = await client.query(
     session.address_id,
     session.delivery_method,
     session.delivery_provider || null,
-    session.estimated_delivery || null,
+    safeEstimatedDelivery,
     session.notes || null,
     shippingAddress,
   ]

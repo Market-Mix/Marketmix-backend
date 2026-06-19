@@ -109,7 +109,7 @@ const [senderCode, receiverCode] = await Promise.all([
     return (data.data.couriers || []).map(c => ({
       provider: 'shipbubble', providerId: c.courier_id, providerLabel: c.courier_name,
       sellerId, fee: c.total, isFreeShipping: false,
-      estimatedDelivery: c.delivery_eta || null, estimatedDays: c.delivery_eta_time || null,
+      estimatedDelivery: c.delivery_eta_time || null,  estimatedDays: c.delivery_eta || null,
       quoteReference: `SHIPBUBBLE-${c.courier_id}-${data.data.request_token}`,
       courierId: c.courier_id, serviceCode: c.service_code, rawSettings: c,
     }));
