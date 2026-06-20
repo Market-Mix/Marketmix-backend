@@ -729,7 +729,7 @@ const updateAddress = async (req, res) => {
     if (postalCode !== undefined) { fields.push(`postal_code = $${idx++}`); values.push(postalCode); }
     if (country !== undefined) { fields.push(`country = $${idx++}`); values.push(country); }
 
-    const query = `UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING id, email, address_line1, city, state, postal_code, country`;
+    const query = `UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING id, email, first_name, last_name, phone, address_line1, city, state, postal_code, country`;
     values.push(req.user.id);
 
     const result = await db.query(query, values);
@@ -738,8 +738,6 @@ const updateAddress = async (req, res) => {
     const user = result.rows[0];
     console.log(`✅ Address updated for user: ${user.email}`);
 
-    // controllers/auth.controller.js — inside updateAddress, after the existing users UPDATE succeeds
-const user = result.rows[0];
 
 // Also sync into addresses table so it shows up in checkout
 if (user.address_line1) {
