@@ -25,13 +25,6 @@ const getDeliveryOptions = async (req, res) => {
     const items = await _getSessionItems(sessionId, session);
     if (!items.length) return sendError(res, 400, 'No items found in session');
 
-    const quotes = await logistics.getDeliveryOptions(sessionId, items, address);
-    const quotesBySeller = quotes.reduce((acc, q) => {
-      const sid = q.sellerId || 'marketmix';
-      (acc[sid] = acc[sid] || []).push(q);
-      return acc;
-    }, {});
-
     // controllers/checkout_delivery.controller.js — inside getDeliveryOptions, after quotes are fetched
 
 const sellerIds = [...new Set(items.map(i => i.seller_id).filter(Boolean))];
