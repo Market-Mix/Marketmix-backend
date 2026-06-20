@@ -62,10 +62,14 @@ async function applyDeliveryForSeller(session, sellerId, method, providerId) {
   const shippingFee = parseFloat(sum.rows[0].t);
   const newTotal = parseFloat(session.subtotal||0) - parseFloat(session.coupon_discount||0) + shippingFee;
 
-  const updated = await db.query(
-    `UPDATE checkout_sessions SET shipping_fee=$1, total=$2, status='delivery_set', updated_at=NOW() WHERE id=$3 RETURNING *`,
-    [shippingFee, newTotal, session.id]
-  );
+ // services/logistics.service.js — inside applyDeliveryForSeller()
+const updated = await db.query(
+  `UPDATE checkout_sessions
+   SET shipping_fee=$1, total=$2, status='delivery_set',
+       delivery_method='multi_seller', updated_at=NOW()
+   WHERE id=$3 RETURNING *`,
+  [shippingFee, newTotal, session.id]
+);
   return { session: updated.rows[0] };
 }
 
