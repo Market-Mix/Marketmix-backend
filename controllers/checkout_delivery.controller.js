@@ -32,7 +32,30 @@ const getDeliveryOptions = async (req, res) => {
       return acc;
     }, {});
 
-    return sendSuccess(res, 200, 'Delivery options fetched', { quotesBySeller, all: quotes, address });
+    // controllers/checkout_delivery.controller.js — inside getDeliveryOptions, after quotes are fetched
+
+const sellerIds = [...new Set(items.map(i => i.seller_id).filter(Boolean))];
+const namesRes = await db.query(
+  `SELECT u.id,
+          COALESCE(s.business_name, sp.business_name, u.first_name || ' ' || u.last_name) AS name
+   FROM users u
+   LEFT JOIN seller_profiles sp ON sp.user_id = u.id
+   LEFT JOIN stores s ON s.user_id = u.id AND s.store_number = 1
+   WHERE u.id = ANY($1::uuid[])`,
+  [sellerIds]
+);
+const sellerNames = Object.fromEntries(namesRes.rows.map(r => [r.id, r.name]));
+
+const quotesBySeller = quotes.reduce((acc, q) => {
+  const sid = q.sellerId || 'marketmix';
+  (acc[sid] = acc[sid] || []).push(q);
+  return acc;
+}, {});
+
+return sendSuccess(res, 200, 'Delivery options fetched', {
+  quotesBySeller, all: quotes, address, sellerNames
+});
+
   } catch (err) {
     console.error('getDeliveryOptions error:', err);
     return sendError(res, 500, 'Error fetching delivery options', err.message);
