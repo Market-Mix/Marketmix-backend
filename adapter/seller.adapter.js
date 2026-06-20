@@ -1,18 +1,11 @@
 /**
  * Seller Adapter — seller-managed delivery
  * Reads vendor_shipping_settings to build a quote.
- * Interface: getQuote(sessionId, items, address, sellerId) → QuoteResult
+ * Interface: getQuote(sessionId, items, address, sellerId) → QuoteResult | null
  */
 
 const db = require('../config/db');
 
-/**
- * @param {string} sessionId
- * @param {Array}  items     - array of { seller_id, quantity, price }
- * @param {Object} address   - { state, city, country }
- * @param {string} sellerId  - specific seller to quote for
- * @returns {QuoteResult | null}
- */
 async function getQuote(sessionId, items, address, sellerId) {
   try {
     const settingsRes = await db.query(
@@ -23,53 +16,62 @@ async function getQuote(sessionId, items, address, sellerId) {
       [sellerId]
     );
 
-     // adapter/seller.adapter.js — top of getQuote(), after the db query
-console.log('[seller.adapter] settings for', sellerId, ':', settingsRes.rows[0]);
+    console.log('[seller.adapter] raw settings row for', sellerId, ':', settingsRes.rows[0]);
 
-    if (!settingsRes.rows.length) return null;
+    if (!settingsRes.rows.length) {
+      console.warn('[seller.adapter] no vendor_shipping_settings row for seller', sellerId);
+      return null;
+    }
 
     const s = settingsRes.rows[0];
-    if (s.is_active === false) return null;
+    if (s.is_active === false) {
+      console.warn('[seller.adapter] settings inactive for seller', sellerId);
+      return null;
+    }
 
-    // Calculate subtotal for this seller's items
+    // Subtotal for this seller's items only
     const sellerItems = items.filter(i => i.seller_id === sellerId);
-    const subtotal = sellerItems.reduce((sum, i) => sum + (parseFloat(i.price) * i.quantity), 0);
+    const subtotal = sellerItems.reduce(
+      (sum, i) => sum + (parseFloat(i.price) * i.quantity),
+      0
+    );
 
-    // Free shipping threshold
-    const isFreeShipping = s.free_above && subtotal >= parseFloat(s.free_above);
-    const fee = isFreeShipping ? 0 : parseFloat(s.base_fee || 0);
+    // Postgres NUMERIC columns come back as strings — parse defensively,
+    // and treat 0/empty/null as "no free-shipping threshold set"
+    const baseFee   = parseFloat(s.base_fee) || 0;
+    const freeAbove = s.free_above !== null && s.free_above !== undefined && parseFloat(s.free_above) > 0
+      ? parseFloat(s.free_above)
+      : null;
 
-    // Estimated delivery
+    const isFreeShipping = freeAbove !== null && subtotal >= freeAbove;
+    const fee = isFreeShipping ? 0 : baseFee;
+
     const minDays = s.min_days || 1;
     const maxDays = s.max_days || 5;
     const etaDate = new Date();
     etaDate.setDate(etaDate.getDate() + maxDays);
 
-   // adapter/seller.adapter.js — inside getQuote(), replace the return object
-return {
-  provider:          'seller',
-  providerId:        `seller-${sellerId}`,        // was: 'seller'
-  providerLabel:     'Seller Delivery',
-  sellerId,
-  fee,
-  isFreeShipping,
-  estimatedDelivery: etaDate.toISOString().split('T')[0],
-  estimatedDays:     `${minDays}–${maxDays} business days`,
-  notes:             s.notes || null,
-  quoteReference:    `seller-${sellerId}-${Date.now()}`,  // was: `SELLER-${sellerId}-${Date.now()}`
-  rawSettings:       s,
-};
+    const quote = {
+      provider:          'seller',
+      providerId:        `seller-${sellerId}`,
+      providerLabel:      'Seller Delivery',
+      sellerId,
+      fee,
+      isFreeShipping,
+      estimatedDelivery: etaDate.toISOString().split('T')[0],
+      estimatedDays:     `${minDays}–${maxDays} business days`,
+      notes:             s.notes || null,
+      quoteReference:    `seller-${sellerId}-${Date.now()}`,
+      rawSettings:       s,
+    };
 
-    // Quick debug — add this temporarily in seller.adapter.js getQuote()
-console.log('[seller.adapter] settings for', sellerId, ':', {
-  base_fee: s.base_fee,
-  free_above: s.free_above,
-  subtotal,
-  isFreeShipping
-});
+    console.log('[seller.adapter] computed quote for', sellerId, ':', {
+      baseFee, freeAbove, subtotal, isFreeShipping, fee
+    });
 
+    return quote;
   } catch (err) {
-    console.error('[seller.adapter] getQuote error:', err.message);
+    console.error('[seller.adapter] getQuote error for', sellerId, ':', err.message);
     return null;
   }
 }
