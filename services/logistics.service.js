@@ -66,7 +66,7 @@ async function applyDeliveryForSeller(session, sellerId, method, providerId) {
 const updated = await db.query(
   `UPDATE checkout_sessions
    SET shipping_fee=$1, total=$2, status='delivery_set',
-       delivery_method='multi_seller', updated_at=NOW()
+       updated_at=NOW()
    WHERE id=$3 RETURNING *`,
   [shippingFee, newTotal, session.id]
 );
