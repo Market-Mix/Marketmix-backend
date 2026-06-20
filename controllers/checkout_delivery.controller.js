@@ -53,46 +53,34 @@ const getDeliveryOptions = async (req, res) => {
   }
 };
 
+
+const quotesBySeller = quotes.reduce((acc, q) => {
+  const sid = q.sellerId || 'marketmix';
+  (acc[sid] = acc[sid] || []).push(q);
+  return acc;
+}, {});
+return sendSuccess(res, 200, 'Delivery options fetched', { quotesBySeller, all: quotes, address });
+
 // ── POST apply delivery choice ────────────────────────────────────────────────
 const selectDelivery = async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const userId        = req.user.id;
-    const { method, provider_id } = req.body;
-
-   if (!method || !provider_id) {
-  return sendError(res, 400, 'method and provider_id are required');
-}
-
-    const session = await _getSession(sessionId, userId);
-    if (!session) return sendError(res, 404, 'Checkout session not found');
-
-    if (!session.address_id) {
-      return sendError(res, 400, 'Please set a delivery address first');
-    }
-
-    // If no quotes cached yet, regenerate
-    const cached = await db.query(
-      `SELECT id FROM delivery_quotes WHERE checkout_session_id = $1 LIMIT 1`,
-      [sessionId]
-    );
-
-    if (!cached.rows.length) {
-      const addrRes = await db.query(`SELECT * FROM addresses WHERE id = $1`, [session.address_id]);
-      const items   = await _getSessionItems(sessionId, session);
-      await logistics.getDeliveryOptions(sessionId, items, addrRes.rows[0] || {});
-    }
-
-    // Apply the chosen delivery
-    const updatedSession = await logistics.applyDelivery(session, method, provider_id);
-
-    return sendSuccess(res, 200, 'Delivery method selected', {
-      session: _sanitizeSession(updatedSession),
-    });
-  } catch (err) {
-    console.error('selectDelivery error:', err);
-    return sendError(res, 500, 'Error selecting delivery method', err.message);
+  const { sessionId } = req.params;
+  const userId = req.user.id;
+  const { seller_id, method, provider_id } = req.body;
+  if (!seller_id || !method || !provider_id) {
+    return sendError(res, 400, 'seller_id, method and provider_id are required');
   }
+  const session = await _getSession(sessionId, userId);
+  if (!session) return sendError(res, 404, 'Checkout session not found');
+
+  const updated = await logistics.applyDeliveryForSeller(session, seller_id, method, provider_id);
+  const all = await db.query(
+    `SELECT seller_id, method, provider_id, fee FROM checkout_session_deliveries WHERE checkout_session_id=$1`,
+    [sessionId]
+  );
+  return sendSuccess(res, 200, 'Delivery method selected', {
+    session: _sanitizeSession(updated.session),
+    deliveries: all.rows,
+  });
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

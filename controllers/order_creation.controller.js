@@ -57,23 +57,12 @@ function groupBySeller(items) {
   }, {});
 }
 
-function allocateShipping(vendors, shippingFee) {
-  const totalSubtotal = vendors.reduce((sum, vendor) => sum + vendor.subtotal, 0);
-  let allocated = 0;
-
-  return vendors.map((vendor, index) => {
-    if (shippingFee <= 0 || totalSubtotal <= 0) {
-      return { ...vendor, shippingFee: 0 };
-    }
-
-    const isLast = index === vendors.length - 1;
-    const amount = isLast
-      ? money(shippingFee - allocated)
-      : money((shippingFee * vendor.subtotal) / totalSubtotal);
-
-    allocated = money(allocated + amount);
-    return { ...vendor, shippingFee: amount };
-  });
+async function fetchSellerDeliveries(client, sessionId) {
+  const r = await client.query(
+    `SELECT seller_id, method, provider_id, fee FROM checkout_session_deliveries WHERE checkout_session_id=$1`,
+    [sessionId]
+  );
+  return new Map(r.rows.map(row => [row.seller_id, row]));
 }
 
 async function fetchOrderSummary(client, orderId, userId) {
@@ -236,9 +225,15 @@ const confirmCheckout = async (req, res) => {
       await client.query('ROLLBACK');
       return sendError(res, 400, 'Unsupported payment method');
     }
+
     const orderStatus = 'awaiting_payment';
-    const vendors = allocateShipping(Object.values(groupBySeller(items)), shippingFee);
-    const orderStoreId = vendors.length === 1 ? vendors[0].storeId : null;
+const sellerDeliveries = await fetchSellerDeliveries(client, sessionId);
+const vendors = Object.values(groupBySeller(items)).map(v => {
+  const d = sellerDeliveries.get(v.sellerId);
+  if (!d) throw Object.assign(new Error(`Missing delivery selection for seller ${v.sellerId}`), { code: 'MISSING_DELIVERY' });
+  return { ...v, shippingFee: parseFloat(d.fee), deliveryMethod: d.method, deliveryProvider: d.provider_id };
+});
+const orderStoreId = vendors.length === 1 ? vendors[0].storeId : null;
 
     const orderRes = await client.query(
       `INSERT INTO orders
@@ -271,6 +266,13 @@ const confirmCheckout = async (req, res) => {
       ]
     );
 
+    const seqRes = await client.query(`SELECT nextval('order_number_seq') n`);
+const orderNumber = `MMX-${seqRes.rows[0].n}`;
+await client.query(`UPDATE orders SET order_number=$1 WHERE id=$2`, [orderNumber, order.id]);
+// inside vendor loop, after vendorOrderRes:
+const suffix = String.fromCharCode(65 + vendors.indexOf(vendor));
+await client.query(`UPDATE vendor_orders SET suborder_number=$1 WHERE id=$2`, [`${orderNumber}-${suffix}`, vendorOrder.id]);
+
     const order = orderRes.rows[0];
     const vendorSummaries = [];
 
@@ -285,8 +287,8 @@ const confirmCheckout = async (req, res) => {
           order.id,
           vendor.sellerId,
           vendor.storeId,
-          session.delivery_method,
-          session.delivery_provider || null,
+          vendor.deliveryMethod,
+          vendor.deliveryProvider || null,
           vendor.shippingFee,
           vendor.subtotal,
           notes,
@@ -423,13 +425,12 @@ const confirmCheckout = async (req, res) => {
         shippingFee: money(vendor.shipping_fee),
       })),
     });
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    console.error('confirmCheckout error:', err);
-    return sendError(res, 500, 'Error confirming checkout', err.message);
-  } finally {
-    client.release();
-  }
+ } catch (err) {
+  await client.query('ROLLBACK').catch(() => {});
+  if (err.code === 'MISSING_DELIVERY') return sendError(res, 400, err.message);
+  console.error('confirmCheckout error:', err);
+  return sendError(res, 500, 'Error confirming checkout', err.message);
+}
 };
 
 module.exports = {

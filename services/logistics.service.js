@@ -43,41 +43,30 @@ function toSafeDate(value) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-async function applyDelivery(session, method, providerId) {
-let quote = null;
-try {
-  const quoteRes = await db.query(
-    `SELECT * FROM delivery_quotes
-     WHERE checkout_session_id = $1
-       AND (provider = $2 OR quote_reference LIKE $3)
-     ORDER BY id DESC LIMIT 1`,
+async function applyDeliveryForSeller(session, sellerId, method, providerId) {
+  const q = await db.query(
+    `SELECT * FROM delivery_quotes WHERE checkout_session_id=$1 AND (provider=$2 OR quote_reference LIKE $3) ORDER BY id DESC LIMIT 1`,
     [session.id, providerId, `%${providerId}%`]
   );
-  quote = quoteRes.rows[0] || null;
-} catch (e) { console.warn('[logistics] quote lookup failed:', e.message); }
+  const quote = q.rows[0] || { total_fee: 0, estimated_delivery: null };
 
-if (!quote) quote = { total_fee: 0, estimated_delivery: null };
+  await db.query(
+    `INSERT INTO checkout_session_deliveries (checkout_session_id, seller_id, method, provider_id, quote_reference, fee, estimated_delivery)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT (checkout_session_id, seller_id) DO UPDATE SET
+       method=$3, provider_id=$4, quote_reference=$5, fee=$6, estimated_delivery=$7, updated_at=NOW()`,
+    [session.id, sellerId, method, providerId, quote.quote_reference || null, parseFloat(quote.total_fee || 0), toSafeDate(quote.estimated_delivery)]
+  );
 
-const shippingFee = parseFloat(quote.total_fee || 0);
-  const subtotal = parseFloat(session.subtotal || session.total_amount || 0);
-  const discount = parseFloat(session.coupon_discount || session.discount_amount || 0);
-  const newTotal = subtotal - discount + shippingFee;
+  const sum = await db.query(`SELECT COALESCE(SUM(fee),0) t FROM checkout_session_deliveries WHERE checkout_session_id=$1`, [session.id]);
+  const shippingFee = parseFloat(sum.rows[0].t);
+  const newTotal = parseFloat(session.subtotal||0) - parseFloat(session.coupon_discount||0) + shippingFee;
 
   const updated = await db.query(
-  `UPDATE checkout_sessions SET
-     delivery_method    = $1,
-     delivery_provider  = $2,
-     shipping_fee       = $3,
-     total              = $4,
-     estimated_delivery = $5,
-     status             = 'delivery_set',
-     updated_at         = NOW()
-   WHERE id = $6
-   RETURNING *`,
-  [method, providerId, shippingFee, newTotal, toSafeDate(quote.estimated_delivery), session.id]
-);
-
-  return updated.rows[0];
+    `UPDATE checkout_sessions SET shipping_fee=$1, total=$2, status='delivery_set', updated_at=NOW() WHERE id=$3 RETURNING *`,
+    [shippingFee, newTotal, session.id]
+  );
+  return { session: updated.rows[0] };
 }
 
 async function _persistQuotes(sessionId, quotes) {
