@@ -130,6 +130,12 @@ const orderRes = await client.query(
   ]
 );
 
+const deliveriesRes = await client.query(
+  `SELECT seller_id, method, provider_id, fee FROM checkout_session_deliveries WHERE checkout_session_id=$1`,
+  [sessionId]
+);
+const sellerDeliveries = new Map(deliveriesRes.rows.map(r => [r.seller_id, r]));
+
     const order = orderRes.rows[0];
 
     // 3. Create vendor orders from items snapshot
@@ -142,14 +148,15 @@ const orderRes = await client.query(
       vendorMap[sid].subtotal += item.price * item.quantity;
     }
 
-    for (const v of Object.values(vendorMap)) {
-      const voRes = await client.query(
-        `INSERT INTO vendor_orders
-           (order_id, seller_id, store_id, status, subtotal, created_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())
-         RETURNING id`,
-        [order.id, v.seller_id, v.store_id, 'pending', v.subtotal]
-      );
+   for (const v of Object.values(vendorMap)) {
+  const d = sellerDeliveries.get(v.seller_id);
+  const voRes = await client.query(
+    `INSERT INTO vendor_orders
+       (order_id, seller_id, store_id, status, subtotal, shipping_fee, delivery_method, delivery_provider, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+     RETURNING id`,
+    [order.id, v.seller_id, v.store_id, 'pending', v.subtotal, parseFloat(d?.fee || 0), d?.method || null, d?.provider_id || null]
+  );
       const voId = voRes.rows[0].id;
 
       for (const item of v.items) {

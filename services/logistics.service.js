@@ -100,4 +100,4 @@ async function _persistQuotes(sessionId, quotes) {
     } catch (e) { console.warn('[logistics] insert quote failed:', e.message); }
   }
 }
-module.exports = { getDeliveryOptions, applyDelivery };
+module.exports = { getDeliveryOptions, applyDeliveryForSeller };

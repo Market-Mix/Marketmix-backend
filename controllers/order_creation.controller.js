@@ -266,14 +266,12 @@ const orderStoreId = vendors.length === 1 ? vendors[0].storeId : null;
       ]
     );
 
-    const seqRes = await client.query(`SELECT nextval('order_number_seq') n`);
-const orderNumber = `MMX-${seqRes.rows[0].n}`;
-await client.query(`UPDATE orders SET order_number=$1 WHERE id=$2`, [orderNumber, order.id]);
-// inside vendor loop, after vendorOrderRes:
-const suffix = String.fromCharCode(65 + vendors.indexOf(vendor));
-await client.query(`UPDATE vendor_orders SET suborder_number=$1 WHERE id=$2`, [`${orderNumber}-${suffix}`, vendorOrder.id]);
-
+    
     const order = orderRes.rows[0];
+    const seqRes = await client.query(`SELECT nextval('order_number_seq') n`);
+    const orderNumber = `MMX-${seqRes.rows[0].n}`;
+    await client.query(`UPDATE orders SET order_number=$1 WHERE id=$2`, [orderNumber, order.id]);
+
     const vendorSummaries = [];
 
     for (const vendor of vendors) {
@@ -297,6 +295,9 @@ await client.query(`UPDATE vendor_orders SET suborder_number=$1 WHERE id=$2`, [`
 
       const vendorOrder = vendorOrderRes.rows[0];
       vendorSummaries.push(vendorOrder);
+
+   const suffix = String.fromCharCode(65 + vendors.indexOf(vendor));
+   await client.query(`UPDATE vendor_orders SET suborder_number=$1 WHERE id=$2`, [`${orderNumber}-${suffix}`, vendorOrder.id]);
 
       for (const item of vendor.items) {
         const itemTotal = money(item.price * item.quantity);
