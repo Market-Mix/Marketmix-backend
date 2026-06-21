@@ -128,9 +128,10 @@ const orderRes = await client.query(
   ]
  );
 
- // controllers/payment.controller.js — initiatePayment, replace the delivery_method check
+ 
+// controllers/payment.controller.js — initiatePayment
 const deliveryCheck = await client.query(
-  `SELECT seller_id FROM checkout_session_deliveries WHERE checkout_session_id=$1`,
+  `SELECT seller_id, method, provider_id, fee FROM checkout_session_deliveries WHERE checkout_session_id=$1`,
   [sessionId]
 );
 const items = session.items_snapshot || [];
@@ -142,7 +143,7 @@ if (missingDelivery.length) {
   return sendError(res, 400, 'Please select a delivery method for every seller before payment');
 }
 
-const sellerDeliveries = new Map(deliveriesRes.rows.map(r => [r.seller_id, r]));
+const sellerDeliveries = new Map(deliveryCheck.rows.map(r => [r.seller_id, r]));
     const order = orderRes.rows[0];
 
     // 3. Create vendor orders from items snapshot
