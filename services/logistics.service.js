@@ -43,36 +43,27 @@ function toSafeDate(value) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-async function applyDeliveryForSeller(session, sellerId, method, providerId) {
- // services/logistics.service.js — applyDeliveryForSeller()
-const q = await db.query(
-  `SELECT * FROM delivery_quotes
-   WHERE checkout_session_id=$1 AND seller_id=$2 AND provider=$3
-   ORDER BY id DESC LIMIT 1`,
-  [session.id, sellerId, method]
-);
-  const quote = q.rows[0] || { total_fee: 0, estimated_delivery: null };
+// services/logistics.service.js — applyDeliveryForSeller, simplify
+async function applyDeliveryForSeller(session, sellerId, method, providerId, feeOverride) {
+  const fee = parseFloat(feeOverride || 0);
 
   await db.query(
-    `INSERT INTO checkout_session_deliveries (checkout_session_id, seller_id, method, provider_id, quote_reference, fee, estimated_delivery)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+    `INSERT INTO checkout_session_deliveries (checkout_session_id, seller_id, method, provider_id, fee)
+     VALUES ($1,$2,$3,$4,$5)
      ON CONFLICT (checkout_session_id, seller_id) DO UPDATE SET
-       method=$3, provider_id=$4, quote_reference=$5, fee=$6, estimated_delivery=$7, updated_at=NOW()`,
-    [session.id, sellerId, method, providerId, quote.quote_reference || null, parseFloat(quote.total_fee || 0), toSafeDate(quote.estimated_delivery)]
+       method=$3, provider_id=$4, fee=$5, updated_at=NOW()`,
+    [session.id, sellerId, method, providerId, fee]
   );
 
   const sum = await db.query(`SELECT COALESCE(SUM(fee),0) t FROM checkout_session_deliveries WHERE checkout_session_id=$1`, [session.id]);
   const shippingFee = parseFloat(sum.rows[0].t);
   const newTotal = parseFloat(session.subtotal||0) - parseFloat(session.coupon_discount||0) + shippingFee;
 
- // services/logistics.service.js — inside applyDeliveryForSeller()
-const updated = await db.query(
-  `UPDATE checkout_sessions
-   SET shipping_fee=$1, total=$2, status='delivery_set',
-       updated_at=NOW()
-   WHERE id=$3 RETURNING *`,
-  [shippingFee, newTotal, session.id]
-);
+  const updated = await db.query(
+    `UPDATE checkout_sessions SET shipping_fee=$1, total=$2, status='delivery_set', updated_at=NOW()
+     WHERE id=$3 RETURNING *`,
+    [shippingFee, newTotal, session.id]
+  );
   return { session: updated.rows[0] };
 }
 

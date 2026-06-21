@@ -66,7 +66,7 @@ const initiatePayment = async (req, res) => {
     if (!session.address_id) {
       return sendError(res, 400, 'Please select a delivery address before payment');
     }
-    g
+    
 
     const totalAmount = parseFloat(session.total_amount || session.total || 0);
     if (totalAmount <= 0) {
