@@ -3,6 +3,8 @@ const db = require('../config/db');
 const { generateToken } = require('../utils/jwt');
 const { sendSuccess, sendError } = require('../utils/response');
 const { notifySeller } = require('../utils/sellerEmailService');
+const crypto = require('crypto');
+const sendEmail = require('../utils/sendEmail');
 
 const createSellerWelcomeNotification = async (userId) => {
   try {
@@ -882,12 +884,104 @@ const deleteAccount = async (req, res) => {
   }
 };
 
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://marketmix.vercel.app';
+
+/**
+ * @desc Request password reset (works for both buyer/seller — role-agnostic)
+ * @route POST /api/auth/forgot-password
+ */
+const forgotPassword = async (req, res) => {
+  try {
+    const { email, role } = req.body; // role: 'buyer' | 'seller' (for redirect link only)
+    if (!email) return sendError(res, 400, 'Email is required');
+
+    const result = await db.query(
+      'SELECT id, first_name, role FROM users WHERE email = $1 AND is_deleted = false',
+      [email]
+    );
+
+    // Always return success (don't leak whether email exists)
+    if (result.rows.length === 0) {
+      return sendSuccess(res, 200, 'If that email exists, reset instructions have been sent');
+    }
+
+    const user = result.rows[0];
+    const token = crypto.randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await db.query(
+      'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
+      [token, expires, user.id]
+    );
+
+    const portal = role === 'seller' ? 'sellers' : 'buyers';
+    const resetLink = `${FRONTEND_URL}/${portal}/reset-password.html?token=${token}`;
+
+    await sendEmail({
+      to: email,
+      subject: 'Reset your MarketMix password',
+      html: `<p>Hi ${user.first_name || ''},</p>
+             <p>Click below to reset your password. This link expires in 1 hour.</p>
+             <p><a href="${resetLink}" style="background:#1d4ed8;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none">Reset Password</a></p>
+             <p>If you didn't request this, ignore this email.</p>`
+    });
+
+    return sendSuccess(res, 200, 'If that email exists, reset instructions have been sent');
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    return sendError(res, 500, 'Error processing request', error);
+  }
+};
+
+/**
+ * @desc Reset password using token
+ * @route POST /api/auth/reset-password
+ */
+const resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) return sendError(res, 400, 'Token and new password are required');
+    if (newPassword.length < 8) return sendError(res, 400, 'Password must be at least 8 characters');
+
+    const result = await db.query(
+      `SELECT id, reset_token_expires FROM users 
+       WHERE reset_token = $1 AND is_deleted = false`,
+      [token]
+    );
+
+    if (result.rows.length === 0) {
+      return sendError(res, 400, 'Invalid or expired reset token');
+    }
+
+    const user = result.rows[0];
+    if (new Date() > new Date(user.reset_token_expires)) {
+      return sendError(res, 400, 'Reset token has expired. Please request a new one.');
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+
+    await db.query(
+      `UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL, updated_at = NOW()
+       WHERE id = $2`,
+      [passwordHash, user.id]
+    );
+
+    return sendSuccess(res, 200, 'Password reset successfully. You can now log in.');
+  } catch (error) {
+    console.error('Reset password error:', error);
+    return sendError(res, 500, 'Error resetting password', error);
+  }
+};
+
 // UPDATE YOUR MODULE.EXPORTS to include all functions:
 module.exports = {
   register,
   googleRegister,
   googleLogin,
   login,
+  forgotPassword,
+  resetPassword,
   getMe,
   updatePassword,
   updatePhone,
@@ -898,4 +992,5 @@ module.exports = {
   updateNotificationPreferences,
   deleteAccount
 };
+
 

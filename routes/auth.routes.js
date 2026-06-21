@@ -5,6 +5,8 @@ const {
   googleRegister,
   googleLogin,
   login,
+  forgotPassword,
+  resetPassword,
   getMe,
   updatePassword,
   updatePhone,
@@ -17,6 +19,7 @@ const {
 } = require('../controllers/auth.controller');
 const { protect } = require('../middlewares/auth.middleware');
 
+
 // Public routes - Email/Password Authentication
 router.post('/register', register);
 router.post('/login', login);
@@ -25,7 +28,9 @@ router.post('/login', login);
 router.post('/google-register', googleRegister);
 router.post('/google-login', googleLogin);
 
-// OTP routes removed - email verification now handled via Supabase
+// Public routes - Password Reset
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
 
 // Protected routes
 router.get('/me', protect, getMe);
