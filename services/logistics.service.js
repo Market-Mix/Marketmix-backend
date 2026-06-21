@@ -43,15 +43,15 @@ function toSafeDate(value) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// applyDeliveryForSeller signature + body
-async function applyDeliveryForSeller(session, sellerId, method, providerId, feeOverride) {
-  const q = await db.query(
-    `SELECT * FROM delivery_quotes WHERE checkout_session_id=$1 AND quote_reference = $2 LIMIT 1`,
-    [session.id, providerId]
-  );
-  const quote = q.rows[0] || {};
-  const fee = feeOverride !== undefined ? parseFloat(feeOverride) : parseFloat(quote.total_fee || 0);
-  // ...use `fee` instead of parseFloat(quote.total_fee || 0) below
+async function applyDeliveryForSeller(session, sellerId, method, providerId) {
+ // services/logistics.service.js — applyDeliveryForSeller()
+const q = await db.query(
+  `SELECT * FROM delivery_quotes
+   WHERE checkout_session_id=$1 AND seller_id=$2 AND provider=$3
+   ORDER BY id DESC LIMIT 1`,
+  [session.id, sellerId, method]
+);
+  const quote = q.rows[0] || { total_fee: 0, estimated_delivery: null };
 
   await db.query(
     `INSERT INTO checkout_session_deliveries (checkout_session_id, seller_id, method, provider_id, quote_reference, fee, estimated_delivery)
@@ -86,24 +86,16 @@ async function _persistQuotes(sessionId, quotes) {
 
   for (const q of quotes) {
     try {
-      await db.query(
-        `INSERT INTO delivery_quotes
-           (checkout_session_id, provider, quote_reference, service_type,
-            base_fee, insurance_fee, total_fee, currency, estimated_delivery)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-         ON CONFLICT DO NOTHING`,
-        [
-          sessionId,
-          q.provider,
-          q.quoteReference || null,
-          q.serviceType || null,
-          q.fee || 0,
-          q.insuranceFee || 0,
-          q.totalFee || q.fee || 0,
-          q.currency || 'NGN',
-          q.estimatedDelivery || null,
-        ]
-      );
+     // services/logistics.service.js — _persistQuotes()
+await db.query(
+  `INSERT INTO delivery_quotes
+     (checkout_session_id, seller_id, provider, quote_reference, service_type,
+      base_fee, insurance_fee, total_fee, currency, estimated_delivery)
+   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+   ON CONFLICT DO NOTHING`,
+  [sessionId, q.sellerId || null, q.provider, q.quoteReference || null, q.serviceType || null,
+   q.fee || 0, q.insuranceFee || 0, q.totalFee || q.fee || 0, q.currency || 'NGN', q.estimatedDelivery || null]
+);
     } catch (e) { console.warn('[logistics] insert quote failed:', e.message); }
   }
 }
