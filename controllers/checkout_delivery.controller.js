@@ -64,14 +64,15 @@ return sendSuccess(res, 200, 'Delivery options fetched', {
 const selectDelivery = async (req, res) => {
   const { sessionId } = req.params;
   const userId = req.user.id;
-  const { seller_id, method, provider_id } = req.body;
-  if (!seller_id || !method || !provider_id) {
-    return sendError(res, 400, 'seller_id, method and provider_id are required');
-  }
+const { seller_id, method, provider_id, fee } = req.body; // add fee
+if (!seller_id || !method || !provider_id) {
+  return sendError(res, 400, 'seller_id, method and provider_id are required');
+}
   const session = await _getSession(sessionId, userId);
   if (!session) return sendError(res, 404, 'Checkout session not found');
 
-  const updated = await logistics.applyDeliveryForSeller(session, seller_id, method, provider_id);
+ // pass it through
+const updated = await logistics.applyDeliveryForSeller(session, seller_id, method, provider_id, fee);
   const all = await db.query(
     `SELECT seller_id, method, provider_id, fee FROM checkout_session_deliveries WHERE checkout_session_id=$1`,
     [sessionId]

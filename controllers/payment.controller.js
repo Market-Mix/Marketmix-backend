@@ -66,9 +66,7 @@ const initiatePayment = async (req, res) => {
     if (!session.address_id) {
       return sendError(res, 400, 'Please select a delivery address before payment');
     }
-    if (!session.delivery_method) {
-      return sendError(res, 400, 'Please select a delivery method before payment');
-    }
+    g
 
     const totalAmount = parseFloat(session.total_amount || session.total || 0);
     if (totalAmount <= 0) {
@@ -83,27 +81,27 @@ const initiatePayment = async (req, res) => {
 
     
  // Before the INSERT, fetch address snapshot
-const addrSnap = session.address_snapshot 
+ const addrSnap = session.address_snapshot 
   ? (typeof session.address_snapshot === 'string' 
       ? JSON.parse(session.address_snapshot) 
       : session.address_snapshot)
   : {};
 
-const shippingAddress = [
+ const shippingAddress = [
   addrSnap.address_line1,
   addrSnap.city,
   addrSnap.state,
   addrSnap.country
-].filter(Boolean).join(', ') || 'Address on file';
+ ].filter(Boolean).join(', ') || 'Address on file';
 
-// near where you build orderRes INSERT, before the query:
-function toSafeDate(value) {
+ // near where you build orderRes INSERT, before the query:
+ function toSafeDate(value) {
   if (!value) return null;
   const d = new Date(value);
   return isNaN(d.getTime()) ? null : d;
-}
+ }
 
-const safeEstimatedDelivery = toSafeDate(session.estimated_delivery);
+ const safeEstimatedDelivery = toSafeDate(session.estimated_delivery);
 
 const orderRes = await client.query(
   `INSERT INTO orders
@@ -128,21 +126,19 @@ const orderRes = await client.query(
     session.notes || null,
     shippingAddress,
   ]
-);
+ );
 
-// controllers/payment.controller.js — inside initiatePayment(), replace the delivery_method check
-// controllers/payment.controller.js — inside initiatePayment(), replace delivery_method check + items declaration
-const items = session.items_snapshot || [];
-
-const deliveriesRes = await client.query(
+ // controllers/payment.controller.js — initiatePayment, replace the delivery_method check
+const deliveryCheck = await client.query(
   `SELECT seller_id FROM checkout_session_deliveries WHERE checkout_session_id=$1`,
   [sessionId]
 );
-const sellerIdsWithDelivery = new Set(deliveriesRes.rows.map(r => r.seller_id));
+const items = session.items_snapshot || [];
 const allSellerIds = [...new Set(items.map(i => i.seller_id))];
-const missing = allSellerIds.filter(id => !sellerIdsWithDelivery.has(id));
+const coveredSellerIds = new Set(deliveryCheck.rows.map(r => r.seller_id));
+const missingDelivery = allSellerIds.filter(id => !coveredSellerIds.has(id));
 
-if (missing.length) {
+if (missingDelivery.length) {
   return sendError(res, 400, 'Please select a delivery method for every seller before payment');
 }
 

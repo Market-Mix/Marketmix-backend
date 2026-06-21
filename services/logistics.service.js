@@ -43,12 +43,15 @@ function toSafeDate(value) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-async function applyDeliveryForSeller(session, sellerId, method, providerId) {
+// applyDeliveryForSeller signature + body
+async function applyDeliveryForSeller(session, sellerId, method, providerId, feeOverride) {
   const q = await db.query(
-    `SELECT * FROM delivery_quotes WHERE checkout_session_id=$1 AND (provider=$2 OR quote_reference LIKE $3) ORDER BY id DESC LIMIT 1`,
-    [session.id, providerId, `%${providerId}%`]
+    `SELECT * FROM delivery_quotes WHERE checkout_session_id=$1 AND quote_reference = $2 LIMIT 1`,
+    [session.id, providerId]
   );
-  const quote = q.rows[0] || { total_fee: 0, estimated_delivery: null };
+  const quote = q.rows[0] || {};
+  const fee = feeOverride !== undefined ? parseFloat(feeOverride) : parseFloat(quote.total_fee || 0);
+  // ...use `fee` instead of parseFloat(quote.total_fee || 0) below
 
   await db.query(
     `INSERT INTO checkout_session_deliveries (checkout_session_id, seller_id, method, provider_id, quote_reference, fee, estimated_delivery)
