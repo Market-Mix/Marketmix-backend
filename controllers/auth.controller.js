@@ -885,7 +885,6 @@ const deleteAccount = async (req, res) => {
 };
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://marketmix.vercel.app';
-
 /**
  * @desc Request password reset (works for both buyer/seller — role-agnostic)
  * @route POST /api/auth/forgot-password

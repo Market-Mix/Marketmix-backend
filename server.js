@@ -188,6 +188,20 @@ setInterval(async () => {
   } catch (e) { console.error('Weekly report cron:', e.message); }
 }, 60 * 60 * 1000); // check every hour
 
+app.post('/api/waitlist', async (req, res) => {
+  const { full_name, email, phone, role } = req.body;
+  if (!full_name || !email) return res.status(400).json({ success: false, message: 'Name and email are required' });
+  try {
+    await db.query(
+      `INSERT INTO waitlist (full_name, email, phone, role) VALUES ($1,$2,$3,$4) ON CONFLICT (email) DO NOTHING`,
+      [full_name, email, phone || null, role || 'buyer']
+    );
+    res.json({ success: true, message: 'Joined successfully' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Error joining waitlist' });
+  }
+});
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
