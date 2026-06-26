@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "dev:create-admin": "node scripts/create_test_admin.js",
     "seed:products": "node seed_products.js",
     "seed:migrate": "node seed_products_from_listings.js",
     "seed:migrate-util": "node seed_products_migration_util.js",

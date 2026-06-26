@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -201,6 +202,13 @@ app.post('/api/waitlist', async (req, res) => {
     res.status(500).json({ success: false, message: 'Error joining waitlist' });
   }
 });
+
+// Development-only admin refund testing page
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/admin-refund-testing', (req, res) => {
+    res.sendFile(path.join(__dirname, 'admin-refund-testing.html'));
+  });
+}
 
 // 404 handler
 app.use((req, res) => {

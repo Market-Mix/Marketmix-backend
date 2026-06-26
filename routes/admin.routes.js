@@ -8,6 +8,17 @@ const { sendSuccess, sendError } = require('../utils/response');
 const { processWithdrawal } = require('../services/payout.service');
 const { createDedupedNotification } = require('../controllers/notification.controller');
 
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+function getSupabaseHeaders() {
+  return {
+    Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+    apikey: SUPABASE_SERVICE_KEY,
+    'Content-Type': 'application/json'
+  };
+}
+
 // POST /api/admin/escrow/:escrowId/resolve
 // body: { action: 'release' | 'refund', notes: string }
 router.post('/escrow/:escrowId/resolve', protect, isAdmin, async (req, res) => {
@@ -88,6 +99,219 @@ router.post('/escrow/:escrowId/resolve', protect, isAdmin, async (req, res) => {
     return sendError(res, 500, err.message);
   } finally {
     client.release();
+  }
+});
+
+// GET /api/admin/refunds/pending
+// Development-only route for admin refund testing page
+router.get('/refunds/pending', protect, isAdmin, async (req, res) => {
+  try {
+    if (!SUPABASE_SERVICE_KEY) {
+      return sendError(res, 500, 'SUPABASE_SERVICE_KEY not configured');
+    }
+
+    const queryUrl = `${SUPABASE_URL}/rest/v1/refund_cases?select=*&or=(resolution_status.eq.awaiting_admin,resolution_status.eq.escalated)&order=created_at.desc`;
+    const response = await fetch(queryUrl, {
+      method: 'GET',
+      headers: getSupabaseHeaders()
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return sendError(res, response.status, 'Failed to fetch refund cases from Supabase', errorText);
+    }
+
+    const refundCases = await response.json();
+    const enriched = await Promise.all((refundCases || []).map(async (refundCase) => {
+      const enrichedCase = { ...refundCase };
+
+      try {
+        if (enrichedCase.buyer_id) {
+          const buyerRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [enrichedCase.buyer_id]);
+          if (buyerRes.rows.length > 0) {
+            enrichedCase.buyer_name = `${buyerRes.rows[0].first_name || ''} ${buyerRes.rows[0].last_name || ''}`.trim();
+          }
+        }
+      } catch (err) {
+        enrichedCase.buyer_name = null;
+      }
+
+      try {
+        if (enrichedCase.seller_id) {
+          const sellerRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [enrichedCase.seller_id]);
+          if (sellerRes.rows.length > 0) {
+            enrichedCase.seller_name = `${sellerRes.rows[0].first_name || ''} ${sellerRes.rows[0].last_name || ''}`.trim();
+          }
+
+          const storeRes = await db.query(
+            `SELECT business_name FROM stores WHERE user_id = $1 AND is_deleted = false ORDER BY store_number ASC LIMIT 1`,
+            [enrichedCase.seller_id]
+          );
+          enrichedCase.store_name = storeRes.rows.length > 0 ? storeRes.rows[0].business_name : null;
+        }
+      } catch (err) {
+        enrichedCase.seller_name = null;
+        enrichedCase.store_name = null;
+      }
+
+      return enrichedCase;
+    }));
+
+    return sendSuccess(res, 200, 'Refund cases fetched successfully', { refundCases: enriched });
+  } catch (err) {
+    return sendError(res, 500, err.message || 'Unable to fetch refund cases');
+  }
+});
+
+// GET /api/admin/refunds
+router.get('/refunds', protect, isAdmin, async (req, res) => {
+  try {
+    if (!SUPABASE_SERVICE_KEY) {
+      return sendError(res, 500, 'SUPABASE_SERVICE_KEY not configured');
+    }
+
+    const queryUrl = `${SUPABASE_URL}/rest/v1/refund_cases?select=*&order=created_at.desc`;
+    const response = await fetch(queryUrl, {
+      method: 'GET',
+      headers: getSupabaseHeaders()
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return sendError(res, response.status, 'Failed to fetch refund cases from Supabase', errorText);
+    }
+
+    const refundCases = await response.json();
+    const enriched = await Promise.all((refundCases || []).map(async (refundCase) => {
+      const enrichedCase = { ...refundCase };
+
+      try {
+        if (enrichedCase.buyer_id) {
+          const buyerRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [enrichedCase.buyer_id]);
+          if (buyerRes.rows.length > 0) {
+            enrichedCase.buyer_name = `${buyerRes.rows[0].first_name || ''} ${buyerRes.rows[0].last_name || ''}`.trim();
+          }
+        }
+      } catch (err) {
+        enrichedCase.buyer_name = null;
+      }
+
+      try {
+        if (enrichedCase.seller_id) {
+          const sellerRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [enrichedCase.seller_id]);
+          if (sellerRes.rows.length > 0) {
+            enrichedCase.seller_name = `${sellerRes.rows[0].first_name || ''} ${sellerRes.rows[0].last_name || ''}`.trim();
+          }
+
+          const storeRes = await db.query(
+            `SELECT business_name FROM stores WHERE user_id = $1 AND is_deleted = false ORDER BY store_number ASC LIMIT 1`,
+            [enrichedCase.seller_id]
+          );
+          enrichedCase.store_name = storeRes.rows.length > 0 ? storeRes.rows[0].business_name : null;
+        }
+      } catch (err) {
+        enrichedCase.seller_name = null;
+        enrichedCase.store_name = null;
+      }
+
+      return enrichedCase;
+    }));
+
+    return sendSuccess(res, 200, 'Refund cases fetched successfully', { refundCases: enriched });
+  } catch (err) {
+    return sendError(res, 500, err.message || 'Unable to fetch refund cases');
+  }
+});
+
+// POST /api/admin/refunds/:refundId/approve
+router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => {
+  try {
+    const { refundId } = req.params;
+    const result = await db.query(
+      `UPDATE refund_cases
+       SET marketmix_decision = 'approved',
+           marketmix_decided_at = NOW(),
+           resolution_status = 'waiting_seller_return_decision',
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING buyer_id, seller_id`,
+      [refundId]
+    );
+
+    if (!result.rows.length) {
+      return sendError(res, 404, 'Refund case not found');
+    }
+
+    const { buyer_id, seller_id } = result.rows[0];
+
+    const notificationPromises = [];
+    if (seller_id) {
+      notificationPromises.push(createDedupedNotification({
+        userId: seller_id,
+        title: 'Refund Approved',
+        message: 'MarketMix approved this refund request. Please choose Return Product or Returnless Refund.',
+        type: 'refund'
+      }));
+    }
+    if (buyer_id) {
+      notificationPromises.push(createDedupedNotification({
+        userId: buyer_id,
+        title: 'Refund Approved',
+        message: 'MarketMix has approved your refund request. The seller will now choose whether the item should be returned.',
+        type: 'refund'
+      }));
+    }
+
+    await Promise.all(notificationPromises);
+    return sendSuccess(res, 200, 'Refund approved successfully');
+  } catch (err) {
+    return sendError(res, 500, err.message);
+  }
+});
+
+// POST /api/admin/refunds/:refundId/reject
+router.post('/refunds/:refundId/reject', protect, isAdmin, async (req, res) => {
+  try {
+    const { refundId } = req.params;
+    const result = await db.query(
+      `UPDATE refund_cases
+       SET marketmix_decision = 'rejected',
+           marketmix_decided_at = NOW(),
+           resolution_status = 'refund_rejected',
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING buyer_id, seller_id`,
+      [refundId]
+    );
+
+    if (!result.rows.length) {
+      return sendError(res, 404, 'Refund case not found');
+    }
+
+    const { buyer_id, seller_id } = result.rows[0];
+
+    const notificationPromises = [];
+    if (buyer_id) {
+      notificationPromises.push(createDedupedNotification({
+        userId: buyer_id,
+        title: 'Refund Rejected',
+        message: 'After reviewing the evidence, MarketMix rejected your refund request.',
+        type: 'refund'
+      }));
+    }
+    if (seller_id) {
+      notificationPromises.push(createDedupedNotification({
+        userId: seller_id,
+        title: 'Refund Rejected',
+        message: 'MarketMix rejected this refund request. The case has been closed.',
+        type: 'refund'
+      }));
+    }
+
+    await Promise.all(notificationPromises);
+    return sendSuccess(res, 200, 'Refund rejected successfully');
+  } catch (err) {
+    return sendError(res, 500, err.message);
   }
 });
 

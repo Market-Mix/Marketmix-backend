@@ -1,9 +1,13 @@
 // CORS configuration
 const allowedOrigins = [
   'http://localhost:3000',
+  'http://127.0.0.1:3000',
   'http://localhost:5173', // Vite
+  'http://127.0.0.1:5173',
   'http://localhost:5500', // Live Server
   'http://127.0.0.1:5500', // Live Server alternative
+  'http://localhost:8000', // Simple local static server
+  'http://127.0.0.1:8000',
   'https://marketmix.vercel.app', // your correct frontend domain
   'https://marketmix-jointhewaitlist.vercel.app', //waitlist
   'https://marketmix-backend.onrender.com', // Your render backend
@@ -12,19 +16,19 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
+    // Allow requests with no origin or file:// pages sending Origin: null
+    if (!origin || origin === 'null') return callback(null, true);
 
     // Allow explicitly configured origins
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    // Allow Vercel preview and production subdomains (e.g. *.vercel.app)
+    // Allow local loopback origins and Vercel preview/production subdomains.
     try {
       const url = new URL(origin);
       const hostname = url.hostname;
-      if (hostname && (hostname.endsWith('.vercel.app') || hostname === 'localhost')) {
+      if (hostname && (hostname.endsWith('.vercel.app') || ['localhost', '127.0.0.1', '::1'].includes(hostname))) {
         return callback(null, true);
       }
     } catch (e) {
