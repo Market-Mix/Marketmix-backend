@@ -26,7 +26,10 @@ function truncateText(text, maxLength = 150) {
 }
 
 function getAdminDecidedBy(req) {
-  return (req.user && (req.user.email || req.user.id)) || 'MarketMix Admin';
+  if (req.user && req.user.id) {
+    return req.user.id;
+  }
+  return (req.user && req.user.email) || 'MarketMix Admin';
 }
 
 // POST /api/admin/escrow/:escrowId/resolve
