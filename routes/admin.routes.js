@@ -19,6 +19,16 @@ function getSupabaseHeaders() {
   };
 }
 
+function truncateText(text, maxLength = 150) {
+  if (!text || typeof text !== 'string') return '';
+  const cleaned = text.trim();
+  return cleaned.length <= maxLength ? cleaned : `${cleaned.slice(0, maxLength).trim()}...`;
+}
+
+function getAdminDecidedBy(req) {
+  return (req.user && (req.user.email || req.user.id)) || 'MarketMix Admin';
+}
+
 // POST /api/admin/escrow/:escrowId/resolve
 // body: { action: 'release' | 'refund', notes: string }
 router.post('/escrow/:escrowId/resolve', protect, isAdmin, async (req, res) => {
@@ -277,21 +287,35 @@ router.get('/refunds', protect, isAdmin, async (req, res) => {
 router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => {
   try {
     const { refundId } = req.params;
+    const { reason } = req.body;
+    const trimmedReason = typeof reason === 'string' ? reason.trim() : '';
+
+    if (!trimmedReason) {
+      return sendError(res, 400, 'Decision reason is required.');
+    }
+    if (trimmedReason.length < 20) {
+      return sendError(res, 400, 'Decision reason must be at least 20 characters.');
+    }
+
+    const decidedBy = getAdminDecidedBy(req);
     const result = await db.query(
       `UPDATE refund_cases
        SET marketmix_decision = 'approved',
+           marketmix_decision_reason = $2,
            marketmix_decided_at = NOW(),
+           marketmix_decided_by = $3,
            resolution_status = 'waiting_seller_return_decision',
            updated_at = NOW()
        WHERE id = $1
        RETURNING buyer_id, seller_id`,
-      [refundId]
+      [refundId, trimmedReason, decidedBy]
     );
 
     if (!result.rows.length) {
       return sendError(res, 404, 'Refund case not found');
     }
 
+    const reasonSummary = truncateText(trimmedReason, 150);
     const { buyer_id, seller_id } = result.rows[0];
 
     const notificationPromises = [];
@@ -299,7 +323,7 @@ router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => 
       notificationPromises.push(createDedupedNotification({
         userId: seller_id,
         title: 'Refund Approved',
-        message: 'MarketMix approved this refund request. Please choose Return Product or Returnless Refund.',
+        message: `MarketMix approved a refund request. Reason: ${reasonSummary}`,
         type: 'refund'
       }));
     }
@@ -307,7 +331,7 @@ router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => 
       notificationPromises.push(createDedupedNotification({
         userId: buyer_id,
         title: 'Refund Approved',
-        message: 'MarketMix has approved your refund request. The seller will now choose whether the item should be returned.',
+        message: `MarketMix approved your refund request. Reason: ${reasonSummary}`,
         type: 'refund'
       }));
     }
@@ -323,21 +347,35 @@ router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => 
 router.post('/refunds/:refundId/reject', protect, isAdmin, async (req, res) => {
   try {
     const { refundId } = req.params;
+    const { reason } = req.body;
+    const trimmedReason = typeof reason === 'string' ? reason.trim() : '';
+
+    if (!trimmedReason) {
+      return sendError(res, 400, 'Decision reason is required.');
+    }
+    if (trimmedReason.length < 20) {
+      return sendError(res, 400, 'Decision reason must be at least 20 characters.');
+    }
+
+    const decidedBy = getAdminDecidedBy(req);
     const result = await db.query(
       `UPDATE refund_cases
        SET marketmix_decision = 'rejected',
+           marketmix_decision_reason = $2,
            marketmix_decided_at = NOW(),
+           marketmix_decided_by = $3,
            resolution_status = 'refund_rejected',
            updated_at = NOW()
        WHERE id = $1
        RETURNING buyer_id, seller_id`,
-      [refundId]
+      [refundId, trimmedReason, decidedBy]
     );
 
     if (!result.rows.length) {
       return sendError(res, 404, 'Refund case not found');
     }
 
+    const reasonSummary = truncateText(trimmedReason, 150);
     const { buyer_id, seller_id } = result.rows[0];
 
     const notificationPromises = [];
@@ -345,7 +383,7 @@ router.post('/refunds/:refundId/reject', protect, isAdmin, async (req, res) => {
       notificationPromises.push(createDedupedNotification({
         userId: buyer_id,
         title: 'Refund Rejected',
-        message: 'After reviewing the evidence, MarketMix rejected your refund request.',
+        message: `After reviewing the evidence, MarketMix rejected your refund request. Reason: ${reasonSummary}`,
         type: 'refund'
       }));
     }
@@ -353,7 +391,7 @@ router.post('/refunds/:refundId/reject', protect, isAdmin, async (req, res) => {
       notificationPromises.push(createDedupedNotification({
         userId: seller_id,
         title: 'Refund Rejected',
-        message: 'MarketMix rejected this refund request. The case has been closed.',
+        message: `MarketMix rejected this refund request. Reason: ${reasonSummary}`,
         type: 'refund'
       }));
     }
