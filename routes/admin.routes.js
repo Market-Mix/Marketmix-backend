@@ -214,6 +214,56 @@ router.get('/refunds', protect, isAdmin, async (req, res) => {
         enrichedCase.store_name = null;
       }
 
+      try {
+        const totalAmountMissing = enrichedCase.total_amount === undefined || enrichedCase.total_amount === null;
+        if (totalAmountMissing && (enrichedCase.order_item_id || enrichedCase.order_id)) {
+          if (enrichedCase.order_item_id) {
+            const itemRes = await db.query(
+              'SELECT quantity, price_at_purchase FROM order_items WHERE id = $1 LIMIT 1',
+              [enrichedCase.order_item_id]
+            );
+            if (itemRes.rows.length > 0) {
+              const item = itemRes.rows[0];
+              enrichedCase.total_amount = (parseFloat(item.quantity) || 1) * (parseFloat(item.price_at_purchase) || 0);
+            }
+          } else {
+            const itemsRes = await db.query(
+              'SELECT quantity, price_at_purchase FROM order_items WHERE order_id = $1',
+              [enrichedCase.order_id]
+            );
+            if (itemsRes.rows.length > 0) {
+              enrichedCase.total_amount = itemsRes.rows.reduce((sum, item) => {
+                return sum + ((parseFloat(item.quantity) || 1) * (parseFloat(item.price_at_purchase) || 0));
+              }, 0);
+            }
+          }
+        }
+
+        if ((enrichedCase.total_amount === undefined || enrichedCase.total_amount === null) && enrichedCase.refund_amount !== undefined && enrichedCase.refund_amount !== null) {
+          enrichedCase.total_amount = parseFloat(enrichedCase.refund_amount) || 0;
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not resolve total_amount for admin refund case', enrichedCase.id, err.message);
+      }
+
+      try {
+        if ((!enrichedCase.color || !enrichedCase.size || !enrichedCase.product_snapshot) && (enrichedCase.order_item_id || enrichedCase.order_id)) {
+          const specQuery = enrichedCase.order_item_id
+            ? 'SELECT color, size, product_snapshot FROM order_items WHERE id = $1 LIMIT 1'
+            : 'SELECT color, size, product_snapshot FROM order_items WHERE order_id = $1 LIMIT 1';
+          const specParams = [enrichedCase.order_item_id || enrichedCase.order_id];
+          const specRes = await db.query(specQuery, specParams);
+          if (specRes.rows.length > 0) {
+            const item = specRes.rows[0];
+            enrichedCase.color = item.color ?? enrichedCase.color ?? null;
+            enrichedCase.size = item.size ?? enrichedCase.size ?? null;
+            enrichedCase.product_snapshot = item.product_snapshot ?? enrichedCase.product_snapshot ?? null;
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not resolve product specifications for admin refund case', enrichedCase.id, err.message);
+      }
+
       return enrichedCase;
     }));
 
