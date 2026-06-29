@@ -1188,7 +1188,6 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       }
     }
 
-    const nextResolution = decision === 'return_product' ? 'return_required' : 'refund_processing';
     const nextMessage = decision === 'return_product'
       ? 'MarketMix approved your refund. The seller has requested the product to be returned. Please ship the product within the allowed return period. Return instructions are now available.'
       : 'Your refund has been approved. The seller has chosen a returnless refund. Your refund will now be processed.';
@@ -1196,10 +1195,12 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     const updatePayload = {
       seller_return_choice: decision,
       seller_return_choice_at: new Date().toISOString(),
-      resolution_status: nextResolution,
       updated_at: new Date().toISOString()
     };
-
+    
+    // Note: We do NOT change resolution_status here. It stays at 'waiting_seller_return_decision'
+    // until the buyer ships (return_product) or the refund is processed (returnless)
+    
     // Only add return address fields for return_product decisions
     if (decision === 'return_product') {
       updatePayload.return_address_line1 = return_address || null;
@@ -1211,7 +1212,13 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       updatePayload.buyer_return_deadline = returnDeadline || null;
     }
 
-    console.log('📝 Updating refund with payload:', updatePayload);
+    console.log('📝 Updating refund with payload:', JSON.stringify(updatePayload, null, 2));
+    console.log('📨 Request headers for PATCH:', { 
+      'Authorization': 'Bearer [REDACTED]',
+      'apikey': '[REDACTED]',
+      'Content-Type': headers['Content-Type'],
+      'Prefer': 'return=representation'
+    });
 
     // Update in Supabase
     const updateRes = await fetch(
@@ -1223,13 +1230,24 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       }
     );
 
+    console.log('📊 Supabase update response status:', updateRes.status);
+    console.log('📋 Supabase update response headers:', Object.fromEntries(updateRes.headers.entries()));
+
     if (!updateRes.ok) {
-      const errorText = await updateRes.text();
-      console.error('❌ Supabase update failed:', updateRes.status, errorText);
-      return sendError(res, updateRes.status, 'Failed to update seller decision', errorText);
+      let errorDetail = '';
+      try {
+        const errorJson = await updateRes.json();
+        errorDetail = JSON.stringify(errorJson, null, 2);
+      } catch {
+        errorDetail = await updateRes.text();
+      }
+      console.error('❌ Supabase update failed with status', updateRes.status);
+      console.error('❌ Error details:', errorDetail);
+      return sendError(res, 400, `Failed to update seller decision: ${errorDetail}`);
     }
 
     console.log('✅ Refund updated successfully');
+
 
     if (refund.buyer_id) {
       await createDedupedNotification({
