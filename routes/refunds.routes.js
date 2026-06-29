@@ -6,6 +6,7 @@ const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 const { notifySeller } = require('../utils/sellerEmailService');
 const { notifyBuyer } = require('../utils/sellerEmailService');
+const { createDedupedNotification } = require('../controllers/notification.controller');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -25,6 +26,33 @@ function ensureSupabaseConfigured(res) {
     return false;
   }
   return true;
+}
+
+async function notifyRefundStakeholders({ refundCase, title, message, link = null }) {
+  if (!refundCase) return;
+
+  const targetUserIds = [];
+  if (refundCase.buyer_id) targetUserIds.push(refundCase.buyer_id);
+  if (refundCase.seller_id) targetUserIds.push(refundCase.seller_id);
+
+  try {
+    const adminRes = await db.query("SELECT id FROM users WHERE role = 'admin'");
+    adminRes.rows.forEach(row => {
+      if (row.id && !targetUserIds.includes(row.id)) {
+        targetUserIds.push(row.id);
+      }
+    });
+  } catch (err) {
+    console.warn('⚠️ Could not resolve admin recipients for refund notification:', err.message);
+  }
+
+  await Promise.allSettled(targetUserIds.map(userId => createDedupedNotification({
+    userId,
+    title,
+    message,
+    type: 'refund',
+    link
+  })));
 }
 
 // ─── GET /api/refunds/seller — Get seller's refund count ────────────────────
@@ -533,6 +561,105 @@ router.get('/buyer/:buyerId', protect, async (req, res) => {
     return res.status(200).json({ success: true, refundCases });
   } catch (error) {
     console.error('❌ Error in /api/refunds/buyer/:buyerId:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
+  }
+});
+
+router.post('/:refundId/shipment-update', protect, async (req, res) => {
+  try {
+    const { refundId } = req.params;
+    const currentUserId = req.user?.id;
+    const { courier_name, tracking_number, shipping_receipt_url } = req.body;
+
+    if (!refundId) {
+      return res.status(400).json({ success: false, message: 'Missing refundId' });
+    }
+
+    if (!currentUserId) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    if (!ensureSupabaseConfigured(res)) return;
+
+    const caseRes = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refundId)}&select=*`, {
+      method: 'GET',
+      headers: getSupabaseHeaders()
+    });
+
+    if (!caseRes.ok) {
+      const text = await caseRes.text().catch(() => 'Unable to read response');
+      return res.status(caseRes.status).json({ success: false, message: 'Failed to fetch refund case', details: text });
+    }
+
+    const cases = await caseRes.json();
+    const refundCase = Array.isArray(cases) && cases.length > 0 ? cases[0] : null;
+
+    if (!refundCase) {
+      return res.status(404).json({ success: false, message: 'Refund case not found' });
+    }
+
+    if (refundCase.buyer_id !== currentUserId) {
+      return res.status(403).json({ success: false, message: 'You can only update your own return shipment details' });
+    }
+
+    if (refundCase.return_received) {
+      return res.status(409).json({ success: false, message: 'The seller has already received the return, so shipment details can no longer be updated' });
+    }
+
+    if (refundCase.seller_return_choice !== 'return_product') {
+      return res.status(400).json({ success: false, message: 'Shipment update is only available for return-product cases' });
+    }
+
+    const trimmedCourier = typeof courier_name === 'string' ? courier_name.trim() : '';
+    const trimmedTracking = typeof tracking_number === 'string' ? tracking_number.trim() : '';
+    const trimmedReceiptUrl = typeof shipping_receipt_url === 'string' ? shipping_receipt_url.trim() : '';
+
+    const hasShipmentPayload = trimmedCourier || trimmedTracking || trimmedReceiptUrl;
+    if (!hasShipmentPayload) {
+      return res.status(400).json({ success: false, message: 'Please provide at least one shipment detail' });
+    }
+
+    const updatePayload = {
+      updated_at: new Date().toISOString(),
+      shipping_status: 'in_transit',
+      buyer_shipped_at: new Date().toISOString(),
+      resolution_status: 'return_in_transit'
+    };
+
+    if (trimmedCourier) updatePayload.courier_name = trimmedCourier;
+    if (trimmedTracking) updatePayload.tracking_number = trimmedTracking;
+    if (trimmedReceiptUrl) updatePayload.shipping_receipt_url = trimmedReceiptUrl;
+
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refundId)}`, {
+      method: 'PATCH',
+      headers: {
+        ...getSupabaseHeaders(),
+        Prefer: 'return=representation'
+      },
+      body: JSON.stringify(updatePayload)
+    });
+
+    const updatedData = await response.json().catch(async () => {
+      const text = await response.text().catch(() => 'No body');
+      return { errorBody: text };
+    });
+
+    if (!response.ok) {
+      console.error(`❌ Failed updating shipment details for refund ${refundId}: ${response.status} ${response.statusText}`);
+      return res.status(response.status).json({ success: false, message: 'Failed to update shipment details', details: updatedData });
+    }
+
+    const updatedCase = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+    await notifyRefundStakeholders({
+      refundCase: updatedCase || refundCase,
+      title: 'Return Shipment Submitted',
+      message: 'The buyer has submitted return shipment details for this refund case.',
+      link: '/sellers/sellers%20returns.html'
+    });
+
+    return res.status(200).json({ success: true, refundCase: updatedCase });
+  } catch (error) {
+    console.error('❌ Error in POST /api/refunds/:refundId/shipment-update:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
   }
 });
