@@ -1102,6 +1102,72 @@ router.get('/public/:id', async (req, res) => {
   }
 });
 
+// POST /api/refunds/:refundId/seller-return-decision
+router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, async (req, res) => {
+  try {
+    const { refundId } = req.params;
+    const { decision } = req.body;
+    const sellerId = req.user.id;
+
+    if (!['return_product', 'returnless'].includes(decision)) {
+      return sendError(res, 400, 'decision must be return_product or returnless');
+    }
+
+    const refundCheck = await db.query(
+      `SELECT id, seller_id, seller_return_choice, resolution_status, marketmix_decision, buyer_id
+       FROM refund_cases
+       WHERE id = $1`,
+      [refundId]
+    );
+
+    if (!refundCheck.rows.length) {
+      return sendError(res, 404, 'Refund case not found');
+    }
+
+    const refund = refundCheck.rows[0];
+    if (refund.seller_id !== sellerId) {
+      return sendError(res, 403, 'You are not authorized for this refund case');
+    }
+
+    if (refund.seller_return_choice) {
+      return sendError(res, 409, 'Seller decision already submitted');
+    }
+
+    if (refund.marketmix_decision !== 'approved') {
+      return sendError(res, 400, 'Seller decision is only allowed for approved refunds');
+    }
+
+    const nextResolution = decision === 'return_product' ? 'return_required' : 'refund_processing';
+    const nextMessage = decision === 'return_product'
+      ? 'MarketMix approved your refund. The seller has requested the product to be returned. Please ship the product within the allowed return period. Return instructions are now available.'
+      : 'Your refund has been approved. The seller has chosen a returnless refund. Your refund will now be processed.'
+
+    await db.query(
+      `UPDATE refund_cases
+       SET seller_return_choice = $2,
+           seller_return_choice_at = NOW(),
+           resolution_status = $3,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [refundId, decision, nextResolution]
+    );
+
+    if (refund.buyer_id) {
+      await createDedupedNotification({
+        userId: refund.buyer_id,
+        title: decision === 'return_product' ? 'Return Approved' : 'Refund Processing',
+        message: nextMessage,
+        type: 'refund'
+      });
+    }
+
+    return sendSuccess(res, 200, 'Seller decision submitted successfully');
+  } catch (error) {
+    console.error('Error submitting seller return decision:', error);
+    return sendError(res, 500, 'Error submitting seller return decision', error.message);
+  }
+});
+
 // ─── GET /api/seller/refund-cases — Fetch seller's refund cases ────────────────
 router.get('/refund-cases', protect, isSeller, async (req, res) => {
   try {
