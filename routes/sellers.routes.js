@@ -1122,18 +1122,35 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       return sendError(res, 400, 'decision must be return_product or returnless');
     }
 
-    const refundCheck = await db.query(
-      `SELECT id, seller_id, seller_return_choice, resolution_status, marketmix_decision, buyer_id
-       FROM refund_cases
-       WHERE id = $1`,
-      [refundId]
+    const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
+    const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+    if (!SUPABASE_SERVICE_KEY) {
+      return sendError(res, 500, 'Supabase service key not configured');
+    }
+
+    const headers = {
+      'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+      'apikey': SUPABASE_SERVICE_KEY,
+      'Content-Type': 'application/json'
+    };
+
+    // Fetch refund case from Supabase
+    const fetchRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refundId)}&select=*`,
+      { method: 'GET', headers }
     );
 
-    if (!refundCheck.rows.length) {
+    if (!fetchRes.ok) {
+      return sendError(res, fetchRes.status, 'Failed to fetch refund case');
+    }
+
+    const refundCases = await fetchRes.json();
+    if (!Array.isArray(refundCases) || refundCases.length === 0) {
       return sendError(res, 404, 'Refund case not found');
     }
 
-    const refund = refundCheck.rows[0];
+    const refund = refundCases[0];
     if (refund.seller_id !== sellerId) {
       return sendError(res, 403, 'You are not authorized for this refund case');
     }
@@ -1159,35 +1176,41 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     const nextResolution = decision === 'return_product' ? 'return_required' : 'refund_processing';
     const nextMessage = decision === 'return_product'
       ? 'MarketMix approved your refund. The seller has requested the product to be returned. Please ship the product within the allowed return period. Return instructions are now available.'
-      : 'Your refund has been approved. The seller has chosen a returnless refund. Your refund will now be processed.'
+      : 'Your refund has been approved. The seller has chosen a returnless refund. Your refund will now be processed.';
 
-    await db.query(
-      `UPDATE refund_cases
-       SET seller_return_choice = $2,
-           seller_return_choice_at = NOW(),
-           resolution_status = $3,
-           return_address_line1 = $4,
-           return_address_line2 = $5,
-           return_city = $6,
-           return_state = $7,
-           return_postal_code = $8,
-           return_country = $9,
-           buyer_return_deadline = $10,
-           updated_at = NOW()
-       WHERE id = $1`,
-      [
-        refundId,
-        decision,
-        nextResolution,
-        decision === 'return_product' ? return_address : null,
-        decision === 'return_product' ? return_address2 : null,
-        decision === 'return_product' ? return_city : null,
-        decision === 'return_product' ? return_state : null,
-        decision === 'return_product' ? return_postal_code : null,
-        decision === 'return_product' ? return_country : null,
-        decision === 'return_product' ? returnDeadline : null
-      ]
+    const updatePayload = {
+      seller_return_choice: decision,
+      seller_return_choice_at: new Date().toISOString(),
+      resolution_status: nextResolution,
+      updated_at: new Date().toISOString()
+    };
+
+    // Only add return address fields for return_product decisions
+    if (decision === 'return_product') {
+      updatePayload.return_address_line1 = return_address || null;
+      updatePayload.return_address_line2 = return_address2 || null;
+      updatePayload.return_city = return_city || null;
+      updatePayload.return_state = return_state || null;
+      updatePayload.return_postal_code = return_postal_code || null;
+      updatePayload.return_country = return_country || null;
+      updatePayload.buyer_return_deadline = returnDeadline || null;
+    }
+
+    // Update in Supabase
+    const updateRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refundId)}`,
+      {
+        method: 'PATCH',
+        headers: { ...headers, 'Prefer': 'return=representation' },
+        body: JSON.stringify(updatePayload)
+      }
     );
+
+    if (!updateRes.ok) {
+      const errorText = await updateRes.text();
+      console.error('Supabase update failed:', errorText);
+      return sendError(res, updateRes.status, 'Failed to update seller decision', errorText);
+    }
 
     if (refund.buyer_id) {
       await createDedupedNotification({
