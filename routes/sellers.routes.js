@@ -1118,6 +1118,8 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     } = req.body;
     const sellerId = req.user.id;
 
+    console.log('🔍 Seller return decision request:', { refundId, decision, sellerId });
+
     if (!['return_product', 'returnless'].includes(decision)) {
       return sendError(res, 400, 'decision must be return_product or returnless');
     }
@@ -1142,33 +1144,46 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     );
 
     if (!fetchRes.ok) {
-      return sendError(res, fetchRes.status, 'Failed to fetch refund case');
+      const errText = await fetchRes.text();
+      console.error('❌ Supabase fetch error:', fetchRes.status, errText);
+      return sendError(res, fetchRes.status, 'Failed to fetch refund case', errText);
     }
 
     const refundCases = await fetchRes.json();
     if (!Array.isArray(refundCases) || refundCases.length === 0) {
+      console.warn('⚠️ Refund case not found:', refundId);
       return sendError(res, 404, 'Refund case not found');
     }
 
     const refund = refundCases[0];
+    console.log('📋 Fetched refund case:', { id: refund.id, seller_id: refund.seller_id, decision: refund.marketmix_decision });
+
     if (refund.seller_id !== sellerId) {
+      console.warn('⚠️ Authorization failed: seller mismatch', { expected: refund.seller_id, actual: sellerId });
       return sendError(res, 403, 'You are not authorized for this refund case');
     }
 
     if (refund.seller_return_choice) {
+      console.warn('⚠️ Seller decision already submitted:', refund.seller_return_choice);
       return sendError(res, 409, 'Seller decision already submitted');
     }
 
-    if (refund.marketmix_decision !== 'approved') {
-      return sendError(res, 400, 'Seller decision is only allowed for approved refunds');
+    // Check if refund is in an approvable state (approved by MarketMix)
+    // Accept both 'approved' decision and 'waiting_seller_return_decision' resolution status
+    const isApproved = refund.marketmix_decision === 'approved' || refund.resolution_status === 'waiting_seller_return_decision';
+    if (!isApproved) {
+      console.warn('⚠️ Refund not in approvable state. marketmix_decision:', refund.marketmix_decision, 'resolution_status:', refund.resolution_status);
+      return sendError(res, 400, `Seller decision is only allowed for approved refunds. Current marketmix_decision: ${refund.marketmix_decision}, resolution_status: ${refund.resolution_status}`);
     }
 
     const returnDeadline = return_deadline !== undefined ? Number(return_deadline) : null;
     if (decision === 'return_product') {
       if (!return_address || !return_city || !return_state || !return_postal_code || !return_country) {
+        console.warn('⚠️ Missing return address fields for return_product');
         return sendError(res, 400, 'Return address and location information are required for return product decisions');
       }
       if (!Number.isInteger(returnDeadline) || returnDeadline < 3 || returnDeadline > 14) {
+        console.warn('⚠️ Invalid return deadline:', returnDeadline);
         return sendError(res, 400, 'Return deadline must be an integer between 3 and 14 days');
       }
     }
@@ -1196,6 +1211,8 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       updatePayload.buyer_return_deadline = returnDeadline || null;
     }
 
+    console.log('📝 Updating refund with payload:', updatePayload);
+
     // Update in Supabase
     const updateRes = await fetch(
       `${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refundId)}`,
@@ -1208,9 +1225,11 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
 
     if (!updateRes.ok) {
       const errorText = await updateRes.text();
-      console.error('Supabase update failed:', errorText);
+      console.error('❌ Supabase update failed:', updateRes.status, errorText);
       return sendError(res, updateRes.status, 'Failed to update seller decision', errorText);
     }
+
+    console.log('✅ Refund updated successfully');
 
     if (refund.buyer_id) {
       await createDedupedNotification({
@@ -1223,7 +1242,7 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
 
     return sendSuccess(res, 200, 'Seller decision submitted successfully');
   } catch (error) {
-    console.error('Error submitting seller return decision:', error);
+    console.error('❌ Error submitting seller return decision:', error);
     return sendError(res, 500, 'Error submitting seller return decision', error.message);
   }
 });
