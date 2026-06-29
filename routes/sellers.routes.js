@@ -1124,39 +1124,14 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       return sendError(res, 400, 'decision must be return_product or returnless');
     }
 
-    const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
-    const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-
-    if (!SUPABASE_SERVICE_KEY) {
-      return sendError(res, 500, 'Supabase service key not configured');
-    }
-
-    const headers = {
-      'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-      'apikey': SUPABASE_SERVICE_KEY,
-      'Content-Type': 'application/json'
-    };
-
-    // Fetch refund case from Supabase
-    const fetchRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refundId)}&select=*`,
-      { method: 'GET', headers }
-    );
-
-    if (!fetchRes.ok) {
-      const errText = await fetchRes.text();
-      console.error('❌ Supabase fetch error:', fetchRes.status, errText);
-      return sendError(res, fetchRes.status, 'Failed to fetch refund case', errText);
-    }
-
-    const refundCases = await fetchRes.json();
-    if (!Array.isArray(refundCases) || refundCases.length === 0) {
+    const refundCaseRes = await db.query('SELECT * FROM refund_cases WHERE id = $1 LIMIT 1', [refundId]);
+    if (refundCaseRes.rows.length === 0) {
       console.warn('⚠️ Refund case not found:', refundId);
       return sendError(res, 404, 'Refund case not found');
     }
 
-    const refund = refundCases[0];
-    console.log('📋 Fetched refund case:', { id: refund.id, seller_id: refund.seller_id, decision: refund.marketmix_decision });
+    const refund = refundCaseRes.rows[0];
+    console.log('📋 Fetched refund case from local DB:', { id: refund.id, seller_id: refund.seller_id, decision: refund.marketmix_decision });
 
     if (refund.seller_id !== sellerId) {
       console.warn('⚠️ Authorization failed: seller mismatch', { expected: refund.seller_id, actual: sellerId });
@@ -1168,8 +1143,6 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       return sendError(res, 409, 'Seller decision already submitted');
     }
 
-    // Check if refund is in an approvable state (approved by MarketMix)
-    // Accept both 'approved' decision and 'waiting_seller_return_decision' resolution status
     const isApproved = refund.marketmix_decision === 'approved' || refund.resolution_status === 'waiting_seller_return_decision';
     if (!isApproved) {
       console.warn('⚠️ Refund not in approvable state. marketmix_decision:', refund.marketmix_decision, 'resolution_status:', refund.resolution_status);
@@ -1192,46 +1165,41 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       ? 'MarketMix approved your refund. The seller has requested the product to be returned. Please ship the product within the allowed return period. Return instructions are now available.'
       : 'Your refund has been approved. The seller has chosen a returnless refund. Your refund will now be processed.';
 
-    const updatePayload = {
-      seller_return_choice: decision,
-      seller_return_choice_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    
-    // Note: We do NOT change resolution_status here. It stays at 'waiting_seller_return_decision'
-    // until the buyer ships (return_product) or the refund is processed (returnless)
-    
-    // Only add return address fields for return_product decisions
+    const updateFields = [
+      'seller_return_choice = $1',
+      'seller_return_choice_at = $2',
+      'updated_at = $3'
+    ];
+    const updateValues = [decision, new Date().toISOString(), new Date().toISOString()];
+
     if (decision === 'return_product') {
-      updatePayload.return_address_line1 = return_address || null;
-      updatePayload.return_address_line2 = return_address2 || null;
-      updatePayload.return_city = return_city || null;
-      updatePayload.return_state = return_state || null;
-      updatePayload.return_postal_code = return_postal_code || null;
-      updatePayload.return_country = return_country || null;
-      updatePayload.buyer_return_deadline = returnDeadline || null;
+      updateFields.push('return_address_line1 = $4');
+      updateValues.push(return_address || null);
+      updateFields.push('return_address_line2 = $5');
+      updateValues.push(return_address2 || null);
+      updateFields.push('return_city = $6');
+      updateValues.push(return_city || null);
+      updateFields.push('return_state = $7');
+      updateValues.push(return_state || null);
+      updateFields.push('return_postal_code = $8');
+      updateValues.push(return_postal_code || null);
+      updateFields.push('return_country = $9');
+      updateValues.push(return_country || null);
+      updateFields.push('buyer_return_deadline = $10');
+      updateValues.push(returnDeadline || null);
     }
 
-    console.log('📝 Updating refund with payload:', JSON.stringify(updatePayload, null, 2));
-    console.log('📨 Request headers for PATCH:', { 
-      'Authorization': 'Bearer [REDACTED]',
-      'apikey': '[REDACTED]',
-      'Content-Type': headers['Content-Type'],
-      'Prefer': 'return=representation'
-    });
+    updateValues.push(refundId);
+    const updateQuery = `UPDATE refund_cases SET ${updateFields.join(', ')} WHERE id = $${updateValues.length} RETURNING *`;
 
-    // Update in Supabase
-    const updateRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refundId)}`,
-      {
-        method: 'PATCH',
-        headers: { ...headers, 'Prefer': 'return=representation' },
-        body: JSON.stringify(updatePayload)
-      }
-    );
+    console.log('📝 Updating refund via local DB query:', updateQuery, updateValues);
+    const updatedCaseRes = await db.query(updateQuery, updateValues);
+    if (updatedCaseRes.rowCount === 0) {
+      console.error('❌ Local DB update failed for refund case:', refundId);
+      return sendError(res, 500, 'Failed to update seller decision');
+    }
 
-    console.log('📊 Supabase update response status:', updateRes.status);
-    console.log('📋 Supabase update response headers:', Object.fromEntries(updateRes.headers.entries()));
+    console.log('✅ Refund updated successfully');
 
     if (!updateRes.ok) {
       let errorDetail = '';
