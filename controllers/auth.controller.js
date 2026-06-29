@@ -411,7 +411,7 @@ const getMe = async (req, res) => {
     const result = await db.query(
       `SELECT 
         id, email, first_name, last_name, phone, role, avatar_url, google_id,
-        address_line1, city, state, postal_code, country,
+        address_line1, address_line2, city, state, postal_code, country,
         email_notifications, sms_notifications, push_notifications,
         created_at
        FROM users 
@@ -438,6 +438,7 @@ const getMe = async (req, res) => {
         
         // Address fields
         address: user.address_line1,
+        address2: user.address_line2 || '',
         city: user.city,
         state: user.state,
         postalCode: user.postal_code,
@@ -710,6 +711,7 @@ const updateAddress = async (req, res) => {
   try {
     const {
       address,      // Match frontend field name
+      address2,
       city,
       state,
       postalCode,   // Match frontend field name
@@ -717,7 +719,7 @@ const updateAddress = async (req, res) => {
     } = req.body;
 
     // At least one address field must be provided
-    if (!address && !city && !state && !postalCode && !country) {
+    if (!address && !address2 && !city && !state && !postalCode && !country) {
       return sendError(res, 400, 'No address fields provided to update');
     }
 
@@ -726,12 +728,13 @@ const updateAddress = async (req, res) => {
     let idx = 1;
     
     if (address !== undefined) { fields.push(`address_line1 = $${idx++}`); values.push(address); }
+    if (address2 !== undefined) { fields.push(`address_line2 = $${idx++}`); values.push(address2); }
     if (city !== undefined) { fields.push(`city = $${idx++}`); values.push(city); }
     if (state !== undefined) { fields.push(`state = $${idx++}`); values.push(state); }
     if (postalCode !== undefined) { fields.push(`postal_code = $${idx++}`); values.push(postalCode); }
     if (country !== undefined) { fields.push(`country = $${idx++}`); values.push(country); }
 
-    const query = `UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING id, email, first_name, last_name, phone, address_line1, city, state, postal_code, country`;
+    const query = `UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING id, email, first_name, last_name, phone, address_line1, address_line2, city, state, postal_code, country`;
     values.push(req.user.id);
 
     const result = await db.query(query, values);
@@ -740,35 +743,59 @@ const updateAddress = async (req, res) => {
     const user = result.rows[0];
     console.log(`✅ Address updated for user: ${user.email}`);
 
+    // Also sync into addresses table so it shows up in checkout
+    if (user.address_line1) {
+      const existingAddr = await db.query(
+        `SELECT id FROM addresses WHERE user_id = $1 AND is_deleted = false ORDER BY is_default DESC, created_at ASC LIMIT 1`,
+        [req.user.id]
+      );
 
-// Also sync into addresses table so it shows up in checkout
-if (user.address_line1) {
-  const existingAddr = await db.query(
-    `SELECT id FROM addresses WHERE user_id = $1 AND is_deleted = false ORDER BY is_default DESC, created_at ASC LIMIT 1`,
-    [req.user.id]
-  );
+      if (existingAddr.rows.length) {
+        await db.query(
+          `UPDATE addresses SET
+             full_name = COALESCE(full_name, $1),
+             address_line1 = $2,
+             address_line2 = $3,
+             city = $4,
+             state = $5,
+             postal_code = $6,
+             country = $7,
+             updated_at = NOW()
+           WHERE id = $8`,
+          [
+            `${user.first_name || ''} ${user.last_name || ''}`.trim(),
+            user.address_line1,
+            user.address_line2 || null,
+            user.city,
+            user.state,
+            user.postal_code,
+            user.country,
+            existingAddr.rows[0].id
+          ]
+        );
+      } else {
+        await db.query(
+          `INSERT INTO addresses (user_id, full_name, phone, address_line1, address_line2, city, state, country, postal_code, is_default)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true)`,
+          [
+            req.user.id,
+            `${user.first_name || ''} ${user.last_name || ''}`.trim(),
+            user.phone || null,
+            user.address_line1,
+            user.address_line2 || null,
+            user.city,
+            user.state,
+            user.country || 'Nigeria',
+            user.postal_code
+          ]
+        );
+      }
+    }
 
-  if (existingAddr.rows.length) {
-    await db.query(
-      `UPDATE addresses SET
-         full_name = COALESCE(full_name, $1),
-         address_line1 = $2, city = $3, state = $4,
-         postal_code = $5, country = $6, updated_at = NOW()
-       WHERE id = $7`,
-      [`${user.first_name || ''} ${user.last_name || ''}`.trim(), user.address_line1, user.city, user.state, user.postal_code, user.country, existingAddr.rows[0].id]
-    );
-  } else {
-    await db.query(
-      `INSERT INTO addresses (user_id, full_name, phone, address_line1, city, state, country, postal_code, is_default)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true)`,
-      [req.user.id, `${user.first_name || ''} ${user.last_name || ''}`.trim(), user.phone || null, user.address_line1, user.city, user.state, user.country || 'Nigeria', user.postal_code]
-    );
-  }
-}
-
-    return sendSuccess(res, 200, 'Address updated successfully', { 
+    return sendSuccess(res, 200, 'Address updated successfully', {
       address: {
         address: user.address_line1,
+        address2: user.address_line2 || '',
         city: user.city,
         state: user.state,
         postalCode: user.postal_code,

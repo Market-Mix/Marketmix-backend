@@ -1106,7 +1106,16 @@ router.get('/public/:id', async (req, res) => {
 router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, async (req, res) => {
   try {
     const { refundId } = req.params;
-    const { decision } = req.body;
+    const {
+      decision,
+      return_address,
+      return_address2,
+      return_city,
+      return_state,
+      return_postal_code,
+      return_country,
+      return_deadline
+    } = req.body;
     const sellerId = req.user.id;
 
     if (!['return_product', 'returnless'].includes(decision)) {
@@ -1137,6 +1146,16 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       return sendError(res, 400, 'Seller decision is only allowed for approved refunds');
     }
 
+    const returnDeadline = return_deadline !== undefined ? Number(return_deadline) : null;
+    if (decision === 'return_product') {
+      if (!return_address || !return_city || !return_state || !return_postal_code || !return_country) {
+        return sendError(res, 400, 'Return address and location information are required for return product decisions');
+      }
+      if (!Number.isInteger(returnDeadline) || returnDeadline < 3 || returnDeadline > 14) {
+        return sendError(res, 400, 'Return deadline must be an integer between 3 and 14 days');
+      }
+    }
+
     const nextResolution = decision === 'return_product' ? 'return_required' : 'refund_processing';
     const nextMessage = decision === 'return_product'
       ? 'MarketMix approved your refund. The seller has requested the product to be returned. Please ship the product within the allowed return period. Return instructions are now available.'
@@ -1147,9 +1166,27 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
        SET seller_return_choice = $2,
            seller_return_choice_at = NOW(),
            resolution_status = $3,
+           return_address_line1 = $4,
+           return_address_line2 = $5,
+           return_city = $6,
+           return_state = $7,
+           return_postal_code = $8,
+           return_country = $9,
+           buyer_return_deadline = $10,
            updated_at = NOW()
        WHERE id = $1`,
-      [refundId, decision, nextResolution]
+      [
+        refundId,
+        decision,
+        nextResolution,
+        decision === 'return_product' ? return_address : null,
+        decision === 'return_product' ? return_address2 : null,
+        decision === 'return_product' ? return_city : null,
+        decision === 'return_product' ? return_state : null,
+        decision === 'return_product' ? return_postal_code : null,
+        decision === 'return_product' ? return_country : null,
+        decision === 'return_product' ? returnDeadline : null
+      ]
     );
 
     if (refund.buyer_id) {
