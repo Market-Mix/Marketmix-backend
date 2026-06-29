@@ -1161,6 +1161,10 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       }
     }
 
+    const deadlineTimestamp = decision === 'return_product' && Number.isInteger(returnDeadline)
+      ? new Date(Date.now() + returnDeadline * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+
     const nextMessage = decision === 'return_product'
       ? 'MarketMix approved your refund. The seller has requested the product to be returned. Please ship the product within the allowed return period. Return instructions are now available.'
       : 'Your refund has been approved. The seller has chosen a returnless refund. Your refund will now be processed.';
@@ -1186,7 +1190,7 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       updateFields.push('return_country = $9');
       updateValues.push(return_country || null);
       updateFields.push('buyer_return_deadline = $10');
-      updateValues.push(returnDeadline || null);
+      updateValues.push(deadlineTimestamp);
     }
 
     updateValues.push(refundId);
@@ -1197,21 +1201,6 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     if (updatedCaseRes.rowCount === 0) {
       console.error('❌ Local DB update failed for refund case:', refundId);
       return sendError(res, 500, 'Failed to update seller decision');
-    }
-
-    console.log('✅ Refund updated successfully');
-
-    if (!updateRes.ok) {
-      let errorDetail = '';
-      try {
-        const errorJson = await updateRes.json();
-        errorDetail = JSON.stringify(errorJson, null, 2);
-      } catch {
-        errorDetail = await updateRes.text();
-      }
-      console.error('❌ Supabase update failed with status', updateRes.status);
-      console.error('❌ Error details:', errorDetail);
-      return sendError(res, 400, `Failed to update seller decision: ${errorDetail}`);
     }
 
     console.log('✅ Refund updated successfully');
