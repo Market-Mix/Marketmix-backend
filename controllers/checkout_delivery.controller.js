@@ -48,8 +48,11 @@ const quotesBySeller = quotes.reduce((acc, q) => {
   return acc;
 }, {});
 
+// controllers/checkout_delivery.controller.js — getDeliveryOptions, before sendSuccess
+const sellersWithoutQuotes = sellerIds.filter(sid => !(quotesBySeller[sid]?.length));
+
 return sendSuccess(res, 200, 'Delivery options fetched', {
-  quotesBySeller, all: quotes, address, sellerNames
+  quotesBySeller, all: quotes, address, sellerNames, sellersWithoutQuotes
 });
 
   } catch (err) {

@@ -75,6 +75,25 @@ const initiatePayment = async (req, res) => {
 
     await client.query('BEGIN');
 
+// ── NEW: validate delivery coverage FIRST, before any inserts ──────────
+    const items = session.items_snapshot || [];
+    const allSellerIds = [...new Set(items.map(i => i.seller_id))];
+
+    const deliveryCheck = await client.query(
+      `SELECT seller_id, method, provider_id, fee FROM checkout_session_deliveries WHERE checkout_session_id=$1`,
+      [sessionId]
+    );
+    const coveredSellerIds = new Set(deliveryCheck.rows.map(r => r.seller_id));
+    const missingDelivery = allSellerIds.filter(id => !coveredSellerIds.has(id));
+
+    if (missingDelivery.length) {
+      await client.query('ROLLBACK');
+      return sendError(res, 400, 'Please select a delivery method for every seller before payment');
+    }
+
+    const sellerDeliveries = new Map(deliveryCheck.rows.map(r => [r.seller_id, r]));
+
+
     // 2. Create master order
     const orderStatus  = 'awaiting_payment';
     const paymentStatus = 'unpaid';
@@ -128,26 +147,10 @@ const orderRes = await client.query(
   ]
  );
 
+      const order = orderRes.rows[0];
  
 // controllers/payment.controller.js — initiatePayment
-const deliveryCheck = await client.query(
-  `SELECT seller_id, method, provider_id, fee FROM checkout_session_deliveries WHERE checkout_session_id=$1`,
-  [sessionId]
-);
-const items = session.items_snapshot || [];
-const allSellerIds = [...new Set(items.map(i => i.seller_id))];
-const coveredSellerIds = new Set(deliveryCheck.rows.map(r => r.seller_id));
-const missingDelivery = allSellerIds.filter(id => !coveredSellerIds.has(id));
-
-if (missingDelivery.length) {
-  return sendError(res, 400, 'Please select a delivery method for every seller before payment');
-}
-
-const sellerDeliveries = new Map(deliveryCheck.rows.map(r => [r.seller_id, r]));
-    const order = orderRes.rows[0];
-
-    // 3. Create vendor orders from items snapshot
-    
+ // 3. Create vendor orders from items snapshot
     const vendorMap = {};
     for (const item of items) {
       const sid = item.seller_id;

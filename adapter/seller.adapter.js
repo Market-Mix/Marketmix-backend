@@ -18,10 +18,22 @@ async function getQuote(sessionId, items, address, sellerId) {
 
     console.log('[seller.adapter] raw settings row for', sellerId, ':', settingsRes.rows[0]);
 
-    if (!settingsRes.rows.length) {
-      console.warn('[seller.adapter] no vendor_shipping_settings row for seller', sellerId);
-      return null;
-    }
+// adapter/seller.adapter.js — getQuote()
+if (!settingsRes.rows.length) {
+  console.warn('[seller.adapter] no vendor_shipping_settings row for seller', sellerId);
+  return {
+    provider: 'seller',
+    providerId: `seller-${sellerId}`,
+    providerLabel: 'Standard Delivery',
+    sellerId,
+    fee: 1500, // sensible platform default
+    isFreeShipping: false,
+    estimatedDelivery: new Date(Date.now() + 5*86400000).toISOString().split('T')[0],
+    estimatedDays: '3–5 business days',
+    quoteReference: `seller-${sellerId}-default-${Date.now()}`,
+    rawSettings: null,
+  };
+}
 
     const s = settingsRes.rows[0];
     if (s.is_active === false) {
