@@ -569,7 +569,7 @@ router.post('/:refundId/shipment-update', protect, async (req, res) => {
   try {
     const { refundId } = req.params;
     const currentUserId = req.user?.id;
-    const { courier_name, tracking_number, shipping_receipt_url } = req.body;
+    const { courier_name, tracking_number, shipping_receipt_url, shipment_notes, notes } = req.body;
 
     if (!refundId) {
       return res.status(400).json({ success: false, message: 'Missing refundId' });
@@ -579,20 +579,8 @@ router.post('/:refundId/shipment-update', protect, async (req, res) => {
       return res.status(401).json({ success: false, message: 'Authentication required' });
     }
 
-    if (!ensureSupabaseConfigured(res)) return;
-
-    const caseRes = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refundId)}&select=*`, {
-      method: 'GET',
-      headers: getSupabaseHeaders()
-    });
-
-    if (!caseRes.ok) {
-      const text = await caseRes.text().catch(() => 'Unable to read response');
-      return res.status(caseRes.status).json({ success: false, message: 'Failed to fetch refund case', details: text });
-    }
-
-    const cases = await caseRes.json();
-    const refundCase = Array.isArray(cases) && cases.length > 0 ? cases[0] : null;
+    const refundCaseRes = await db.query('SELECT * FROM refund_cases WHERE id = $1 LIMIT 1', [refundId]);
+    const refundCase = refundCaseRes.rows[0];
 
     if (!refundCase) {
       return res.status(404).json({ success: false, message: 'Refund case not found' });
@@ -613,45 +601,53 @@ router.post('/:refundId/shipment-update', protect, async (req, res) => {
     const trimmedCourier = typeof courier_name === 'string' ? courier_name.trim() : '';
     const trimmedTracking = typeof tracking_number === 'string' ? tracking_number.trim() : '';
     const trimmedReceiptUrl = typeof shipping_receipt_url === 'string' ? shipping_receipt_url.trim() : '';
+    const trimmedNotes = typeof shipment_notes === 'string'
+      ? shipment_notes.trim()
+      : (typeof notes === 'string' ? notes.trim() : '');
 
-    const hasShipmentPayload = trimmedCourier || trimmedTracking || trimmedReceiptUrl;
+    const hasShipmentPayload = trimmedCourier || trimmedTracking || trimmedReceiptUrl || trimmedNotes;
     if (!hasShipmentPayload) {
       return res.status(400).json({ success: false, message: 'Please provide at least one shipment detail' });
     }
 
-    const updatePayload = {
-      updated_at: new Date().toISOString(),
-      shipping_status: 'in_transit',
-      buyer_shipped_at: new Date().toISOString(),
-      resolution_status: 'return_in_transit'
-    };
+    const alreadySubmitted = Boolean(
+      refundCase.buyer_shipped_at ||
+      refundCase.courier_name ||
+      refundCase.tracking_number ||
+      refundCase.shipping_receipt_url ||
+      refundCase.shipment_notes ||
+      refundCase.shipping_status
+    );
 
-    if (trimmedCourier) updatePayload.courier_name = trimmedCourier;
-    if (trimmedTracking) updatePayload.tracking_number = trimmedTracking;
-    if (trimmedReceiptUrl) updatePayload.shipping_receipt_url = trimmedReceiptUrl;
-
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/refund_cases?id=eq.${encodeURIComponent(refundId)}`, {
-      method: 'PATCH',
-      headers: {
-        ...getSupabaseHeaders(),
-        Prefer: 'return=representation'
-      },
-      body: JSON.stringify(updatePayload)
-    });
-
-    const updatedData = await response.json().catch(async () => {
-      const text = await response.text().catch(() => 'No body');
-      return { errorBody: text };
-    });
-
-    if (!response.ok) {
-      console.error(`❌ Failed updating shipment details for refund ${refundId}: ${response.status} ${response.statusText}`);
-      return res.status(response.status).json({ success: false, message: 'Failed to update shipment details', details: updatedData });
+    if (alreadySubmitted) {
+      return res.status(409).json({ success: false, message: 'Shipment details have already been submitted for this refund case.' });
     }
 
-    const updatedCase = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+    const timestamp = new Date().toISOString();
+    const updateQuery = `
+      UPDATE refund_cases
+      SET updated_at = $1,
+          resolution_status = $2,
+          shipping_status = $3,
+          buyer_shipped_at = $4,
+          courier_name = COALESCE($5, courier_name),
+          tracking_number = COALESCE($6, tracking_number),
+          shipping_receipt_url = COALESCE($7, shipping_receipt_url),
+          shipment_notes = COALESCE($8, shipment_notes)
+      WHERE id = $9
+      RETURNING *
+    `;
+
+    const updateValues = [timestamp, 'return_in_transit', 'in_transit', timestamp, trimmedCourier || null, trimmedTracking || null, trimmedReceiptUrl || null, trimmedNotes || null, refundId];
+    const updateRes = await db.query(updateQuery, updateValues);
+    const updatedCase = updateRes.rows[0];
+
+    if (!updatedCase) {
+      return res.status(500).json({ success: false, message: 'Failed to update shipment details' });
+    }
+
     await notifyRefundStakeholders({
-      refundCase: updatedCase || refundCase,
+      refundCase: updatedCase,
       title: 'Return Shipment Submitted',
       message: 'The buyer has submitted return shipment details for this refund case.',
       link: '/sellers/sellers%20returns.html'
