@@ -28,8 +28,9 @@ router.post('/', express.json(), async (req, res) => {
     if (!voRes.rows.length) return;
     const vo = voRes.rows[0];
 
-    await db.query(`UPDATE vendor_orders SET shipment_status=$1, courier_name=COALESCE($2,courier_name), updated_at=NOW() WHERE id=$3`,
-      [status, courier?.name, vo.id]);
+  // routes/shipbubble_webhook.routes.js — replace the vendor_orders UPDATE
+await db.query(`UPDATE vendor_orders SET shipment_status=$1, courier_name=COALESCE($2,courier_name), tracking_link=COALESCE($3,tracking_link), updated_at=NOW() WHERE id=$4`,
+  [status, courier?.name, req.body.tracking_url || null, vo.id]);
 
     const map = { picked_up: 'shipped', in_transit: 'shipped', completed: 'delivered' };
 
