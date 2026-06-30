@@ -144,78 +144,58 @@ const getUserOrders = async (req, res) => {
     const offset = (page - 1) * limit;
     
     // Build query - join products and seller info to get product names and seller store names
-    let sql = `SELECT
-      o.id,
-      o.total_amount,
-      o.status,
-      o.created_at,
-      o.delivery_confirmed_at,
-      o.payment_status,
-      o.payment_method,
-      o.delivery_method,
-      o.tracking_id, o.courier_name, o.tracking_link,
-      COALESCE((
-        SELECT COALESCE(sp2.business_name, u2.first_name || ' ' || u2.last_name)
-        FROM order_items oi2
-        LEFT JOIN seller_profiles sp2 ON oi2.seller_id = sp2.user_id
-        LEFT JOIN users u2 ON oi2.seller_id = u2.id
-        WHERE oi2.order_id = o.id AND oi2.seller_id IS NOT NULL
-        LIMIT 1
-      ), NULL) AS seller_name,
-      COALESCE((
-        SELECT oi2.seller_id
-        FROM order_items oi2
-        WHERE oi2.order_id = o.id AND oi2.seller_id IS NOT NULL
-        LIMIT 1
-      ), NULL) AS seller_id,
-      COALESCE(SUM(oi.quantity), 0) as total_items,
-      COALESCE(
-        json_agg(
-json_build_object(
-  'id', oi.id, 'product_id', oi.product_id, ...,
-  'vendorOrderId', oi.vendor_order_id,
-  'sellerStatus', vo.status,
-  'sellerTracking', json_build_object(
-    'courier', vo.courier_name, 'code', vo.tracking_code, 'link', vo.tracking_link
-  )
+    let sql = `WITH order_sellers AS (
+  SELECT DISTINCT order_id, seller_id FROM order_items WHERE seller_id IS NOT NULL
 )
--- join: LEFT JOIN vendor_orders vo ON vo.id = oi.vendor_order_id
-          json_build_object(
-            'id', oi.id,
-            'product_id', oi.product_id,
-            'image', p.main_image_url,
-            'product_name', p.name,
-            'quantity', oi.quantity,
-            'price', oi.price_at_purchase,
-            'seller_id', oi.seller_id,
-            'seller_name', COALESCE(sp.business_name, su.first_name || ' ' || su.last_name),
-            'color', oi.color,
-            'size', oi.size,
-            'product_snapshot', oi.product_snapshot
-          ) ORDER BY oi.created_at
-        ) FILTER (WHERE oi.id IS NOT NULL), '[]'
-      ) as items
-     FROM orders o
-     LEFT JOIN order_items oi ON o.id = oi.order_id
-     LEFT JOIN products p ON oi.product_id = p.id
-     LEFT JOIN seller_profiles sp ON oi.seller_id = sp.user_id
-     LEFT JOIN users su ON oi.seller_id = su.id
-     WHERE o.buyer_id = $1`;
-    
-    const params = [user_id];
-    
-    // Add status filter if provided
-    if (status) {
-      sql += ` AND o.status = $2`;
-      params.push(status);
-    }
-    
-    sql += ` GROUP BY o.id, o.total_amount, o.status, o.created_at
-             ORDER BY o.created_at DESC
-             LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    
-    params.push(limit, offset);
-    
+SELECT
+  o.id, o.total_amount, o.status, o.created_at, o.delivery_confirmed_at,
+  o.payment_status, o.payment_method, o.delivery_method,
+  COALESCE(json_agg(
+    json_build_object(
+      'sellerId',     os.seller_id,
+      'sellerName',   COALESCE(sp.business_name, su.first_name || ' ' || su.last_name),
+      'vendorOrderId', vo.id,
+      'status',       COALESCE(vo.status, o.status),
+      'courierName',  COALESCE(vo.courier_name, o.courier_name),
+      'trackingCode', COALESCE(vo.tracking_code, o.tracking_id),
+      'trackingLink', COALESCE(vo.tracking_link, o.tracking_link),
+      'shippingFee',  vo.shipping_fee,
+      'items',        seller_items.items
+    ) ORDER BY os.seller_id
+  ) FILTER (WHERE os.seller_id IS NOT NULL), '[]') AS seller_groups
+FROM orders o
+JOIN order_sellers os ON os.order_id = o.id
+LEFT JOIN vendor_orders vo ON vo.order_id = o.id AND vo.seller_id = os.seller_id
+LEFT JOIN users su ON su.id = os.seller_id
+LEFT JOIN seller_profiles sp ON sp.user_id = os.seller_id
+LEFT JOIN LATERAL (
+  SELECT json_agg(
+    json_build_object(
+      'id', oi.id, 'productId', oi.product_id, 'productName', p.name,
+      'image', p.main_image_url, 'quantity', oi.quantity,
+      'price', oi.price_at_purchase, 'color', oi.color, 'size', oi.size
+    ) ORDER BY oi.created_at
+  ) AS items
+  FROM order_items oi
+  JOIN products p ON p.id = oi.product_id
+  WHERE oi.order_id = o.id AND oi.seller_id = os.seller_id
+) seller_items ON true
+WHERE o.buyer_id = $1`;
+
+const params = [user_id];
+
+if (status) {
+  sql += ` AND o.status = $2`;
+  params.push(status);
+}
+
+sql += ` GROUP BY o.id
+         ORDER BY o.created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+
+params.push(limit, offset);
+
+
     console.log(`🔍 [Orders] Executing query with params:`, params);
     
     // Execute main query
@@ -260,51 +240,46 @@ const getOrderById = async (req, res) => {
     const user_id = req.user.id;
 
     const result = await db.query(
-      `SELECT 
-        o.id, o.total_amount, o.status, o.shipping_address, 
-        o.payment_method,
-        o.tracking_id, o.courier_name, o.tracking_link,
-        o.notes, o.created_at, o.updated_at,
-
-        COALESCE((
-          SELECT COALESCE(sp2.business_name, u2.first_name || ' ' || u2.last_name)
-          FROM order_items oi2
-          LEFT JOIN seller_profiles sp2 ON oi2.seller_id = sp2.user_id
-          LEFT JOIN users u2 ON oi2.seller_id = u2.id
-          WHERE oi2.order_id = o.id AND oi2.seller_id IS NOT NULL
-          LIMIT 1
-        ), NULL) AS seller_name,
-        COALESCE((
-          SELECT oi2.seller_id
-          FROM order_items oi2
-          WHERE oi2.order_id = o.id AND oi2.seller_id IS NOT NULL
-          LIMIT 1
-        ), NULL) AS seller_id,
-        COALESCE(
-          json_agg(
-            json_build_object(
-              'id', oi.id,
-              'product_id', oi.product_id,
-              'product_name', p.name,
-              'quantity', oi.quantity,
-              'price', oi.price_at_purchase,
-              'seller_id', oi.seller_id,
-              'seller_name', COALESCE(sp.business_name, su.first_name || ' ' || su.last_name),
-              'color', oi.color,
-              'size', oi.size,
-              'product_snapshot', oi.product_snapshot
-            )
-          ) FILTER (WHERE oi.id IS NOT NULL), '[]'
-        ) as items
-       FROM orders o
-       LEFT JOIN order_items oi ON o.id = oi.order_id
-       LEFT JOIN products p ON oi.product_id = p.id
-       LEFT JOIN seller_profiles sp ON oi.seller_id = sp.user_id
-       LEFT JOIN users su ON oi.seller_id = su.id
-       WHERE o.id = $1 AND o.buyer_id = $2
-       GROUP BY o.id`,
-      [orderId, user_id]
-    );
+  `WITH order_sellers AS (
+     SELECT DISTINCT order_id, seller_id FROM order_items WHERE order_id = $1 AND seller_id IS NOT NULL
+   )
+   SELECT
+     o.id, o.total_amount, o.status, o.shipping_address, o.payment_method,
+     o.notes, o.created_at, o.updated_at,
+     COALESCE(json_agg(
+       json_build_object(
+         'sellerId',     os.seller_id,
+         'sellerName',   COALESCE(sp.business_name, su.first_name || ' ' || su.last_name),
+         'vendorOrderId', vo.id,
+         'status',       COALESCE(vo.status, o.status),
+         'courierName',  COALESCE(vo.courier_name, o.courier_name),
+         'trackingCode', COALESCE(vo.tracking_code, o.tracking_id),
+         'trackingLink', COALESCE(vo.tracking_link, o.tracking_link),
+         'shippingFee',  vo.shipping_fee,
+         'items',        seller_items.items
+       ) ORDER BY os.seller_id
+     ) FILTER (WHERE os.seller_id IS NOT NULL), '[]') AS seller_groups
+   FROM orders o
+   JOIN order_sellers os ON os.order_id = o.id
+   LEFT JOIN vendor_orders vo ON vo.order_id = o.id AND vo.seller_id = os.seller_id
+   LEFT JOIN users su ON su.id = os.seller_id
+   LEFT JOIN seller_profiles sp ON sp.user_id = os.seller_id
+   LEFT JOIN LATERAL (
+     SELECT json_agg(
+       json_build_object(
+         'id', oi.id, 'productId', oi.product_id, 'productName', p.name,
+         'image', p.main_image_url, 'quantity', oi.quantity,
+         'price', oi.price_at_purchase, 'color', oi.color, 'size', oi.size
+       ) ORDER BY oi.created_at
+     ) AS items
+     FROM order_items oi
+     JOIN products p ON p.id = oi.product_id
+     WHERE oi.order_id = o.id AND oi.seller_id = os.seller_id
+   ) seller_items ON true
+   WHERE o.id = $1 AND o.buyer_id = $2
+   GROUP BY o.id`,
+  [orderId, user_id]
+);
 
     if (result.rows.length === 0) {
       return sendError(res, 404, 'Order not found');
