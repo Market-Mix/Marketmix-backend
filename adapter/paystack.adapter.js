@@ -5,7 +5,7 @@
  * Env vars required:
  *   PAYSTACK_SECRET_KEY   — sk_live_... or sk_test_...
  *   PAYSTACK_PUBLIC_KEY   — pk_live_... or pk_test_...
- *   APP_BASE_URL          — https://marketmix-backend.onrender.com
+ *   FRONTEND_URL        — https://marketmix.vercel.app
  */
 
 const PAYSTACK_BASE = 'https://api.paystack.co';
@@ -55,7 +55,7 @@ async function initiate({
     amount:    Math.round(amount * 100), // kobo
     currency,
     reference,
-    callback_url: callbackUrl || `${process.env.APP_BASE_URL}/api/payments/paystack/callback`,
+    callback_url: callbackUrl || `${process.env.FRONTEND_URL}/api/payments/paystack/callback`,
     metadata: {
       order_id:   orderId,
       provider:   'paystack',
