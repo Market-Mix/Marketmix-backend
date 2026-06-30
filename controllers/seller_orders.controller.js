@@ -274,16 +274,16 @@ const updateSellerOrderStatus = async (req, res) => {
     }
 
     // After validation, replace the UPDATE query:
+// updateSellerOrderStatus — replace the orders UPDATE with vendor_orders
 const result = await db.query(
-  `UPDATE orders SET status = $1, updated_at = NOW(),
-    tracking_id = COALESCE($3, tracking_id),
-    courier_name = COALESCE($4, courier_name),
-    tracking_link = COALESCE($5, tracking_link)
-   WHERE id = $2 RETURNING id, status, updated_at, buyer_id, tracking_id, courier_name, tracking_link`,
-  [status.toLowerCase(), orderId,
-   req.body.trackingId || null,
-   req.body.courierName || null,
-   req.body.trackingLink || null]
+  `UPDATE vendor_orders SET status=$1, updated_at=NOW(),
+     tracking_code = COALESCE($3, tracking_code),
+     courier_name  = COALESCE($4, courier_name),
+     tracking_link = COALESCE($5, tracking_link)
+   WHERE order_id=$2 AND seller_id=$6
+   RETURNING id, status, updated_at, tracking_code, courier_name, tracking_link`,
+  [status.toLowerCase(), orderId, req.body.trackingId || null,
+   req.body.courierName || null, req.body.trackingLink || null, sellerId]
 );
 
     const shortId   = String(orderId).substring(0, 8);

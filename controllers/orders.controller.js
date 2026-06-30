@@ -171,6 +171,15 @@ const getUserOrders = async (req, res) => {
       COALESCE(SUM(oi.quantity), 0) as total_items,
       COALESCE(
         json_agg(
+json_build_object(
+  'id', oi.id, 'product_id', oi.product_id, ...,
+  'vendorOrderId', oi.vendor_order_id,
+  'sellerStatus', vo.status,
+  'sellerTracking', json_build_object(
+    'courier', vo.courier_name, 'code', vo.tracking_code, 'link', vo.tracking_link
+  )
+)
+-- join: LEFT JOIN vendor_orders vo ON vo.id = oi.vendor_order_id
           json_build_object(
             'id', oi.id,
             'product_id', oi.product_id,
