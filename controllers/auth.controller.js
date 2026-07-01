@@ -1085,7 +1085,7 @@ module.exports = {
   changePassword,
   updateAddress,
   updateNotificationPreferences,
-  deleteAccount
+  deleteAccount,
   silentLogin 
 };
 
