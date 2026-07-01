@@ -15,7 +15,7 @@ const {
   changePassword,
   updateAddress,
   updateNotificationPreferences,
-  deleteAccount
+  deleteAccount,
   silentLogin
 } = require('../controllers/auth.controller');
 const { protect } = require('../middlewares/auth.middleware');
