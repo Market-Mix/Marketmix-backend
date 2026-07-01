@@ -56,6 +56,9 @@ app.get('/', (req, res) => {
   });
 });
 
+const cookieParser = require('cookie-parser');
+app.use(cookieParser());
+
 // Import routes (keep your existing imports)
 const authRoutes = require('./routes/auth.routes');
 const buyerRoutes = require('./routes/buyer.routes');

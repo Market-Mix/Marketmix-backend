@@ -6,6 +6,20 @@ const { notifySeller } = require('../utils/sellerEmailService');
 const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
 
+const REFRESH_COOKIE_OPTS = {
+  httpOnly: true,
+  secure: true,        // both render + vercel are https
+  sameSite: 'none',    // cross-domain (frontend vercel, backend render)
+  maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+};
+
+const { generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
+
+function setRefreshCookie(res, user) {
+  const refreshToken = generateRefreshToken({ id: user.id, email: user.email, role: user.role });
+  res.cookie('mm_refresh', refreshToken, REFRESH_COOKIE_OPTS);
+}
+
 const createSellerWelcomeNotification = async (userId) => {
   try {
     await db.query(
@@ -96,6 +110,8 @@ const register = async (req, res) => {
       role: user.role
     });
 
+    setRefreshCookie(res, user);
+
     return sendSuccess(res, 201, 'User registered successfully', {
       user: {
         id: user.id,
@@ -174,6 +190,8 @@ const googleRegister = async (req, res) => {
         role: user.role
       });
 
+      setRefreshCookie(res, user);
+
       return sendSuccess(res, 200, 'Login successful', {
         user: {
           id: user.id,
@@ -226,6 +244,8 @@ const googleRegister = async (req, res) => {
       email: user.email,
       role: user.role
     });
+
+    setRefreshCookie(res, user);
 
     console.log(`✅ New user registered via Google: ${user.email}`);
 
@@ -292,6 +312,8 @@ const googleLogin = async (req, res) => {
       email: user.email,
       role: user.role
     });
+
+    setRefreshCookie(res, user);
 
     if (user.role === 'seller') {
       notifySeller(user.id, 'newLogin', {
@@ -374,6 +396,8 @@ const login = async (req, res) => {
       email: user.email,
       role: user.role
     });
+
+    setRefreshCookie(res, user);
 
      if (user.role === 'seller') {
      notifySeller(user.id, 'newLogin', {
@@ -532,6 +556,7 @@ const logout = async (req, res) => {
 
     // If using httpOnly cookies, clear them
     res.clearCookie('token');
+    res.clearCookie('mm_refresh', REFRESH_COOKIE_OPTS);
     
     return sendSuccess(res, 200, 'Logged out successfully', {
       message: 'Your cart has been saved locally. It will sync when you log back in.',
@@ -1000,6 +1025,50 @@ const resetPassword = async (req, res) => {
   }
 };
 
+/**
+ * @desc Silent login using httpOnly refresh cookie — called from index.html
+ * @route POST /api/auth/silent-login
+ * @access Public (cookie-based)
+ */
+const silentLogin = async (req, res) => {
+  try {
+    const refreshToken = req.cookies?.mm_refresh;
+    if (!refreshToken) return sendError(res, 401, 'No active session');
+
+    const decoded = verifyRefreshToken(refreshToken);
+
+    const result = await db.query(
+      `SELECT id, email, first_name, last_name, phone, role, avatar_url
+       FROM users WHERE id = $1 AND is_deleted = FALSE`,
+      [decoded.id]
+    );
+    if (!result.rows.length) {
+      res.clearCookie('mm_refresh', REFRESH_COOKIE_OPTS);
+      return sendError(res, 401, 'Session invalid');
+    }
+
+    const user = result.rows[0];
+    const token = generateToken({ id: user.id, email: user.email, role: user.role });
+    setRefreshCookie(res, user); // rotate
+
+    return sendSuccess(res, 200, 'Session restored', {
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        phone: user.phone,
+        role: user.role,
+        avatar_url: user.avatar_url
+      },
+      token
+    });
+  } catch (error) {
+    res.clearCookie('mm_refresh', REFRESH_COOKIE_OPTS);
+    return sendError(res, 401, 'Session expired, please log in again');
+  }
+};
+
 // UPDATE YOUR MODULE.EXPORTS to include all functions:
 module.exports = {
   register,
@@ -1017,6 +1086,7 @@ module.exports = {
   updateAddress,
   updateNotificationPreferences,
   deleteAccount
+  silentLogin 
 };
 
 

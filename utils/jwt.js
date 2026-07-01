@@ -44,9 +44,18 @@ const generateRefreshToken = (payload) => {
   });
 };
 
+const verifyRefreshToken = (token) => {
+  try {
+    return jwt.verify(token, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET);
+  } catch (error) {
+    throw new Error('Invalid or expired refresh token');
+  }
+};
+
 module.exports = {
   generateToken,
   verifyToken,
   decodeToken,
   generateRefreshToken
+  verifyRefreshToken
 };
