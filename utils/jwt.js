@@ -56,6 +56,6 @@ module.exports = {
   generateToken,
   verifyToken,
   decodeToken,
-  generateRefreshToken
+  generateRefreshToken,
   verifyRefreshToken
 };
