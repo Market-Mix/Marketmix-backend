@@ -17,6 +17,7 @@ const db         = require('../config/db');
 const marketpay  = require('../services/marketpay.service');
 const { sendSuccess, sendError } = require('../utils/response');
 const { notifySeller, notifyBuyer } = require('../utils/sellerEmailService');
+const { createDedupedNotification } = require('../controllers/notification.controller');
 
 // ── GET /api/payments/methods ─────────────────────────────────────────────────
 const getPaymentMethods = (req, res) => {
@@ -194,6 +195,22 @@ const orderRes = await client.query(
       }
     }
 
+    // Create seller notifications for new checkout orders
+    const buyerName = `${session.first_name || ''} ${session.last_name || ''}`.trim() || 'a buyer';
+    for (const v of Object.values(vendorMap)) {
+      try {
+        await createDedupedNotification({
+          userId: v.seller_id,
+          title: 'New Order Received',
+          message: `You have a new order from ${buyerName} for ${v.items.length} item${v.items.length === 1 ? '' : 's'}.`,
+          type: 'order',
+          link: '/sellers/sellers%20order.html'
+        });
+      } catch (notifErr) {
+        console.warn('Checkout seller notification failed:', notifErr);
+      }
+    }
+
     // 4. Initiate payment via MarketPay
     const payResult = await marketpay.initiatePayment(method, {
       orderId:     order.id,
@@ -270,6 +287,8 @@ const verifyPayment = async (req, res) => {
 
     if (result.paymentStatus === 'paid') {
       await _fulfillOrder(reference, result);
+    } else {
+      await _markPaymentFailed(reference, 'paystack');
     }
 
     return sendSuccess(res, 200, 'Payment verified', {
@@ -380,15 +399,14 @@ const paystackCallback = async (req, res) => {
       return res.redirect(`${frontendBase}/buyers/order-success.html?orderId=${orderId}&ref=${reference}&method=paystack`);
     }
 
-    return res.redirect(`${frontendBase}/buyers/order-failed.html?ref=${reference}&status=${result.status || 'failed'}&method=paystack`);
+    await _markPaymentFailed(reference, 'paystack');
+    return res.redirect(`${frontendBase}/buyers/order-failed.html?ref=${reference}&status=failed&method=paystack`);
   } catch (err) {
     console.error('paystackCallback error:', err);
     return res.redirect(`${frontendBase}/buyers/order-failed.html?reason=verification_error&ref=${reference}`);
   }
 };
 
-// ── GET /api/payments/flutterwave/callback ────────────────────────────────────
-// const flutterwaveCallback = async (req, res) => {
 //   const { tx_ref, transaction_id, status } = req.query;
 //   const frontendBase = process.env.FRONTEND_URL || 'https://marketmix.vercel.app';
 //
@@ -512,7 +530,7 @@ async function _fulfillOrder(reference, payResult) {
 );
 
 if (orderData.rows.length) {
-  const { buyer_id, seller_id, total_amount, first_name, last_name } = orderData.rows[0];
+  const { buyer_id, total_amount, first_name, last_name } = orderData.rows[0];
   const buyerName = `${first_name || ''} ${last_name || ''}`.trim() || 'A customer';
   const autoReleaseAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
 
@@ -522,34 +540,62 @@ if (orderData.rows.length) {
         payment_reference, payment_provider, auto_release_at)
      VALUES ($1,$2,$3,$4,'held',$5,$6,$7)
      ON CONFLICT DO NOTHING`,
-    [tx.order_id, seller_id, buyer_id, total_amount,
+    [tx.order_id, orderData.rows[0].seller_id, buyer_id, total_amount,
      reference, tx.provider, autoReleaseAt]
   );
-  
-// replace the sendbox block in _fulfillOrder:
-const dm = await db.query(`SELECT delivery_method FROM orders WHERE id=$1`, [tx.order_id]);
-if (dm.rows[0]?.delivery_method === 'shipbubble') {
-  require('../services/shipbubbleFulfillment.service')
-    .bookShipbubbleShipmentsForOrder(tx.order_id)
-    .catch(e => console.error('Shipbubble booking error:', e.message));
-}
 
+  const sellersRes = await db.query(
+    `SELECT DISTINCT seller_id FROM order_items WHERE order_id = $1`,
+    [tx.order_id]
+  );
 
-notifyBuyer(buyer_id, 'orderConfirmed', {
-  orderId: tx.order_id,
-  items: 'your items',
-  total: total_amount
-}).catch(() => {});
+  for (const row of sellersRes.rows) {
+    try {
+      await createDedupedNotification({
+        userId: row.seller_id,
+        title: 'Payment Received',
+        message: `Payment has been received for order #${tx.order_id}.`,
+        type: 'order',
+        link: '/sellers/sellers%20order.html'
+      });
+    } catch (notifErr) {
+      console.warn('Seller payment notification failed:', notifErr);
+    }
+  }
 
-  notifySeller(seller_id, 'newOrder', {
+  try {
+    await createDedupedNotification({
+      userId: buyer_id,
+      title: 'Checkout Successful',
+      message: `Your payment for order #${tx.order_id} was successful. We are now processing your order.`,
+      type: 'order',
+      link: '/buyers/buyers%20order%20&%20tracking.html'
+    });
+  } catch (notifErr) {
+    console.warn('Buyer success notification failed:', notifErr);
+  }
+
+  const dm = await db.query(`SELECT delivery_method FROM orders WHERE id=$1`, [tx.order_id]);
+  if (dm.rows[0]?.delivery_method === 'shipbubble') {
+    require('../services/shipbubbleFulfillment.service')
+      .bookShipbubbleShipmentsForOrder(tx.order_id)
+      .catch(e => console.error('Shipbubble booking error:', e.message));
+  }
+
+  notifyBuyer(buyer_id, 'orderConfirmed', {
+    orderId: tx.order_id,
+    items: 'your items',
+    total: total_amount
+  }).catch(() => {});
+
+  notifySeller(orderData.rows[0].seller_id, 'newOrder', {
     orderId: tx.order_id,
     buyerName,
     amount: total_amount,
     items: 'purchased items'
   }).catch(() => {});
 
-  notifySeller(seller_id, 'paymentReceived', {
-    orderId: tx.order_id, amount: total_amount
+  notifySeller(orderData.rows[0].seller_id, 'paymentReceived', {
   }).catch(() => {});
 }
 
@@ -579,17 +625,32 @@ async function _markPaymentFailed(reference, provider) {
     );
 
     if (txRes.rows.length) {
-  const orderId = txRes.rows[0].order_id;
-  const orderRow = await db.query(
-    `SELECT buyer_id, total_amount FROM orders WHERE id = $1`, [orderId]
-  );
-  if (orderRow.rows.length) {
-    notifyBuyer(orderRow.rows[0].buyer_id, 'paymentFailed', {
-      orderId,
-      amount: orderRow.rows[0].total_amount
-    }).catch(() => {});
-  }
-}
+      const orderId = txRes.rows[0].order_id;
+      const orderRow = await db.query(
+        `SELECT buyer_id, total_amount FROM orders WHERE id = $1`, [orderId]
+      );
+      if (orderRow.rows.length) {
+        const buyerId = orderRow.rows[0].buyer_id;
+        const amount = orderRow.rows[0].total_amount;
+
+        try {
+          await createDedupedNotification({
+            userId: buyerId,
+            title: 'Checkout Failed',
+            message: `Your payment for order #${orderId} could not be completed. Please try again or contact support.`,
+            type: 'order',
+            link: '/buyers/buyers%20order%20&%20tracking.html'
+          });
+        } catch (notifErr) {
+          console.warn('Buyer failed payment notification failed:', notifErr);
+        }
+
+        notifyBuyer(buyerId, 'paymentFailed', {
+          orderId,
+          amount,
+        }).catch(() => {});
+      }
+    }
     if (txRes.rows.length) {
       await db.query(
         `UPDATE orders SET payment_status = 'failed', status = 'payment_failed', updated_at = NOW()
