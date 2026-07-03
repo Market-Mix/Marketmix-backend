@@ -1235,6 +1235,108 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
   }
 });
 
+// ─── POST /api/seller/refunds/:refundId/confirm-return-received ─────────────
+router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, async (req, res) => {
+  try {
+    const { refundId } = req.params;
+    const sellerId = req.user.id;
+
+    if (!refundId) {
+      return sendError(res, 400, 'Missing refundId');
+    }
+
+    const refundCaseRes = await db.query('SELECT * FROM refund_cases WHERE id = $1 LIMIT 1', [refundId]);
+    if (refundCaseRes.rows.length === 0) {
+      return sendError(res, 404, 'Refund case not found');
+    }
+
+    const refund = refundCaseRes.rows[0];
+    if (refund.seller_id !== sellerId) {
+      return sendError(res, 403, 'You are not authorized for this refund case');
+    }
+
+    if (refund.seller_return_choice !== 'return_product') {
+      return sendError(res, 400, 'Return receipt confirmation is only available for return-product refunds');
+    }
+
+    if (refund.return_received) {
+      return sendError(res, 409, 'Return has already been confirmed received');
+    }
+
+    const hasShipmentInfo = Boolean(
+      refund.buyer_shipped_at || refund.courier_name || refund.tracking_number || refund.shipping_receipt_url || refund.shipping_status
+    );
+    if (!hasShipmentInfo) {
+      return sendError(res, 400, 'Cannot confirm receipt until the buyer has submitted shipment details');
+    }
+
+    const now = new Date().toISOString();
+    const updateRes = await db.query(
+      `UPDATE refund_cases
+       SET return_received = TRUE,
+           return_received_at = $1,
+           resolution_status = 'awaiting_refund_release',
+           status = 'awaiting_refund_release',
+           updated_at = NOW()
+       WHERE id = $2
+       RETURNING *`,
+      [now, refundId]
+    );
+
+    const updatedCase = updateRes.rows[0];
+    if (!updatedCase) {
+      return sendError(res, 500, 'Failed to confirm return received');
+    }
+
+    const notificationPromises = [];
+    if (updatedCase.buyer_id) {
+      notificationPromises.push(createDedupedNotification({
+        userId: updatedCase.buyer_id,
+        title: 'Return Received',
+        message: 'The seller confirmed receipt of your returned product.\n\nYour refund is now awaiting release by MarketMix.',
+        type: 'refund',
+        referenceId: refundId,
+        link: '/buyers/buyers%20return%20report.html'
+      }));
+    }
+    if (updatedCase.seller_id) {
+      notificationPromises.push(createDedupedNotification({
+        userId: updatedCase.seller_id,
+        title: 'Return Confirmed',
+        message: 'You confirmed receipt of the returned product.\n\nThe refund will now move to the awaiting refund release stage.',
+        type: 'refund',
+        referenceId: refundId,
+        link: '/sellers/sellers%20returns.html'
+      }));
+    }
+
+    try {
+      const adminRes = await db.query("SELECT id FROM users WHERE role = 'admin' AND is_deleted = FALSE");
+      adminRes.rows.forEach(row => {
+        if (row.id && row.id !== updatedCase.buyer_id && row.id !== updatedCase.seller_id) {
+          notificationPromises.push(createDedupedNotification({
+            userId: row.id,
+            title: 'Return Receipt Confirmed',
+            message: `A returned product has been confirmed received for refund case ${refundId}.`,
+            type: 'refund',
+            referenceId: refundId,
+            link: '/admin/refunds/pending'
+          }));
+        }
+      });
+    } catch (err) {
+      console.warn('⚠️ Could not notify admins about return receipt:', err.message || err);
+    }
+
+    await Promise.allSettled(notificationPromises);
+
+    return sendSuccess(res, 200, 'Return receipt confirmed successfully', { refundCase: updatedCase });
+  } catch (error) {
+    console.error('❌ Error in /api/seller/refunds/:refundId/confirm-return-received:', error);
+    return sendError(res, 500, 'Error confirming return receipt', error.message);
+  }
+});
+
 // ─── GET /api/seller/refund-cases — Fetch seller's refund cases ────────────────
 router.get('/refund-cases', protect, isSeller, async (req, res) => {
   try {
