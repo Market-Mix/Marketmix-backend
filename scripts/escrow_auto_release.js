@@ -62,6 +62,26 @@ async function autoReleaseEscrow() {
         [netAmount, row.seller_id]
       );
 
+      // insert one earnings row per order_item for this seller/order so
+      // Recent Transactions + Product Revenue tables populate
+      try {
+        const items = await client.query(
+          `SELECT id, product_id, quantity, price_at_purchase FROM order_items WHERE order_id=$1 AND seller_id=$2`,
+          [row.order_id, row.seller_id]
+        );
+
+        for (const it of items.rows) {
+          const gross = parseFloat(it.price_at_purchase) * it.quantity;
+          await client.query(
+            `INSERT INTO earnings (seller_id, order_id, order_item_id, amount, net_amount, status, created_at)
+             VALUES ($1,$2,$3,$4,$5,'available',NOW())`,
+            [row.seller_id, row.order_id, it.id, gross, gross * (1 - COMMISSION)]
+          );
+        }
+      } catch (e) {
+        console.error('Earnings insert failed for seller', row.seller_id, e.message);
+      }
+
       // Notify seller
       await client.query(
         `INSERT INTO notifications(user_id,title,message,type,is_read,is_deleted,created_at,updated_at)

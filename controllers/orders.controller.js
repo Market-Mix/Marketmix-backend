@@ -544,39 +544,60 @@ const confirmDelivery = async (req, res) => {
       [orderId]
     );
 
-    // Credit seller balance
+    // Credit seller balance and insert earnings per released escrow row
    if (escrowUpdate.rows.length) {
-      const { seller_id, amount } = escrowUpdate.rows[0];
       const COMMISSION = 0.05;
-      const netAmount = parseFloat(amount) * (1 - COMMISSION);
+      for (const { seller_id, amount } of escrowUpdate.rows) {
+        const netAmount = parseFloat(amount) * (1 - COMMISSION);
 
-      await db.query(
-        `UPDATE seller_profiles
-         SET available_balance = available_balance + $1,
-             total_earnings = total_earnings + $1,
-             updated_at = NOW()
-         WHERE user_id = $2`,
-        [netAmount, seller_id]
-      );
+        await db.query(
+          `UPDATE seller_profiles
+           SET available_balance = available_balance + $1,
+               total_earnings = total_earnings + $1,
+               updated_at = NOW()
+           WHERE user_id = $2`,
+          [netAmount, seller_id]
+        );
 
-      try {
-  await db.query(
-    `INSERT INTO notifications
-       (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
-     VALUES ($1,'Funds Released',$2,'payment',$3,FALSE,FALSE,NOW(),NOW())`,
-    [
-      seller_id,
-      `₦${netAmount.toFixed(2)} has been released to your account for order #${orderId.toString().slice(0,8).toUpperCase()}.`,
-      '/sellers/sellers%20earning.html'
-    ]
-  );
-} catch (e) {
-  console.error('Notification insert failed:', e.message);
-}
+        try {
+          await db.query(
+            `INSERT INTO notifications
+               (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
+             VALUES ($1,'Funds Released',$2,'payment',$3,FALSE,FALSE,NOW(),NOW())`,
+            [
+              seller_id,
+              `₦${netAmount.toFixed(2)} has been released to your account for order #${orderId.toString().slice(0,8).toUpperCase()}.`,
+              '/sellers/sellers%20earning.html'
+            ]
+          );
+        } catch (e) {
+          console.error('Notification insert failed:', e.message);
+        }
 
-      notifySeller(seller_id, 'paymentReceived', {
-        orderId, amount: netAmount
-      }).catch(() => {});
+        notifySeller(seller_id, 'paymentReceived', {
+          orderId, amount: netAmount
+        }).catch(() => {});
+
+        // insert one earnings row per order_item for this seller/order so
+        // Recent Transactions + Product Revenue tables populate
+        try {
+          const items = await db.query(
+            `SELECT id, product_id, quantity, price_at_purchase FROM order_items WHERE order_id=$1 AND seller_id=$2`,
+            [orderId, seller_id]
+          );
+
+          for (const it of items.rows) {
+            const gross = parseFloat(it.price_at_purchase) * it.quantity;
+            await db.query(
+              `INSERT INTO earnings (seller_id, order_id, order_item_id, amount, net_amount, status, created_at)
+               VALUES ($1,$2,$3,$4,$5,'available',NOW())`,
+              [seller_id, orderId, it.id, gross, gross * (1 - COMMISSION)]
+            );
+          }
+        } catch (e) {
+          console.error('Earnings insert failed for seller', seller_id, e.message);
+        }
+      }
     }
   
 
