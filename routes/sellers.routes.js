@@ -1177,24 +1177,38 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     const updateValues = [decision, new Date().toISOString(), new Date().toISOString()];
 
     if (decision === 'return_product') {
-      updateFields.push('return_address_line1 = $4');
+      let paramIndex = 4;
+      updateFields.push(`return_address_line1 = $${paramIndex++}`);
       updateValues.push(return_address || null);
-      updateFields.push('return_address_line2 = $5');
+      updateFields.push(`return_address_line2 = $${paramIndex++}`);
       updateValues.push(return_address2 || null);
-      updateFields.push('return_city = $6');
+      updateFields.push(`return_city = $${paramIndex++}`);
       updateValues.push(return_city || null);
-      updateFields.push('return_state = $7');
+      updateFields.push(`return_state = $${paramIndex++}`);
       updateValues.push(return_state || null);
-      updateFields.push('return_postal_code = $8');
+      updateFields.push(`return_postal_code = $${paramIndex++}`);
       updateValues.push(return_postal_code || null);
-      updateFields.push('return_country = $9');
+      updateFields.push(`return_country = $${paramIndex++}`);
       updateValues.push(return_country || null);
-      updateFields.push('buyer_return_deadline = $10');
+      updateFields.push(`buyer_return_deadline = $${paramIndex++}`);
       updateValues.push(deadlineTimestamp);
+      updateFields.push(`status = $${paramIndex++}`);
+      updateValues.push('return_in_transit');
+      updateFields.push(`resolution_status = $${paramIndex++}`);
+      updateValues.push('return_in_transit');
+    } else if (decision === 'returnless') {
+      // For returnless refund, move directly to awaiting_refund_release
+      let paramIndex = 4;
+      updateFields.push(`status = $${paramIndex++}`);
+      updateValues.push('awaiting_refund_release');
+      updateFields.push(`resolution_status = $${paramIndex++}`);
+      updateValues.push('awaiting_refund_release');
     }
 
+    // Add refundId as the last parameter
     updateValues.push(refundId);
-    const updateQuery = `UPDATE refund_cases SET ${updateFields.join(', ')} WHERE id = $${updateValues.length} RETURNING *`;
+    const paramIndex = updateValues.length;
+    const updateQuery = `UPDATE refund_cases SET ${updateFields.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
 
     console.log('📝 Updating refund via local DB query:', updateQuery, updateValues);
     const updatedCaseRes = await db.query(updateQuery, updateValues);
