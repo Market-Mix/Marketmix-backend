@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
+const { stripFee } = require('../utils/pricing');
 
 /**
  * @desc    Get seller earnings summary and transactions
@@ -46,12 +47,12 @@ const getSellerEarnings = async (req, res) => {
 
     // Pending = escrow held amounts (net of commission) - NOT yet released
     const pendingResult = await runQuery(
-      `SELECT COALESCE(SUM(amount * 0.95), 0) as pending_earnings
+      `SELECT COALESCE(SUM(amount), 0) as pending_earnings
        FROM escrow_transactions 
        WHERE seller_id = $1${storeId ? ' AND store_id = $2' : ''}`,
       storeId ? [sellerId, storeId] : [sellerId],
       storeId
-        ? `SELECT COALESCE(SUM(amount * 0.95), 0) as pending_earnings
+        ? `SELECT COALESCE(SUM(amount), 0) as pending_earnings
            FROM escrow_transactions 
            WHERE seller_id = $1`
         : null,
@@ -89,7 +90,7 @@ const getSellerEarnings = async (req, res) => {
     console.log('Escrow rows:', JSON.stringify(debugEscrow.rows, null, 2));
 
     const profile = profileResult.rows[0] || { total_earnings: 0, available_balance: 0 };
-    const pendingEarnings = parseFloat(pendingResult.rows[0]?.pending_earnings ?? 0);
+    const pendingEarnings = stripFee(parseFloat(pendingResult.rows[0]?.pending_earnings ?? 0));
     const availableBalance = parseFloat(profile.available_balance ?? 0);
     const totalWithdrawn = parseFloat(withdrawnResult.rows[0]?.total_withdrawn ?? 0);
 
@@ -170,7 +171,7 @@ const getSellerEarnings = async (req, res) => {
     const pendingTxs = escrowResult.rows.map(et => ({
       id: et.id,
       date: et.created_at,
-      amount: parseFloat(et.amount) * 0.95,
+      amount: stripFee(parseFloat(et.amount)),
       status: 'pending',
       productName: null,
       orderId: et.order_id,

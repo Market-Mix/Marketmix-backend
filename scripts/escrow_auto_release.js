@@ -1,5 +1,6 @@
 require('dotenv').config();
 const db = require('../config/db');
+const { stripFee } = require('../utils/pricing');
 
 async function autoReleaseEscrow() {
   console.log('Running escrow auto-release...');
@@ -33,8 +34,7 @@ async function autoReleaseEscrow() {
     console.log(`Found ${due.rows.length} escrows to auto-release`);
 
     for (const row of due.rows) {
-      const COMMISSION = 0.05;
-      const netAmount = parseFloat(row.amount) * (1 - COMMISSION);
+      const netAmount = stripFee(row.amount);
 
       // Release escrow
       await client.query(
@@ -75,7 +75,7 @@ async function autoReleaseEscrow() {
           await client.query(
             `INSERT INTO earnings (seller_id, order_id, order_item_id, amount, net_amount, status, created_at)
              VALUES ($1,$2,$3,$4,$5,'available',NOW())`,
-            [row.seller_id, row.order_id, it.id, gross, gross * (1 - COMMISSION)]
+            [row.seller_id, row.order_id, it.id, gross, stripFee(gross)]
           );
         }
       } catch (e) {

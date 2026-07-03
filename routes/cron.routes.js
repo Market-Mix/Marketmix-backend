@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
+const { stripFee } = require('../utils/pricing');
 
 router.get('/release-escrow', async (req, res) => {
   // Simple secret to prevent abuse
@@ -29,7 +30,7 @@ router.get('/release-escrow', async (req, res) => {
     let released = 0;
 
     for (const row of due.rows) {
-      const netAmount = parseFloat(row.amount) * 0.95;
+      const netAmount = stripFee(row.amount);
 
       await client.query(
         `UPDATE escrow_transactions
