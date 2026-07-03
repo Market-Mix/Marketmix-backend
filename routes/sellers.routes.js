@@ -1169,35 +1169,67 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       ? 'MarketMix approved your refund. The seller has requested the product to be returned. Please ship the product within the allowed return period. Return instructions are now available.'
       : 'Your refund has been approved. The seller has chosen a returnless refund. Your refund will now be processed.';
 
-    const updateFields = [
-      'seller_return_choice = $1',
-      'seller_return_choice_at = $2',
-      'updated_at = $3'
-    ];
-    const updateValues = [decision, new Date().toISOString(), new Date().toISOString()];
+    // Build update query with proper parameter indexing
+    let updateQuery;
+    let updateParams;
 
     if (decision === 'return_product') {
-      updateFields.push('return_address_line1 = $4');
-      updateValues.push(return_address || null);
-      updateFields.push('return_address_line2 = $5');
-      updateValues.push(return_address2 || null);
-      updateFields.push('return_city = $6');
-      updateValues.push(return_city || null);
-      updateFields.push('return_state = $7');
-      updateValues.push(return_state || null);
-      updateFields.push('return_postal_code = $8');
-      updateValues.push(return_postal_code || null);
-      updateFields.push('return_country = $9');
-      updateValues.push(return_country || null);
-      updateFields.push('buyer_return_deadline = $10');
-      updateValues.push(deadlineTimestamp);
+      updateQuery = `
+        UPDATE refund_cases 
+        SET seller_return_choice = $1,
+            seller_return_choice_at = $2,
+            updated_at = $3,
+            return_address_line1 = $4,
+            return_address_line2 = $5,
+            return_city = $6,
+            return_state = $7,
+            return_postal_code = $8,
+            return_country = $9,
+            buyer_return_deadline = $10,
+            status = $11,
+            resolution_status = $12
+        WHERE id = $13 
+        RETURNING *
+      `;
+      updateParams = [
+        decision,
+        new Date().toISOString(),
+        new Date().toISOString(),
+        return_address || null,
+        return_address2 || null,
+        return_city || null,
+        return_state || null,
+        return_postal_code || null,
+        return_country || null,
+        deadlineTimestamp,
+        'return_in_transit',
+        'return_in_transit',
+        refundId
+      ];
+    } else {
+      // returnless decision
+      updateQuery = `
+        UPDATE refund_cases 
+        SET seller_return_choice = $1,
+            seller_return_choice_at = $2,
+            updated_at = $3,
+            status = $4,
+            resolution_status = $5
+        WHERE id = $6 
+        RETURNING *
+      `;
+      updateParams = [
+        decision,
+        new Date().toISOString(),
+        new Date().toISOString(),
+        'awaiting_refund_release',
+        'awaiting_refund_release',
+        refundId
+      ];
     }
 
-    updateValues.push(refundId);
-    const updateQuery = `UPDATE refund_cases SET ${updateFields.join(', ')} WHERE id = $${updateValues.length} RETURNING *`;
-
-    console.log('📝 Updating refund via local DB query:', updateQuery, updateValues);
-    const updatedCaseRes = await db.query(updateQuery, updateValues);
+    console.log('📝 Updating refund via local DB query:', updateQuery, updateParams);
+    const updatedCaseRes = await db.query(updateQuery, updateParams);
     if (updatedCaseRes.rowCount === 0) {
       console.error('❌ Local DB update failed for refund case:', refundId);
       return sendError(res, 500, 'Failed to update seller decision');
@@ -1292,8 +1324,8 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
     if (updatedCase.buyer_id) {
       notificationPromises.push(createDedupedNotification({
         userId: updatedCase.buyer_id,
-        title: 'Return Received',
-        message: 'The seller confirmed receipt of your returned product.\n\nYour refund is now awaiting release by MarketMix.',
+        title: 'Seller confirmed receipt',
+        message: 'Seller confirmed receiving your returned product.\n\nMarketMix is now processing your refund payment.',
         type: 'refund',
         referenceId: refundId,
         link: '/buyers/buyers%20return%20report.html'
@@ -1302,8 +1334,8 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
     if (updatedCase.seller_id) {
       notificationPromises.push(createDedupedNotification({
         userId: updatedCase.seller_id,
-        title: 'Return Confirmed',
-        message: 'You confirmed receipt of the returned product.\n\nThe refund will now move to the awaiting refund release stage.',
+        title: 'You confirmed receipt',
+        message: 'You confirmed receipt of the returned product.\n\nMarketMix will now process the buyer\'s refund.',
         type: 'refund',
         referenceId: refundId,
         link: '/sellers/sellers%20returns.html'
@@ -1316,8 +1348,8 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
         if (row.id && row.id !== updatedCase.buyer_id && row.id !== updatedCase.seller_id) {
           notificationPromises.push(createDedupedNotification({
             userId: row.id,
-            title: 'Return Receipt Confirmed',
-            message: `A returned product has been confirmed received for refund case ${refundId}.`,
+            title: 'Seller confirmed receipt',
+            message: `Seller confirmed receipt for refund case ${refundId}. Case is now awaiting refund payment.`,
             type: 'refund',
             referenceId: refundId,
             link: '/admin/refunds/pending'
