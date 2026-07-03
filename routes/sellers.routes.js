@@ -1292,8 +1292,8 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
     if (updatedCase.buyer_id) {
       notificationPromises.push(createDedupedNotification({
         userId: updatedCase.buyer_id,
-        title: 'Return Received',
-        message: 'The seller confirmed receipt of your returned product.\n\nYour refund is now awaiting release by MarketMix.',
+        title: 'Seller confirmed receipt',
+        message: 'Seller confirmed receiving your returned product.\n\nMarketMix is now processing your refund payment.',
         type: 'refund',
         referenceId: refundId,
         link: '/buyers/buyers%20return%20report.html'
@@ -1302,8 +1302,8 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
     if (updatedCase.seller_id) {
       notificationPromises.push(createDedupedNotification({
         userId: updatedCase.seller_id,
-        title: 'Return Confirmed',
-        message: 'You confirmed receipt of the returned product.\n\nThe refund will now move to the awaiting refund release stage.',
+        title: 'You confirmed receipt',
+        message: 'You confirmed receipt of the returned product.\n\nMarketMix will now process the buyer\'s refund.',
         type: 'refund',
         referenceId: refundId,
         link: '/sellers/sellers%20returns.html'
@@ -1316,8 +1316,8 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
         if (row.id && row.id !== updatedCase.buyer_id && row.id !== updatedCase.seller_id) {
           notificationPromises.push(createDedupedNotification({
             userId: row.id,
-            title: 'Return Receipt Confirmed',
-            message: `A returned product has been confirmed received for refund case ${refundId}.`,
+            title: 'Seller confirmed receipt',
+            message: `Seller confirmed receipt for refund case ${refundId}. Case is now awaiting refund payment.`,
             type: 'refund',
             referenceId: refundId,
             link: '/admin/refunds/pending'

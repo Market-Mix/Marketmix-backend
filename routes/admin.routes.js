@@ -167,6 +167,10 @@ router.get('/refunds/pending', protect, isAdmin, async (req, res) => {
         enrichedCase.store_name = null;
       }
 
+      // Expose return_received fields if present in Supabase
+      enrichedCase.return_received = enrichedCase.return_received || false;
+      enrichedCase.return_received_at = enrichedCase.return_received_at || enrichedCase.returnReceivedAt || null;
+
       return enrichedCase;
     }));
 
@@ -226,6 +230,10 @@ router.get('/refunds', protect, isAdmin, async (req, res) => {
         enrichedCase.seller_name = null;
         enrichedCase.store_name = null;
       }
+
+      // Expose return_received fields if present
+      enrichedCase.return_received = enrichedCase.return_received || false;
+      enrichedCase.return_received_at = enrichedCase.return_received_at || enrichedCase.returnReceivedAt || null;
 
       try {
         const totalAmountMissing = enrichedCase.total_amount === undefined || enrichedCase.total_amount === null;
