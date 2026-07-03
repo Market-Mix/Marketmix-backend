@@ -2,7 +2,8 @@ const crypto = require('crypto');
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const { sendSuccess, sendError } = require('../utils/response');
- const { notifySeller } = require('../utils/sellerEmailService');
+const sendEmail = require('../utils/sendEmail');
+const { notifySeller } = require('../utils/sellerEmailService');
 
 const MIN_WITHDRAWAL = parseFloat(process.env.MIN_WITHDRAWAL || '1000');
 const WITHDRAWAL_DELAY_HOURS = parseInt(process.env.WITHDRAWAL_DELAY_HOURS || '24');
@@ -65,6 +66,62 @@ const getBankAccount = async (req, res) => {
     return sendSuccess(res, 200, 'Bank account fetched', r.rows[0]);
   } catch (err) {
     return sendError(res, 500, 'Error fetching bank account', err.message);
+  }
+};
+
+const forgotPin = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    const userRes = await db.query('SELECT email, first_name FROM users WHERE id=$1', [sellerId]);
+    if (!userRes.rows.length) return sendError(res, 404, 'User not found');
+    const { email, first_name } = userRes.rows[0];
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await db.query(
+      `UPDATE seller_profiles
+       SET kyc_document_urls = COALESCE(kyc_document_urls,'{}'::jsonb) ||
+           jsonb_build_object('pin_reset_otp',$1::text,'pin_reset_otp_expires',$2::text)
+       WHERE user_id=$3`,
+      [otp, expiresAt.toISOString(), sellerId]
+    );
+
+    await sendEmail({
+      to: email,
+      subject: 'Reset your MarketMix withdrawal PIN',
+      html: `<p>Hi ${first_name || ''},</p><p>Your PIN reset code: <strong style="font-size:1.5rem;letter-spacing:8px">${otp}</strong></p><p>Expires in 10 minutes.</p>`
+    });
+
+    return sendSuccess(res, 200, 'Reset code sent to your email');
+  } catch (err) {
+    return sendError(res, 500, 'Error sending reset code', err.message);
+  }
+};
+
+const resetPin = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    const { otp, newPin } = req.body;
+    if (!otp || !newPin) return sendError(res, 400, 'OTP and new PIN required');
+    if (!/^[0-9]{4,6}$/.test(newPin)) return sendError(res, 400, 'PIN must be 4-6 digits');
+
+    const r = await db.query('SELECT kyc_document_urls FROM seller_profiles WHERE user_id=$1', [sellerId]);
+    const stored = r.rows[0]?.kyc_document_urls || {};
+    if (!stored.pin_reset_otp || stored.pin_reset_otp !== otp) return sendError(res, 400, 'Invalid code');
+    if (new Date() > new Date(stored.pin_reset_otp_expires)) return sendError(res, 400, 'Code expired');
+
+    const hash = await bcrypt.hash(newPin, 10);
+    await db.query(
+      `UPDATE seller_profiles
+       SET withdrawal_pin=$1, withdrawal_pin_set=true,
+           kyc_document_urls = kyc_document_urls - 'pin_reset_otp' - 'pin_reset_otp_expires'
+       WHERE user_id=$2`,
+      [hash, sellerId]
+    );
+    return sendSuccess(res, 200, 'PIN reset successfully');
+  } catch (err) {
+    return sendError(res, 500, 'Error resetting PIN', err.message);
   }
 };
 
@@ -366,7 +423,9 @@ module.exports = {
   saveBankAccount,
   getBankAccount,
   handlePaystackWithdrawalWebhook,
-  getBanks, 
-  resolveAccountNumber
+  getBanks,
+  resolveAccountNumber,
+  forgotPin,
+  resetPin
   // handleFlutterwaveTransferWebhook
 };
