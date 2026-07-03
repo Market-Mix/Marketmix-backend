@@ -1118,9 +1118,12 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     } = req.body;
     const sellerId = req.user.id;
 
-    console.log('🔍 Seller return decision request:', { refundId, decision, sellerId });
+    const acceptedDecisions = ['return_product', 'returnless', 'returnless_refund'];
+    const decisionNormalized = decision === 'returnless' ? 'returnless_refund' : decision;
 
-    if (!['return_product', 'returnless'].includes(decision)) {
+    console.log('🔍 Seller return decision request:', { refundId, decision, decisionNormalized, sellerId });
+
+    if (!acceptedDecisions.includes(decision)) {
       return sendError(res, 400, 'decision must be return_product or returnless');
     }
 
@@ -1150,7 +1153,7 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     }
 
     const returnDeadline = return_deadline !== undefined ? Number(return_deadline) : null;
-    if (decision === 'return_product') {
+    if (decisionNormalized === 'return_product') {
       if (!return_address || !return_city || !return_state || !return_postal_code || !return_country) {
         console.warn('⚠️ Missing return address fields for return_product');
         return sendError(res, 400, 'Return address and location information are required for return product decisions');
@@ -1173,7 +1176,7 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     let updateQuery;
     let updateParams;
 
-    if (decision === 'return_product') {
+    if (decisionNormalized === 'return_product') {
       updateQuery = `
         UPDATE refund_cases 
         SET seller_return_choice = $1,
@@ -1192,7 +1195,7 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
         RETURNING *
       `;
       updateParams = [
-        decision,
+        decisionNormalized,
         new Date().toISOString(),
         new Date().toISOString(),
         return_address || null,
@@ -1219,7 +1222,7 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
         RETURNING *
       `;
       updateParams = [
-        decision,
+        decisionNormalized,
         new Date().toISOString(),
         new Date().toISOString(),
         'awaiting_refund_release',
@@ -1246,7 +1249,7 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     }
 
     // Wrap returnless notification creation in try-catch to capture real errors
-    if (decision === 'returnless') {
+    if (decisionNormalized === 'returnless_refund') {
       try {
         console.log('📬 Creating returnless refund notifications for buyer_id:', refund.buyer_id);
         if (refund.buyer_id) {
@@ -1265,7 +1268,7 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
         console.error('Stack:', notifErr.stack);
         throw notifErr;
       }
-    } else if (decision === 'return_product') {
+    } else if (decisionNormalized === 'return_product') {
       if (refund.buyer_id) {
         await createDedupedNotification({
           userId: refund.buyer_id,
