@@ -19,7 +19,7 @@ async function notificationHasLinkColumn() {
   return notificationHasLinkColumnCache;
 }
 
-async function createDedupedNotification({ userId, title, message, type = 'account', link = null }) {
+async function createDedupedNotification({ userId, title, message, type = 'account', link = null, referenceId = null }) {
   if (!userId || !title || !message) {
     throw new Error('Missing required fields for deduped notification');
   }
@@ -37,21 +37,33 @@ async function createDedupedNotification({ userId, title, message, type = 'accou
 
   const hasLink = await notificationHasLinkColumn();
   if (hasLink) {
+    // If the schema has a dedicated `link` column we can't store arbitrary JSON there.
+    // Append the referenceId to the link as a query param when provided so callers
+    // can still include a reference identifier without altering the schema.
+    let finalLink = link || null;
+    if (referenceId) {
+      try {
+        const sep = finalLink && finalLink.includes('?') ? '&' : '?';
+        finalLink = (finalLink ? finalLink : '') + `${sep}reference_id=${encodeURIComponent(referenceId)}`;
+      } catch (e) { /* ignore */ }
+    }
+
     const insertQuery = `
       INSERT INTO notifications (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
       VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, NOW(), NOW())
       RETURNING id
     `;
-    const result = await db.query(insertQuery, [userId, title, message, type, link || null]);
+    const result = await db.query(insertQuery, [userId, title, message, type, finalLink || null]);
     return result.rows[0];
   }
 
+  // When `data` JSONB is available, store both link and reference_id inside it.
   const insertQuery = `
     INSERT INTO notifications (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5), FALSE, FALSE, NOW(), NOW())
+    VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5, 'reference_id', $6), FALSE, FALSE, NOW(), NOW())
     RETURNING id
   `;
-  const result = await db.query(insertQuery, [userId, title, message, type, link || null]);
+  const result = await db.query(insertQuery, [userId, title, message, type, link || null, referenceId || null]);
   return result.rows[0];
 }
 
@@ -64,7 +76,7 @@ async function createDedupedNotification({ userId, title, message, type = 'accou
  */
     const createNotification = async (req, res) => {
   try {
-    const { user_id, title, message, type = 'info', link } = req.body;
+    const { user_id, title, message, type = 'info', link, reference_id } = req.body;
 
     // Normalize common link shapes to avoid storing broken relative paths
     let normalizedLink = (link || '').toString().trim();
@@ -121,14 +133,22 @@ async function createDedupedNotification({ userId, title, message, type = 'accou
         VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, NOW(), NOW())
         RETURNING id, user_id, title, message, type, is_read, link, created_at, updated_at, is_deleted
       `;
-      params = [user_id, title, message, type, normalizedLink || null];
+      // Append reference_id as query param if provided
+      let finalLink = normalizedLink || null;
+      if (reference_id) {
+        try {
+          const sep = finalLink && finalLink.includes('?') ? '&' : '?';
+          finalLink = (finalLink ? finalLink : '') + `${sep}reference_id=${encodeURIComponent(reference_id)}`;
+        } catch (e) { /* ignore */ }
+      }
+      params = [user_id, title, message, type, finalLink || null];
     } else {
       insertQuery = `
         INSERT INTO notifications (user_id, title, message, type, data, is_read, is_deleted, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5), FALSE, FALSE, NOW(), NOW())
+        VALUES ($1, $2, $3, $4, jsonb_build_object('link', $5, 'reference_id', $6), FALSE, FALSE, NOW(), NOW())
         RETURNING id, user_id, title, message, type, is_read, data->>'link' AS link, created_at, updated_at, is_deleted
       `;
-      params = [user_id, title, message, type, normalizedLink || null];
+      params = [user_id, title, message, type, normalizedLink || null, reference_id || null];
     }
 
     const result = await db.query(insertQuery, params);
@@ -169,10 +189,14 @@ const getNotifications = async (req, res) => {
     const { unread } = req.query;
 
     const hasLink = await notificationHasLinkColumn();
-    const linkSelect = hasLink ? 'link' : `data->>'link' AS link`;
+      const linkSelect = hasLink ? 'link' : `data->>'link' AS link`;
+      const referenceSelect = hasLink ? null : `data->>'reference_id' AS reference_id`;
 
+    // Include reference_id column when available in the data JSONB
+    const selectParts = ['id', 'user_id', 'title', 'message', 'type', linkSelect, 'is_read', 'created_at', 'updated_at'];
+    if (referenceSelect) selectParts.push(referenceSelect);
     let query = `
-      SELECT id, user_id, title, message, type, ${linkSelect}, is_read, created_at, updated_at
+      SELECT ${selectParts.join(', ')}
       FROM notifications
       WHERE user_id = $1 AND is_deleted = FALSE
     `;
@@ -188,17 +212,32 @@ const getNotifications = async (req, res) => {
 
     const result = await db.query(query, params);
 
-    const notifications = result.rows.map(notif => ({
-      id: notif.id,
-      userId: notif.user_id,
-      title: notif.title,
-      message: notif.message,
-      type: notif.type,
-      link: notif.link,
-      isRead: notif.is_read,
-      createdAt: notif.created_at,
-      updatedAt: notif.updated_at
-    }));
+    const notifications = result.rows.map(notif => {
+      // Try to obtain reference_id either from selected column or from link query param
+      let referenceId = notif.reference_id || null;
+      if (!referenceId && notif.link) {
+        try {
+          const url = new URL(notif.link, 'http://localhost');
+          referenceId = url.searchParams.get('reference_id') || url.searchParams.get('ref') || null;
+        } catch (e) {
+          // fallback: attempt regex
+          const m = String(notif.link).match(/[?&]reference_id=([^&]+)/);
+          if (m) referenceId = decodeURIComponent(m[1]);
+        }
+      }
+      return {
+        id: notif.id,
+        userId: notif.user_id,
+        title: notif.title,
+        message: notif.message,
+        type: notif.type,
+        link: notif.link,
+        referenceId: referenceId || null,
+        isRead: notif.is_read,
+        createdAt: notif.created_at,
+        updatedAt: notif.updated_at
+      };
+    });
 
     // Count unread
     const unreadResult = await db.query(

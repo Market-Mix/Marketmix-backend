@@ -1207,12 +1207,25 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
 
 
     if (refund.buyer_id) {
-      await createDedupedNotification({
-        userId: refund.buyer_id,
-        title: decision === 'return_product' ? 'Return Approved' : 'Refund Processing',
-        message: nextMessage,
-        type: 'refund'
-      });
+      if (decision === 'return_product') {
+        await createDedupedNotification({
+          userId: refund.buyer_id,
+          title: 'Return Required',
+          message: 'The seller has chosen to receive the product back.\n\nPlease ship the product using the provided return address.',
+          type: 'refund',
+          referenceId: refundId,
+          link: '/buyers/buyers%20return%20report.html'
+        });
+      } else {
+        await createDedupedNotification({
+          userId: refund.buyer_id,
+          title: 'Returnless Refund',
+          message: 'The seller has approved a returnless refund.\n\nNo return shipment is required.\n\nMarketMix will now process your refund.',
+          type: 'refund',
+          referenceId: refundId,
+          link: '/buyers/buyers%20return%20report.html'
+        });
+      }
     }
 
     return sendSuccess(res, 200, 'Seller decision submitted successfully');

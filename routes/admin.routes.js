@@ -326,16 +326,20 @@ router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => 
       notificationPromises.push(createDedupedNotification({
         userId: seller_id,
         title: 'Refund Approved',
-        message: `MarketMix approved a refund request. Reason: ${reasonSummary}`,
-        type: 'refund'
+        message: `MarketMix approved this refund request.\n\nPlease choose how you want the refund handled:\n\n• Return Product\n• Returnless Refund`,
+        type: 'refund',
+        referenceId: refundId,
+        link: '/sellers/sellers%20returns.html'
       }));
     }
     if (buyer_id) {
       notificationPromises.push(createDedupedNotification({
         userId: buyer_id,
         title: 'Refund Approved',
-        message: `MarketMix approved your refund request. Reason: ${reasonSummary}`,
-        type: 'refund'
+        message: `MarketMix approved your refund request.\n\nPlease wait while the seller chooses whether this refund will require returning the product or will be processed as a returnless refund.`,
+        type: 'refund',
+        referenceId: refundId,
+        link: '/buyers/buyers%20return%20report.html'
       }));
     }
 

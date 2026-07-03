@@ -251,60 +251,37 @@ router.post('/create', async (req, res) => {
       }).catch(() => {});
     }
 
-    const buyerNotification = {
-      user_id: buyer_id,
-      title: 'Refund Case Created',
-      message: `Your refund case for order ${order_id} has been created successfully.`,
-      type: 'refund',
-      link: '/buyers/buyers%20return%20report.html',
-      is_read: false,
-      is_deleted: false,
-      created_at: new Date().toISOString()
-    };
-
-    console.log('📬 Inserting buyer notification');
-    const buyerNotifResponse = await fetch(`${SUPABASE_URL}/rest/v1/notifications`, {
-      method: 'POST',
-      headers: getSupabaseHeaders(),
-      body: JSON.stringify(buyerNotification)
-    });
-
-    if (!buyerNotifResponse.ok) {
-      const errorText = await buyerNotifResponse.text();
-      console.error('⚠️ Failed to create buyer notification:', errorText);
-    } else {
-      console.log('✅ Buyer notification created successfully');
+    // Create a confirmation notification for the buyer in local notifications table
+    try {
+      await createDedupedNotification({
+        userId: buyer_id,
+        title: 'Refund Case Created',
+        message: `Your refund case for order ${order_id} has been created successfully.`,
+        type: 'refund',
+        link: '/buyers/buyers%20return%20report.html',
+        referenceId: refundCase.id
+      });
+    } catch (e) {
+      console.warn('Could not create buyer notification:', e.message || e);
     }
 
     notifyBuyer(buyer_id, 'disputeOpened', {
-     orderId: order_id,
-     caseId: refundCase.id
+      orderId: order_id,
+      caseId: refundCase.id
     }).catch(() => {});
 
     if (seller_id) {
-      const sellerNotification = {
-        user_id: seller_id,
-        title: 'New Refund Request',
-        message: `A refund request was submitted for order ${order_id}.`,
-        type: 'refund',
-        link: '/sellers/sellers%20returns.html',
-        is_read: false,
-        is_deleted: false,
-        created_at: new Date().toISOString()
-      };
-
-      console.log('📬 Inserting seller notification');
-      const sellerNotifResponse = await fetch(`${SUPABASE_URL}/rest/v1/notifications`, {
-        method: 'POST',
-        headers: getSupabaseHeaders(),
-        body: JSON.stringify(sellerNotification)
-      });
-
-      if (!sellerNotifResponse.ok) {
-        const errorText = await sellerNotifResponse.text();
-        console.error('⚠️ Failed to create seller notification:', errorText);
-      } else {
-        console.log('✅ Seller notification created successfully');
+      try {
+        await createDedupedNotification({
+          userId: seller_id,
+          title: 'New refund request received.',
+          message: `A refund request was submitted for order ${order_id}.`,
+          type: 'refund',
+          link: '/sellers/sellers%20returns.html',
+          referenceId: refundCase.id
+        });
+      } catch (e) {
+        console.warn('Could not create seller notification:', e.message || e);
       }
     }
 
@@ -423,7 +400,24 @@ router.post('/mark-resolved', async (req, res) => {
     }
 
     console.log(`✅ Seller marked refund ${refund_id} resolved`);
-    return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
+      // Notify buyer that seller confirmed receipt of returned product
+      try {
+        const updated = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+        if (updated && updated.buyer_id) {
+          await createDedupedNotification({
+            userId: updated.buyer_id,
+            title: 'Product Received',
+            message: 'The seller confirmed receiving your returned product.\n\nYour refund is now being processed.',
+            type: 'refund',
+            referenceId: refund_id,
+            link: '/buyers/buyers%20return%20report.html'
+          });
+        }
+      } catch (e) {
+        console.warn('Could not create product-received notification:', e.message || e);
+      }
+
+      return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
   } catch (error) {
     console.error('❌ Error in /api/refunds/mark-resolved:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
@@ -468,7 +462,34 @@ router.post('/buyer-satisfied', async (req, res) => {
     }
 
     console.log(`✅ Buyer confirmed resolution for refund ${refund_id}`);
-    return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
+      // Notify buyer and seller that refund has been completed
+      try {
+        const updated = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+        if (updated && updated.buyer_id) {
+          await createDedupedNotification({
+            userId: updated.buyer_id,
+            title: 'Refund Completed',
+            message: 'Your refund has been completed successfully.',
+            type: 'refund',
+            referenceId: refund_id,
+            link: '/buyers/buyers%20return%20report.html'
+          });
+        }
+        if (updated && updated.seller_id) {
+          await createDedupedNotification({
+            userId: updated.seller_id,
+            title: 'Refund Completed',
+            message: 'The refund process has been completed successfully.',
+            type: 'refund',
+            referenceId: refund_id,
+            link: '/sellers/sellers%20returns.html'
+          });
+        }
+      } catch (e) {
+        console.warn('Could not create refund completed notifications:', e.message || e);
+      }
+
+      return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
   } catch (error) {
     console.error('❌ Error in /api/refunds/buyer-satisfied:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
@@ -646,12 +667,21 @@ router.post('/:refundId/shipment-update', protect, async (req, res) => {
       return res.status(500).json({ success: false, message: 'Failed to update shipment details' });
     }
 
-    await notifyRefundStakeholders({
-      refundCase: updatedCase,
-      title: 'Return Shipment Submitted',
-      message: 'The buyer has submitted return shipment details for this refund case.',
-      link: '/sellers/sellers%20returns.html'
-    });
+    // Notify seller that buyer shipped the product
+    try {
+      if (updatedCase.seller_id) {
+        await createDedupedNotification({
+          userId: updatedCase.seller_id,
+          title: 'Buyer Shipped Product',
+          message: 'The buyer has shipped the returned product.\n\nPlease review the shipment information and confirm once received.',
+          type: 'refund',
+          referenceId: updatedCase.id,
+          link: '/sellers/sellers%20returns.html'
+        });
+      }
+    } catch (e) {
+      console.warn('Could not create shipment notification for seller:', e.message || e);
+    }
 
     return res.status(200).json({ success: true, refundCase: updatedCase });
   } catch (error) {
