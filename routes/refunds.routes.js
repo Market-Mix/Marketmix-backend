@@ -507,6 +507,11 @@ router.post('/escalate', async (req, res) => {
 
     if (!ensureSupabaseConfigured(res)) return;
 
+    const refundCase = await fetchRefundCaseById(refund_id);
+    if (!refundCase) {
+      return res.status(404).json({ success: false, message: 'Refund case not found' });
+    }
+
     const updatePayload = {
       escalated_to_marketmix: true,
       escalated_at: new Date().toISOString(),
@@ -534,6 +539,24 @@ router.post('/escalate', async (req, res) => {
     }
 
     console.log(`✅ Refund ${refund_id} escalated to MarketMix by ${escalated_by}`);
+
+    // Notify buyer that refund has been escalated to MarketMix
+    try {
+      const updated = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+      if (updated && updated.buyer_id) {
+        await createDedupedNotification({
+          userId: updated.buyer_id,
+          title: 'Refund Escalated to MarketMix',
+          message: 'Your refund case has been escalated to MarketMix support for further review and resolution.',
+          type: 'refund',
+          referenceId: refund_id,
+          link: '/buyers/buyers%20return%20report.html'
+        });
+      }
+    } catch (e) {
+      console.warn('Could not create escalation notification for buyer:', e.message || e);
+    }
+
     return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
   } catch (error) {
     console.error('❌ Error in /api/refunds/escalate:', error);
