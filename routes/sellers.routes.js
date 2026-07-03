@@ -1229,30 +1229,48 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     }
 
     console.log('📝 Updating refund via local DB query:', updateQuery, updateParams);
-    const updatedCaseRes = await db.query(updateQuery, updateParams);
-    if (updatedCaseRes.rowCount === 0) {
-      console.error('❌ Local DB update failed for refund case:', refundId);
-      return sendError(res, 500, 'Failed to update seller decision');
+    
+    try {
+      const updatedCaseRes = await db.query(updateQuery, updateParams);
+      if (updatedCaseRes.rowCount === 0) {
+        console.error('❌ Local DB update failed for refund case:', refundId);
+        return sendError(res, 500, 'Failed to update seller decision');
+      }
+      console.log('✅ Refund updated successfully');
+    } catch (sqlErr) {
+      console.error('🚨 SQL ERROR in seller-return-decision:', sqlErr.message);
+      console.error('Query:', updateQuery);
+      console.error('Params:', updateParams);
+      console.error('Stack:', sqlErr.stack);
+      throw sqlErr;
     }
 
-    console.log('✅ Refund updated successfully');
-
-
-    if (refund.buyer_id) {
-      if (decision === 'return_product') {
+    // Wrap returnless notification creation in try-catch to capture real errors
+    if (decision === 'returnless') {
+      try {
+        console.log('📬 Creating returnless refund notifications for buyer_id:', refund.buyer_id);
+        if (refund.buyer_id) {
+          await createDedupedNotification({
+            userId: refund.buyer_id,
+            title: 'Returnless Refund',
+            message: 'The seller has approved a returnless refund.\n\nNo return shipment is required.\n\nMarketMix will now process your refund.',
+            type: 'refund',
+            referenceId: refundId,
+            link: '/buyers/buyers%20return%20report.html'
+          });
+          console.log('✅ Returnless buyer notification created');
+        }
+      } catch (notifErr) {
+        console.error('🚨 RETURNLESS REFUND ERROR - Notification creation failed:', notifErr.message);
+        console.error('Stack:', notifErr.stack);
+        throw notifErr;
+      }
+    } else if (decision === 'return_product') {
+      if (refund.buyer_id) {
         await createDedupedNotification({
           userId: refund.buyer_id,
           title: 'Return Required',
           message: 'The seller has chosen to receive the product back.\n\nPlease ship the product using the provided return address.',
-          type: 'refund',
-          referenceId: refundId,
-          link: '/buyers/buyers%20return%20report.html'
-        });
-      } else {
-        await createDedupedNotification({
-          userId: refund.buyer_id,
-          title: 'Returnless Refund',
-          message: 'The seller has approved a returnless refund.\n\nNo return shipment is required.\n\nMarketMix will now process your refund.',
           type: 'refund',
           referenceId: refundId,
           link: '/buyers/buyers%20return%20report.html'
