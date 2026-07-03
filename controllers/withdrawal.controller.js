@@ -39,8 +39,8 @@ const setWithdrawalPin = async (req, res) => {
 const saveBankAccount = async (req, res) => {
   try {
     const { bank_account_name, bank_account_number, bank_name, bank_code } = req.body;
-    if (!bank_account_name || !bank_account_number || !bank_name)
-      return sendError(res, 400, 'Bank details required');
+if (!bank_account_name || !bank_account_number || !bank_name || !bank_code)
+  return sendError(res, 400, 'Bank details (incl. bank_code) required — resolve account first');
     await db.query(
       `UPDATE seller_profiles 
        SET bank_account_name=$1, bank_account_number=$2, bank_name=$3, bank_code=$4
@@ -202,19 +202,22 @@ const requestWithdrawal = async (req, res) => {
   }
 };
 
+// controllers/withdrawal.controller.js — handlePaystackWithdrawalWebhook signature check
 const handlePaystackWithdrawalWebhook = async (req, res) => {
   const secret = process.env.PAYSTACK_SECRET_KEY;
-  const hash = crypto.createHmac('sha512', secret)
-    .update(JSON.stringify(req.body)).digest('hex');
+  const rawBody = req.body; // Buffer from express.raw()
 
+  const hash = crypto.createHmac('sha512', secret).update(rawBody).digest('hex');
   if (hash !== req.headers['x-paystack-signature']) {
     return res.status(401).end();
   }
 
-  res.status(200).end(); // Acknowledge immediately
+  res.status(200).end();
 
-  const { event, data } = req.body;
+  const payload = JSON.parse(rawBody.toString('utf8')); // parse AFTER verifying
+  const { event, data } = payload;
   if (!['transfer.success', 'transfer.failed', 'transfer.reversed'].includes(event)) return;
+  // ...rest stays the same
 
   const reference = data.reference;
   const wd = await db.query(`SELECT * FROM withdrawals WHERE reference=$1`, [reference]);
@@ -264,6 +267,48 @@ const handlePaystackWithdrawalWebhook = async (req, res) => {
   amount: withdrawal.amount, reason: data.reason
  }).catch(() => {});
 
+};
+
+// controllers/withdrawal.controller.js — add
+let bankListCache = null, bankListCachedAt = 0;
+const getBanks = async (req, res) => {
+  try {
+    if (bankListCache && Date.now() - bankListCachedAt < 86400000) {
+      return sendSuccess(res, 200, 'Banks fetched', { banks: bankListCache });
+    }
+    const r = await fetch('https://api.paystack.co/bank?country=nigeria&currency=NGN', {
+      headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+    });
+    const json = await r.json();
+    if (!json.status) return sendError(res, 502, 'Could not fetch bank list');
+    bankListCache = json.data.map(b => ({ name: b.name, code: b.code }));
+    bankListCachedAt = Date.now();
+    return sendSuccess(res, 200, 'Banks fetched', { banks: bankListCache });
+  } catch (err) {
+    return sendError(res, 500, 'Error fetching banks', err.message);
+  }
+};
+
+// controllers/withdrawal.controller.js — add
+const resolveAccountNumber = async (req, res) => {
+  try {
+    const { account_number, bank_code } = req.body;
+    if (!account_number || !bank_code) return sendError(res, 400, 'account_number and bank_code required');
+
+    const r = await fetch(
+      `https://api.paystack.co/bank/resolve?account_number=${account_number}&bank_code=${bank_code}`,
+      { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+    );
+    const json = await r.json();
+    if (!json.status) return sendError(res, 400, json.message || 'Could not resolve account');
+
+    return sendSuccess(res, 200, 'Account resolved', {
+      account_name: json.data.account_name,
+      account_number: json.data.account_number
+    });
+  } catch (err) {
+    return sendError(res, 500, 'Error resolving account', err.message);
+  }
 };
 
 // const handleFlutterwaveTransferWebhook = async (req, res) => {
@@ -321,5 +366,7 @@ module.exports = {
   saveBankAccount,
   getBankAccount,
   handlePaystackWithdrawalWebhook,
+  getBanks, 
+  resolveAccountNumber
   // handleFlutterwaveTransferWebhook
 };
