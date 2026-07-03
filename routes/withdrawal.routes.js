@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getWithdrawals, requestWithdrawal,  setWithdrawalPin, saveBankAccount, getBankAccount } = require('../controllers/withdrawal.controller');
+const { getWithdrawals, requestWithdrawal, setWithdrawalPin, saveBankAccount, getBankAccount, getBanks, resolveAccountNumber, forgotPin, resetPin } = require('../controllers/withdrawal.controller');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 
@@ -15,6 +15,7 @@ router.use(isSeller);
  */
 router.get('/', getWithdrawals);
 router.get('/bank-account', getBankAccount);
+router.get('/banks', getBanks);
 
 
 /**
@@ -25,5 +26,8 @@ router.get('/bank-account', getBankAccount);
 router.post('/', requestWithdrawal);
 router.post('/set-pin', setWithdrawalPin);
 router.post('/bank-account', saveBankAccount);
+router.post('/resolve-account', resolveAccountNumber);
+router.post('/forgot-pin', forgotPin);
+router.post('/reset-pin', resetPin);
 
 module.exports = router;

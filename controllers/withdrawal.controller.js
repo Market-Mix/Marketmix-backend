@@ -2,7 +2,8 @@ const crypto = require('crypto');
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const { sendSuccess, sendError } = require('../utils/response');
- const { notifySeller } = require('../utils/sellerEmailService');
+const sendEmail = require('../utils/sendEmail');
+const { notifySeller } = require('../utils/sellerEmailService');
 
 const MIN_WITHDRAWAL = parseFloat(process.env.MIN_WITHDRAWAL || '1000');
 const WITHDRAWAL_DELAY_HOURS = parseInt(process.env.WITHDRAWAL_DELAY_HOURS || '24');
@@ -39,8 +40,8 @@ const setWithdrawalPin = async (req, res) => {
 const saveBankAccount = async (req, res) => {
   try {
     const { bank_account_name, bank_account_number, bank_name, bank_code } = req.body;
-    if (!bank_account_name || !bank_account_number || !bank_name)
-      return sendError(res, 400, 'Bank details required');
+if (!bank_account_name || !bank_account_number || !bank_name || !bank_code)
+  return sendError(res, 400, 'Bank details (incl. bank_code) required — resolve account first');
     await db.query(
       `UPDATE seller_profiles 
        SET bank_account_name=$1, bank_account_number=$2, bank_name=$3, bank_code=$4
@@ -65,6 +66,62 @@ const getBankAccount = async (req, res) => {
     return sendSuccess(res, 200, 'Bank account fetched', r.rows[0]);
   } catch (err) {
     return sendError(res, 500, 'Error fetching bank account', err.message);
+  }
+};
+
+const forgotPin = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    const userRes = await db.query('SELECT email, first_name FROM users WHERE id=$1', [sellerId]);
+    if (!userRes.rows.length) return sendError(res, 404, 'User not found');
+    const { email, first_name } = userRes.rows[0];
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await db.query(
+      `UPDATE seller_profiles
+       SET kyc_document_urls = COALESCE(kyc_document_urls,'{}'::jsonb) ||
+           jsonb_build_object('pin_reset_otp',$1::text,'pin_reset_otp_expires',$2::text)
+       WHERE user_id=$3`,
+      [otp, expiresAt.toISOString(), sellerId]
+    );
+
+    await sendEmail({
+      to: email,
+      subject: 'Reset your MarketMix withdrawal PIN',
+      html: `<p>Hi ${first_name || ''},</p><p>Your PIN reset code: <strong style="font-size:1.5rem;letter-spacing:8px">${otp}</strong></p><p>Expires in 10 minutes.</p>`
+    });
+
+    return sendSuccess(res, 200, 'Reset code sent to your email');
+  } catch (err) {
+    return sendError(res, 500, 'Error sending reset code', err.message);
+  }
+};
+
+const resetPin = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    const { otp, newPin } = req.body;
+    if (!otp || !newPin) return sendError(res, 400, 'OTP and new PIN required');
+    if (!/^[0-9]{4,6}$/.test(newPin)) return sendError(res, 400, 'PIN must be 4-6 digits');
+
+    const r = await db.query('SELECT kyc_document_urls FROM seller_profiles WHERE user_id=$1', [sellerId]);
+    const stored = r.rows[0]?.kyc_document_urls || {};
+    if (!stored.pin_reset_otp || stored.pin_reset_otp !== otp) return sendError(res, 400, 'Invalid code');
+    if (new Date() > new Date(stored.pin_reset_otp_expires)) return sendError(res, 400, 'Code expired');
+
+    const hash = await bcrypt.hash(newPin, 10);
+    await db.query(
+      `UPDATE seller_profiles
+       SET withdrawal_pin=$1, withdrawal_pin_set=true,
+           kyc_document_urls = kyc_document_urls - 'pin_reset_otp' - 'pin_reset_otp_expires'
+       WHERE user_id=$2`,
+      [hash, sellerId]
+    );
+    return sendSuccess(res, 200, 'PIN reset successfully');
+  } catch (err) {
+    return sendError(res, 500, 'Error resetting PIN', err.message);
   }
 };
 
@@ -202,19 +259,22 @@ const requestWithdrawal = async (req, res) => {
   }
 };
 
+// controllers/withdrawal.controller.js — handlePaystackWithdrawalWebhook signature check
 const handlePaystackWithdrawalWebhook = async (req, res) => {
   const secret = process.env.PAYSTACK_SECRET_KEY;
-  const hash = crypto.createHmac('sha512', secret)
-    .update(JSON.stringify(req.body)).digest('hex');
+  const rawBody = req.body; // Buffer from express.raw()
 
+  const hash = crypto.createHmac('sha512', secret).update(rawBody).digest('hex');
   if (hash !== req.headers['x-paystack-signature']) {
     return res.status(401).end();
   }
 
-  res.status(200).end(); // Acknowledge immediately
+  res.status(200).end();
 
-  const { event, data } = req.body;
+  const payload = JSON.parse(rawBody.toString('utf8')); // parse AFTER verifying
+  const { event, data } = payload;
   if (!['transfer.success', 'transfer.failed', 'transfer.reversed'].includes(event)) return;
+  // ...rest stays the same
 
   const reference = data.reference;
   const wd = await db.query(`SELECT * FROM withdrawals WHERE reference=$1`, [reference]);
@@ -264,6 +324,48 @@ const handlePaystackWithdrawalWebhook = async (req, res) => {
   amount: withdrawal.amount, reason: data.reason
  }).catch(() => {});
 
+};
+
+// controllers/withdrawal.controller.js — add
+let bankListCache = null, bankListCachedAt = 0;
+const getBanks = async (req, res) => {
+  try {
+    if (bankListCache && Date.now() - bankListCachedAt < 86400000) {
+      return sendSuccess(res, 200, 'Banks fetched', { banks: bankListCache });
+    }
+    const r = await fetch('https://api.paystack.co/bank?country=nigeria&currency=NGN', {
+      headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
+    });
+    const json = await r.json();
+    if (!json.status) return sendError(res, 502, 'Could not fetch bank list');
+    bankListCache = json.data.map(b => ({ name: b.name, code: b.code }));
+    bankListCachedAt = Date.now();
+    return sendSuccess(res, 200, 'Banks fetched', { banks: bankListCache });
+  } catch (err) {
+    return sendError(res, 500, 'Error fetching banks', err.message);
+  }
+};
+
+// controllers/withdrawal.controller.js — add
+const resolveAccountNumber = async (req, res) => {
+  try {
+    const { account_number, bank_code } = req.body;
+    if (!account_number || !bank_code) return sendError(res, 400, 'account_number and bank_code required');
+
+    const r = await fetch(
+      `https://api.paystack.co/bank/resolve?account_number=${account_number}&bank_code=${bank_code}`,
+      { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+    );
+    const json = await r.json();
+    if (!json.status) return sendError(res, 400, json.message || 'Could not resolve account');
+
+    return sendSuccess(res, 200, 'Account resolved', {
+      account_name: json.data.account_name,
+      account_number: json.data.account_number
+    });
+  } catch (err) {
+    return sendError(res, 500, 'Error resolving account', err.message);
+  }
 };
 
 // const handleFlutterwaveTransferWebhook = async (req, res) => {
@@ -321,5 +423,9 @@ module.exports = {
   saveBankAccount,
   getBankAccount,
   handlePaystackWithdrawalWebhook,
+  getBanks,
+  resolveAccountNumber,
+  forgotPin,
+  resetPin
   // handleFlutterwaveTransferWebhook
 };
