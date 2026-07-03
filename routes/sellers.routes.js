@@ -1169,49 +1169,67 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       ? 'MarketMix approved your refund. The seller has requested the product to be returned. Please ship the product within the allowed return period. Return instructions are now available.'
       : 'Your refund has been approved. The seller has chosen a returnless refund. Your refund will now be processed.';
 
-    const updateFields = [
-      'seller_return_choice = $1',
-      'seller_return_choice_at = $2',
-      'updated_at = $3'
-    ];
-    const updateValues = [decision, new Date().toISOString(), new Date().toISOString()];
+    // Build update query with proper parameter indexing
+    let updateQuery;
+    let updateParams;
 
     if (decision === 'return_product') {
-      let paramIndex = 4;
-      updateFields.push(`return_address_line1 = $${paramIndex++}`);
-      updateValues.push(return_address || null);
-      updateFields.push(`return_address_line2 = $${paramIndex++}`);
-      updateValues.push(return_address2 || null);
-      updateFields.push(`return_city = $${paramIndex++}`);
-      updateValues.push(return_city || null);
-      updateFields.push(`return_state = $${paramIndex++}`);
-      updateValues.push(return_state || null);
-      updateFields.push(`return_postal_code = $${paramIndex++}`);
-      updateValues.push(return_postal_code || null);
-      updateFields.push(`return_country = $${paramIndex++}`);
-      updateValues.push(return_country || null);
-      updateFields.push(`buyer_return_deadline = $${paramIndex++}`);
-      updateValues.push(deadlineTimestamp);
-      updateFields.push(`status = $${paramIndex++}`);
-      updateValues.push('return_in_transit');
-      updateFields.push(`resolution_status = $${paramIndex++}`);
-      updateValues.push('return_in_transit');
-    } else if (decision === 'returnless') {
-      // For returnless refund, move directly to awaiting_refund_release
-      let paramIndex = 4;
-      updateFields.push(`status = $${paramIndex++}`);
-      updateValues.push('awaiting_refund_release');
-      updateFields.push(`resolution_status = $${paramIndex++}`);
-      updateValues.push('awaiting_refund_release');
+      updateQuery = `
+        UPDATE refund_cases 
+        SET seller_return_choice = $1,
+            seller_return_choice_at = $2,
+            updated_at = $3,
+            return_address_line1 = $4,
+            return_address_line2 = $5,
+            return_city = $6,
+            return_state = $7,
+            return_postal_code = $8,
+            return_country = $9,
+            buyer_return_deadline = $10,
+            status = $11,
+            resolution_status = $12
+        WHERE id = $13 
+        RETURNING *
+      `;
+      updateParams = [
+        decision,
+        new Date().toISOString(),
+        new Date().toISOString(),
+        return_address || null,
+        return_address2 || null,
+        return_city || null,
+        return_state || null,
+        return_postal_code || null,
+        return_country || null,
+        deadlineTimestamp,
+        'return_in_transit',
+        'return_in_transit',
+        refundId
+      ];
+    } else {
+      // returnless decision
+      updateQuery = `
+        UPDATE refund_cases 
+        SET seller_return_choice = $1,
+            seller_return_choice_at = $2,
+            updated_at = $3,
+            status = $4,
+            resolution_status = $5
+        WHERE id = $6 
+        RETURNING *
+      `;
+      updateParams = [
+        decision,
+        new Date().toISOString(),
+        new Date().toISOString(),
+        'awaiting_refund_release',
+        'awaiting_refund_release',
+        refundId
+      ];
     }
 
-    // Add refundId as the last parameter
-    updateValues.push(refundId);
-    const paramIndex = updateValues.length;
-    const updateQuery = `UPDATE refund_cases SET ${updateFields.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
-
-    console.log('📝 Updating refund via local DB query:', updateQuery, updateValues);
-    const updatedCaseRes = await db.query(updateQuery, updateValues);
+    console.log('📝 Updating refund via local DB query:', updateQuery, updateParams);
+    const updatedCaseRes = await db.query(updateQuery, updateParams);
     if (updatedCaseRes.rowCount === 0) {
       console.error('❌ Local DB update failed for refund case:', refundId);
       return sendError(res, 500, 'Failed to update seller decision');
