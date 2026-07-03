@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
+const { stripFee } = require('../utils/pricing');
  const { notifySeller } = require('../utils/sellerEmailService');
  const { notifyBuyer } = require('../utils/sellerEmailService');
 
@@ -546,9 +547,8 @@ const confirmDelivery = async (req, res) => {
 
     // Credit seller balance and insert earnings per released escrow row
    if (escrowUpdate.rows.length) {
-      const COMMISSION = 0.05;
       for (const { seller_id, amount } of escrowUpdate.rows) {
-        const netAmount = parseFloat(amount) * (1 - COMMISSION);
+        const netAmount = stripFee(amount);
 
         await db.query(
           `UPDATE seller_profiles
@@ -591,7 +591,7 @@ const confirmDelivery = async (req, res) => {
             await db.query(
               `INSERT INTO earnings (seller_id, order_id, order_item_id, amount, net_amount, status, created_at)
                VALUES ($1,$2,$3,$4,$5,'available',NOW())`,
-              [seller_id, orderId, it.id, gross, gross * (1 - COMMISSION)]
+              [seller_id, orderId, it.id, gross, stripFee(gross)]
             );
           }
         } catch (e) {

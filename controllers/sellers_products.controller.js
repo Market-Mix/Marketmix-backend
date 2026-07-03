@@ -10,6 +10,7 @@ const multer       = require('multer');
 const { logActivity } = require('./seller_activity.controller');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const { notifySeller } = require('../utils/sellerEmailService');
+const { markupForListing } = require('../utils/pricing');
 
 // ─── Multer ──────────────────────────────────────────────────────────────────
 const upload = multer({
@@ -76,7 +77,7 @@ const getSellerProducts = async (req, res) => {
     else if (status === 'out-of-stock') where += ` AND p.stock_quantity = 0`;
 
     const result = await db.query(
-      `SELECT p.id, p.name, p.description, p.price, p.stock_quantity,
+      `SELECT p.id, p.name, p.description, COALESCE(p.seller_price, p.price) AS price, p.stock_quantity,
               p.main_image_url, p.is_active, p.category_id,
               p.color, p.size, p.created_at, p.updated_at,
               COALESCE(c.name, 'Uncategorized') AS category_name
@@ -144,6 +145,13 @@ const createSellerProduct = async (req, res) => {
       return sendError(res, 400, 'Product name and price are required');
     }
 
+    let basePrice, listedPrice;
+    try {
+      ({ basePrice, listedPrice } = markupForListing(price));
+    } catch (e) {
+      return sendError(res, e.status || 400, e.message);
+    }
+
     const imageFiles = req.files?.filter(f => f.mimetype.startsWith('image/')) || [];
     const videoFile = req.files?.find(f => f.mimetype.startsWith('video/')) || null;
 
@@ -171,15 +179,15 @@ const createSellerProduct = async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO products
-         (seller_id, store_id, name, description, price, discount_price, stock_quantity,
+         (seller_id, store_id, name, description, price, seller_price, discount_price, stock_quantity,
           main_image_url, images, product_video_url, weight_kg, category_id, subcategory_id,
           category_meta, dynamic_fields, variants, sku, vendor_location,
           delivery_available, return_accepted, is_active, is_deleted, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,false,NOW(),NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,false,NOW(),NOW())
        RETURNING *`,
       [
         sellerId, storeId, name.trim(), description || '',
-        parseFloat(price), discount_price !== undefined && discount_price !== null && discount_price !== '' ? parseFloat(discount_price) : null,
+        listedPrice, basePrice, discount_price !== undefined && discount_price !== null && discount_price !== '' ? parseFloat(discount_price) : null,
         parseInt(stock_quantity) || 0,
         mainImageUrl, images, videoUrl, weight_kg || null,
         category_id || null, subcategory_id || null,
@@ -284,7 +292,16 @@ const updateSellerProduct = async (req, res) => {
 
     if (name !== undefined)           { fields.push(`name = $${i++}`);           vals.push(name.trim()); }
     if (description !== undefined)    { fields.push(`description = $${i++}`);    vals.push(description); }
-    if (price !== undefined)          { fields.push(`price = $${i++}`);          vals.push(parseFloat(price)); }
+    if (price !== undefined) {
+      let basePrice, listedPrice;
+      try {
+        ({ basePrice, listedPrice } = markupForListing(price));
+      } catch (e) {
+        return sendError(res, e.status || 400, e.message);
+      }
+      fields.push(`price = $${i++}`);       vals.push(listedPrice);
+      fields.push(`seller_price = $${i++}`); vals.push(basePrice);
+    }
     if (discount_price !== undefined)  { fields.push(`discount_price = $${i++}`); vals.push(discount_price ? parseFloat(discount_price) : null); }
     if (stock_quantity !== undefined) { fields.push(`stock_quantity = $${i++}`); vals.push(parseInt(stock_quantity)); }
     if (category_id !== undefined)    { fields.push(`category_id = $${i++}`);    vals.push(category_id || null); }

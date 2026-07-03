@@ -5,6 +5,7 @@ const { protect } = require('../middlewares/auth.middleware');
 const { isAdmin } = require('../middlewares/role.middleware');
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
+const { stripFee } = require('../utils/pricing');
 const { processWithdrawal } = require('../services/payout.service');
 const { createDedupedNotification } = require('../controllers/notification.controller');
 
@@ -57,8 +58,7 @@ router.post('/escrow/:escrowId/resolve', protect, isAdmin, async (req, res) => {
     const escrow = escrowRes.rows[0];
 
     if (action === 'release') {
-      const COMMISSION = 0.05;
-      const net = parseFloat(escrow.amount) * (1 - COMMISSION);
+      const net = stripFee(escrow.amount);
 
       await client.query(
         `UPDATE escrow_transactions
