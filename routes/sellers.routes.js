@@ -1408,6 +1408,7 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
 
     const cached = refundCache.get(sellerId);
     if (cached && Date.now() - cached.ts < CACHE_MS) {
+      console.log('Cache hit for', sellerId);
       return sendSuccess(res, 200, 'Refund cases (cached)', cached.data);
     }
 
