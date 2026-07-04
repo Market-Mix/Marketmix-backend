@@ -3,6 +3,34 @@ const router = express.Router();
 const pool = require('../config/db');
 const { isFlashSaleActive, formatFlashSaleInfo } = require('../utils/flashSaleHelper');
 
+const CRAWLER_UA = /facebookexternalhit|Twitterbot|WhatsApp|LinkedInBot|Slackbot|TelegramBot|Discordbot/i;
+
+router.get('/share/:id', async (req, res, next) => {
+  if (!CRAWLER_UA.test(req.headers['user-agent'] || '')) return next();
+  try {
+    const r = await pool.query(
+      `SELECT name, description, main_image_url, price FROM products WHERE id=$1 AND is_deleted=false`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return next();
+    const p = r.rows[0];
+    const img = p.main_image_url || 'https://marketmix.vercel.app/images/marketplace.png';
+    const pageUrl = `https://marketmix.vercel.app/buyers/product.html?id=${req.params.id}`;
+
+    res.send(`<!DOCTYPE html><html><head>
+      <meta property="og:title" content="${p.name.replace(/"/g,'&quot;')}" />
+      <meta property="og:description" content="₦${p.price} — ${(p.description||'').slice(0,150).replace(/"/g,'&quot;')}" />
+      <meta property="og:image" content="${img}" />
+      <meta property="og:url" content="${pageUrl}" />
+      <meta property="og:type" content="product" />
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta http-equiv="refresh" content="0;url=${pageUrl}" />
+    </head><body></body></html>`);
+  } catch (e) {
+    next();
+  }
+});
+
 // Get all products (with pagination)
 router.get('/', async (req, res) => {
 	try {
