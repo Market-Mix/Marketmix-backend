@@ -8,7 +8,9 @@ const db = require('../config/db');
 exports.getAllPaymentMethods = async (req, res) => {
   try {
     const query = `
-      SELECT * FROM payment_methods
+      SELECT id, user_id, payment_type, masked_number, cardholder_name, extra_info,
+             billing_address, branch, is_default, created_at, updated_at
+      FROM payment_methods
       WHERE user_id = $1
       ORDER BY is_default DESC, created_at DESC
     `;
@@ -33,7 +35,9 @@ exports.getAllPaymentMethods = async (req, res) => {
 exports.getPaymentMethodById = async (req, res) => {
   try {
     const query = `
-      SELECT * FROM payment_methods
+      SELECT id, user_id, payment_type, masked_number, cardholder_name, extra_info,
+             billing_address, branch, is_default, created_at, updated_at
+      FROM payment_methods
       WHERE id = $1 AND user_id = $2
     `;
 
@@ -218,7 +222,9 @@ exports.deletePaymentMethod = async (req, res) => {
 exports.getDefaultPaymentMethod = async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT * FROM payment_methods WHERE user_id=$1 AND is_default=true`,
+      `SELECT id, user_id, payment_type, masked_number, cardholder_name, extra_info,
+              billing_address, branch, is_default, created_at, updated_at
+       FROM payment_methods WHERE user_id=$1 AND is_default=true`,
       [req.user.id]
     );
 

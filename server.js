@@ -123,74 +123,78 @@ app.use('/api/coupons', couponsRoutes);
 
 
 const { execFile } = require('child_process');
-setInterval(() => {
-  execFile('node', ['scripts/escrow_auto_release.js'], (err, stdout) => {
-    if (err) console.error('Escrow cron error:', err.message);
-    else console.log(stdout);
-  });
-}, 6 * 60 * 60 * 1000); // Every 6 hours
+const backgroundCronsEnabled = process.env.ENABLE_BACKGROUND_CRONS === 'true' || process.env.NODE_ENV === 'production';
 
-// Add after existing cron
-const { processWithdrawal } = require('./services/payout.service');
+if (backgroundCronsEnabled) {
+  setInterval(() => {
+    execFile('node', ['scripts/escrow_auto_release.js'], (err, stdout) => {
+      if (err) console.error('Escrow cron error:', err.message);
+      else console.log(stdout);
+    });
+  }, 6 * 60 * 60 * 1000); // Every 6 hours
 
-setInterval(async () => {
-  try {
-    const due = await db.query(
-      `SELECT id FROM withdrawals 
-       WHERE status='pending' AND scheduled_for <= NOW()
-       LIMIT 10`
-    );
-    for (const row of due.rows) {
-      await processWithdrawal(row.id).catch(e =>
-        console.error(`Withdrawal ${row.id} failed:`, e.message)
+  // Add after existing cron
+  const { processWithdrawal } = require('./services/payout.service');
+
+  setInterval(async () => {
+    try {
+      const due = await db.query(
+        `SELECT id FROM withdrawals 
+         WHERE status='pending' AND scheduled_for <= NOW()
+         LIMIT 10`
       );
-    }
-  } catch (e) { console.error('Withdrawal cron error:', e.message); }
-}, 15 * 60 * 1000); // Every 15 min
+      for (const row of due.rows) {
+        await processWithdrawal(row.id).catch(e =>
+          console.error(`Withdrawal ${row.id} failed:`, e.message)
+        );
+      }
+    } catch (e) { console.error('Withdrawal cron error:', e.message); }
+  }, 15 * 60 * 1000); // Every 15 min
 
-// Auto-escalate refunds every 15 minutes (runs script)
-setInterval(() => {
-  execFile('node', ['scripts/auto_escalate_refunds.js'], (err, stdout) => {
-    if (err) console.error('Refund auto-escalation cron error:', err.message);
-    else if (stdout) console.log(stdout);
-  });
-}, 15 * 60 * 1000); // Every 15 minutes
+  // Auto-escalate refunds every 15 minutes (runs script)
+  setInterval(() => {
+    execFile('node', ['scripts/auto_escalate_refunds.js'], (err, stdout) => {
+      if (err) console.error('Refund auto-escalation cron error:', err.message);
+      else if (stdout) console.log(stdout);
+    });
+  }, 15 * 60 * 1000); // Every 15 minutes
 
-const { notifySeller } = require('./utils/sellerEmailService');
+  const { notifySeller } = require('./utils/sellerEmailService');
 
-// Weekly sales report — every Monday at 8am
-setInterval(async () => {
-  const now = new Date();
-  if (now.getDay() !== 1 || now.getHours() !== 8) return;
+  // Weekly sales report — every Monday at 8am
+  setInterval(async () => {
+    const now = new Date();
+    if (now.getDay() !== 1 || now.getHours() !== 8) return;
 
-  try {
-    const sellers = await db.query(
-      `SELECT DISTINCT seller_id FROM order_items 
-       WHERE created_at >= NOW() - INTERVAL '7 days'`
-    );
-    for (const { seller_id } of sellers.rows) {
-      const stats = await db.query(
-        `SELECT COUNT(DISTINCT order_id) as orders,
-                SUM(quantity * price_at_purchase) as revenue,
-                (SELECT p.name FROM products p 
-                 JOIN order_items oi2 ON oi2.product_id = p.id
-                 WHERE oi2.seller_id = $1 AND oi2.created_at >= NOW() - INTERVAL '7 days'
-                 GROUP BY p.id ORDER BY COUNT(*) DESC LIMIT 1) as top_product
-         FROM order_items WHERE seller_id=$1 AND created_at >= NOW() - INTERVAL '7 days'`,
-        [seller_id]
+    try {
+      const sellers = await db.query(
+        `SELECT DISTINCT seller_id FROM order_items 
+         WHERE created_at >= NOW() - INTERVAL '7 days'`
       );
-      const s = stats.rows[0];
-      const d = new Date();
-      notifySeller(seller_id, 'weeklySalesReport', {
-        totalOrders: s.orders,
-        totalRevenue: s.revenue || 0,
-        topProduct: s.top_product,
-        weekStart: new Date(d - 7*864e5).toDateString(),
-        weekEnd: d.toDateString()
-      }).catch(() => {});
-    }
-  } catch (e) { console.error('Weekly report cron:', e.message); }
-}, 60 * 60 * 1000); // check every hour
+      for (const { seller_id } of sellers.rows) {
+        const stats = await db.query(
+          `SELECT COUNT(DISTINCT order_id) as orders,
+                  SUM(quantity * price_at_purchase) as revenue,
+                  (SELECT p.name FROM products p 
+                   JOIN order_items oi2 ON oi2.product_id = p.id
+                   WHERE oi2.seller_id = $1 AND oi2.created_at >= NOW() - INTERVAL '7 days'
+                   GROUP BY p.id ORDER BY COUNT(*) DESC LIMIT 1) as top_product
+           FROM order_items WHERE seller_id=$1 AND created_at >= NOW() - INTERVAL '7 days'`,
+          [seller_id]
+        );
+        const s = stats.rows[0];
+        const d = new Date();
+        notifySeller(seller_id, 'weeklySalesReport', {
+          totalOrders: s.orders,
+          totalRevenue: s.revenue || 0,
+          topProduct: s.top_product,
+          weekStart: new Date(d - 7*864e5).toDateString(),
+          weekEnd: d.toDateString()
+        }).catch(() => {});
+      }
+    } catch (e) { console.error('Weekly report cron:', e.message); }
+  }, 60 * 60 * 1000); // check every hour
+}
 
 app.post('/api/waitlist', async (req, res) => {
   const { full_name, email, phone, role } = req.body;

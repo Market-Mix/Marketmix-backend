@@ -14,6 +14,8 @@ const RefundChat = (() => {
   const API = 'https://marketmix-backend.onrender.com/api';
   let _pollInterval = null;
   let _lastMsgId = null;
+  let _pollConfig = null;
+  let _visibilityHandlerAttached = false;
 
   async function apiCall(path, token, opts = {}) {
     const res = await fetch(`${API}${path}`, {
@@ -109,8 +111,31 @@ const RefundChat = (() => {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
+  function ensureVisibilityHandler() {
+    if (typeof document === 'undefined' || _visibilityHandlerAttached) return;
+    _visibilityHandlerAttached = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopPolling(true);
+      } else if (_pollConfig) {
+        startPolling(
+          _pollConfig.caseId,
+          _pollConfig.token,
+          _pollConfig.currentUserId,
+          _pollConfig.container,
+          _pollConfig.onNewMessage
+        );
+      }
+    });
+  }
+
   function startPolling(caseId, token, currentUserId, container, onNewMessage) {
-    stopPolling();
+    stopPolling(true);
+    _pollConfig = { caseId, token, currentUserId, container, onNewMessage };
+    ensureVisibilityHandler();
+
+    if (typeof document !== 'undefined' && document.hidden) return;
+
     _pollInterval = setInterval(async () => {
       try {
         const msgs = await loadMessages(caseId, token);
@@ -120,11 +145,12 @@ const RefundChat = (() => {
           if (onNewMessage) onNewMessage(msgs);
         }
       } catch (e) { /* silent */ }
-    }, 5000);
+    }, 15000);
   }
 
-  function stopPolling() {
+  function stopPolling(keepConfig = false) {
     if (_pollInterval) { clearInterval(_pollInterval); _pollInterval = null; }
+    if (!keepConfig) _pollConfig = null;
   }
 
   return { loadMessages, sendMessage, uploadFile, renderMessages, startPolling, stopPolling };

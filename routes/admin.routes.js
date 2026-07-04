@@ -33,6 +33,67 @@ function getAdminDecidedBy(req) {
   return (req.user && req.user.email) || 'MarketMix Admin';
 }
 
+async function enrichRefundCases(refundCases) {
+  if (!Array.isArray(refundCases) || refundCases.length === 0) {
+    return [];
+  }
+
+  const buyerIds = [...new Set(refundCases.map((refundCase) => refundCase?.buyer_id).filter(Boolean))];
+  const sellerIds = [...new Set(refundCases.map((refundCase) => refundCase?.seller_id).filter(Boolean))];
+
+  const buyerNameMap = new Map();
+  if (buyerIds.length) {
+    const buyerRes = await db.query(
+      `SELECT id, first_name, last_name FROM users WHERE id = ANY($1::uuid[])`,
+      [buyerIds]
+    );
+    buyerRes.rows.forEach((row) => {
+      buyerNameMap.set(row.id, `${row.first_name || ''} ${row.last_name || ''}`.trim() || null);
+    });
+  }
+
+  const sellerNameMap = new Map();
+  const storeNameMap = new Map();
+  if (sellerIds.length) {
+    const sellerRes = await db.query(
+      `SELECT id, first_name, last_name FROM users WHERE id = ANY($1::uuid[])`,
+      [sellerIds]
+    );
+    sellerRes.rows.forEach((row) => {
+      sellerNameMap.set(row.id, `${row.first_name || ''} ${row.last_name || ''}`.trim() || null);
+    });
+
+    const storeRes = await db.query(
+      `SELECT DISTINCT ON (user_id) user_id, business_name
+       FROM stores
+       WHERE user_id = ANY($1::uuid[]) AND is_deleted = false
+       ORDER BY user_id, store_number ASC, id ASC`,
+      [sellerIds]
+    );
+    storeRes.rows.forEach((row) => {
+      storeNameMap.set(row.user_id, row.business_name || null);
+    });
+  }
+
+  return refundCases.map((refundCase) => {
+    const enrichedCase = { ...refundCase };
+
+    if (enrichedCase.buyer_id) {
+      enrichedCase.buyer_name = buyerNameMap.get(enrichedCase.buyer_id) || null;
+    }
+
+    if (enrichedCase.seller_id) {
+      enrichedCase.seller_name = sellerNameMap.get(enrichedCase.seller_id) || null;
+      enrichedCase.store_name = storeNameMap.get(enrichedCase.seller_id) || null;
+    }
+
+    enrichedCase.return_received = enrichedCase.return_received || false;
+    enrichedCase.return_received_at = enrichedCase.return_received_at || enrichedCase.returnReceivedAt || null;
+
+    return enrichedCase;
+  });
+}
+
 // POST /api/admin/escrow/:escrowId/resolve
 // body: { action: 'release' | 'refund', notes: string }
 router.post('/escrow/:escrowId/resolve', protect, isAdmin, async (req, res) => {
@@ -135,44 +196,7 @@ router.get('/refunds/pending', protect, isAdmin, async (req, res) => {
     }
 
     const refundCases = await response.json();
-    const enriched = await Promise.all((refundCases || []).map(async (refundCase) => {
-      const enrichedCase = { ...refundCase };
-
-      try {
-        if (enrichedCase.buyer_id) {
-          const buyerRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [enrichedCase.buyer_id]);
-          if (buyerRes.rows.length > 0) {
-            enrichedCase.buyer_name = `${buyerRes.rows[0].first_name || ''} ${buyerRes.rows[0].last_name || ''}`.trim();
-          }
-        }
-      } catch (err) {
-        enrichedCase.buyer_name = null;
-      }
-
-      try {
-        if (enrichedCase.seller_id) {
-          const sellerRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [enrichedCase.seller_id]);
-          if (sellerRes.rows.length > 0) {
-            enrichedCase.seller_name = `${sellerRes.rows[0].first_name || ''} ${sellerRes.rows[0].last_name || ''}`.trim();
-          }
-
-          const storeRes = await db.query(
-            `SELECT business_name FROM stores WHERE user_id = $1 AND is_deleted = false ORDER BY store_number ASC LIMIT 1`,
-            [enrichedCase.seller_id]
-          );
-          enrichedCase.store_name = storeRes.rows.length > 0 ? storeRes.rows[0].business_name : null;
-        }
-      } catch (err) {
-        enrichedCase.seller_name = null;
-        enrichedCase.store_name = null;
-      }
-
-      // Expose return_received fields if present in Supabase
-      enrichedCase.return_received = enrichedCase.return_received || false;
-      enrichedCase.return_received_at = enrichedCase.return_received_at || enrichedCase.returnReceivedAt || null;
-
-      return enrichedCase;
-    }));
+    const enriched = await enrichRefundCases(refundCases || []);
 
     return sendSuccess(res, 200, 'Refund cases fetched successfully', { refundCases: enriched });
   } catch (err) {
@@ -199,42 +223,9 @@ router.get('/refunds', protect, isAdmin, async (req, res) => {
     }
 
     const refundCases = await response.json();
-    const enriched = await Promise.all((refundCases || []).map(async (refundCase) => {
-      const enrichedCase = { ...refundCase };
+    const enriched = await enrichRefundCases(refundCases || []);
 
-      try {
-        if (enrichedCase.buyer_id) {
-          const buyerRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [enrichedCase.buyer_id]);
-          if (buyerRes.rows.length > 0) {
-            enrichedCase.buyer_name = `${buyerRes.rows[0].first_name || ''} ${buyerRes.rows[0].last_name || ''}`.trim();
-          }
-        }
-      } catch (err) {
-        enrichedCase.buyer_name = null;
-      }
-
-      try {
-        if (enrichedCase.seller_id) {
-          const sellerRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [enrichedCase.seller_id]);
-          if (sellerRes.rows.length > 0) {
-            enrichedCase.seller_name = `${sellerRes.rows[0].first_name || ''} ${sellerRes.rows[0].last_name || ''}`.trim();
-          }
-
-          const storeRes = await db.query(
-            `SELECT business_name FROM stores WHERE user_id = $1 AND is_deleted = false ORDER BY store_number ASC LIMIT 1`,
-            [enrichedCase.seller_id]
-          );
-          enrichedCase.store_name = storeRes.rows.length > 0 ? storeRes.rows[0].business_name : null;
-        }
-      } catch (err) {
-        enrichedCase.seller_name = null;
-        enrichedCase.store_name = null;
-      }
-
-      // Expose return_received fields if present
-      enrichedCase.return_received = enrichedCase.return_received || false;
-      enrichedCase.return_received_at = enrichedCase.return_received_at || enrichedCase.returnReceivedAt || null;
-
+    for (const enrichedCase of enriched) {
       try {
         const totalAmountMissing = enrichedCase.total_amount === undefined || enrichedCase.total_amount === null;
         if (totalAmountMissing && (enrichedCase.order_item_id || enrichedCase.order_id)) {
@@ -284,9 +275,7 @@ router.get('/refunds', protect, isAdmin, async (req, res) => {
       } catch (err) {
         console.warn('⚠️ Could not resolve product specifications for admin refund case', enrichedCase.id, err.message);
       }
-
-      return enrichedCase;
-    }));
+    }
 
     return sendSuccess(res, 200, 'Refund cases fetched successfully', { refundCases: enriched });
   } catch (err) {

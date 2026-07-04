@@ -11,6 +11,9 @@ const multer = require('multer');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+const refundCache = new Map();
+const CACHE_MS = 30_000;
+
 function normalizeKycStatus(isVerified, status) {
   const normalized = String(status || 'not_submitted').toLowerCase();
   if (isVerified === true) return 'approved';
@@ -1403,9 +1406,14 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
       return sendSuccess(res, 200, 'Refund cases (service key not configured)', []);
     }
 
+    const cached = refundCache.get(sellerId);
+    if (cached && Date.now() - cached.ts < CACHE_MS) {
+      return sendSuccess(res, 200, 'Refund cases (cached)', cached.data);
+    }
+
     // Fetch refund cases from Supabase using service role key
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/refund_cases?select=*&seller_id=eq.${sellerId}&order=created_at.desc`,
+      `${SUPABASE_URL}/rest/v1/refund_cases?select=id,status,resolution_status,created_at,order_id,product_name,buyer_id&seller_id=eq.${sellerId}&order=created_at.desc`,
       {
         method: 'GET',
         headers: {
@@ -1510,6 +1518,8 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
         return c;
       }
     }));
+
+    refundCache.set(sellerId, { data: enriched, ts: Date.now() });
 
     return sendSuccess(res, 200, 'Refund cases fetched successfully', enriched);
   } catch (error) {
