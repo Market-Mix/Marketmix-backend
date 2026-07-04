@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getSellerEarnings } = require('../controllers/earnings.controller');
+const { getSellerEarnings, getSellerTransactionHistory } = require('../controllers/earnings.controller');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 
@@ -14,5 +14,6 @@ router.use(isSeller);
  * @access  Private (Seller)
  */
 router.get('/', getSellerEarnings);
+router.get('/transactions', getSellerTransactionHistory);
 
 module.exports = router;

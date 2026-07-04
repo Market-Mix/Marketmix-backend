@@ -212,6 +212,84 @@ const getSellerEarnings = async (req, res) => {
   }
 };
 
+const getSellerTransactionHistory = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    const { type, status, from, to, page = 1, limit = 20 } = req.query;
+    const parsedPage = parseInt(page, 10) || 1;
+    const parsedLimit = parseInt(limit, 10) || 20;
+    const offset = (parsedPage - 1) * parsedLimit;
+
+    const filters = [];
+    const params = [sellerId];
+    let idx = 2;
+
+    if (type) {
+      filters.push(`type = $${idx++}`);
+      params.push(type);
+    }
+    if (status) {
+      filters.push(`status = $${idx++}`);
+      params.push(status);
+    }
+    if (from) {
+      filters.push(`created_at >= $${idx++}`);
+      params.push(from);
+    }
+    if (to) {
+      filters.push(`created_at <= $${idx++}`);
+      params.push(to);
+    }
+
+    const filterSql = filters.length ? `AND ${filters.join(' AND ')}` : '';
+
+    const unionSql = `
+      SELECT e.id, 'sale' AS type, e.net_amount AS amount, e.status,
+             p.name AS description, e.order_id::text AS reference, e.created_at
+      FROM earnings e
+      LEFT JOIN order_items oi ON oi.id = e.order_item_id
+      LEFT JOIN products p ON p.id = oi.product_id
+      WHERE e.seller_id = $1
+      UNION ALL
+      SELECT et.id, 'escrow' AS type, et.amount, et.status,
+             'Escrow — order #' || LEFT(et.order_id::text, 8), et.order_id::text, et.held_at
+      FROM escrow_transactions et WHERE et.seller_id = $1
+      UNION ALL
+      SELECT w.id, 'withdrawal' AS type, -w.amount, w.status,
+             'Withdrawal — ' || COALESCE(w.bank_name,'bank'), w.reference, w.created_at
+      FROM withdrawals w WHERE w.seller_id = $1
+    `;
+
+    const dataQuery = `SELECT * FROM (${unionSql}) t WHERE 1=1 ${filterSql}
+                       ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
+    const countQuery = `SELECT COUNT(*) FROM (${unionSql}) t WHERE 1=1 ${filterSql}`;
+
+    const [dataRes, countRes] = await Promise.all([
+      db.query(dataQuery, [...params, parsedLimit, offset]),
+      db.query(countQuery, params),
+    ]);
+
+    return sendSuccess(res, 200, 'Transaction history fetched', {
+      transactions: dataRes.rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        amount: parseFloat(row.amount),
+        status: row.status,
+        description: row.description,
+        reference: row.reference,
+        date: row.created_at,
+      })),
+      total: parseInt(countRes.rows[0].count, 10),
+      page: parsedPage,
+      limit: parsedLimit,
+    });
+  } catch (error) {
+    console.error('getSellerTransactionHistory error:', error);
+    return sendError(res, 500, 'Error fetching transaction history', error.message);
+  }
+};
+
 module.exports = {
-  getSellerEarnings
+  getSellerEarnings,
+  getSellerTransactionHistory
 };
