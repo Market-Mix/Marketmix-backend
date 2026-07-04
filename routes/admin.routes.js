@@ -184,7 +184,7 @@ router.get('/refunds/pending', protect, isAdmin, async (req, res) => {
       return sendError(res, 500, 'SUPABASE_SERVICE_KEY not configured');
     }
 
-    const queryUrl = `${SUPABASE_URL}/rest/v1/refund_cases?select=*&or=(resolution_status.eq.awaiting_admin,resolution_status.eq.escalated)&order=created_at.desc`;
+    const queryUrl = `${SUPABASE_URL}/rest/v1/refund_cases?select=id,status,resolution_status,created_at,order_id,product_name&or=(resolution_status.eq.awaiting_admin,resolution_status.eq.escalated)&order=created_at.desc`;
     const response = await fetch(queryUrl, {
       method: 'GET',
       headers: getSupabaseHeaders()
