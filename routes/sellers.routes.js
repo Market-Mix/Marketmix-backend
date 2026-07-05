@@ -7,6 +7,7 @@ const { sendSuccess, sendError } = require('../utils/response');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 const { createDedupedNotification } = require('../controllers/notification.controller');
+const { prepareRefundForPayment } = require('../services/refundPaymentPreparationService');
 const multer = require('multer');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -1235,9 +1236,10 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
     }
 
     console.log('📝 Updating refund via local DB query:', updateQuery, updateParams);
+    let updatedCaseRes;
     
     try {
-      const updatedCaseRes = await db.query(updateQuery, updateParams);
+      updatedCaseRes = await db.query(updateQuery, updateParams);
       if (updatedCaseRes.rowCount === 0) {
         console.error('❌ Local DB update failed for refund case:', refundId);
         return sendError(res, 500, 'Failed to update seller decision');
@@ -1249,6 +1251,15 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       console.error('Params:', updateParams);
       console.error('Stack:', sqlErr.stack);
       throw sqlErr;
+    }
+
+    let paymentPreparationResult = null;
+    try {
+      paymentPreparationResult = decisionNormalized === 'returnless_refund'
+        ? await prepareRefundForPayment({ refundCase: updatedCaseRes.rows[0], actor: 'seller' })
+        : null;
+    } catch (prepErr) {
+      console.error('⚠️ Refund payment preparation failed:', prepErr.message || prepErr);
     }
 
     // Wrap returnless notification creation in try-catch to capture real errors
@@ -1284,7 +1295,10 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       }
     }
 
-    return sendSuccess(res, 200, 'Seller decision submitted successfully');
+    return sendSuccess(res, 200, 'Seller decision submitted successfully', {
+      refundCase: paymentPreparationResult?.refundCase || updatedCaseRes.rows[0],
+      paymentPreparation: paymentPreparationResult
+    });
   } catch (error) {
     console.error('❌ Error submitting seller return decision:', error);
     return sendError(res, 500, 'Error submitting seller return decision', error.message);
@@ -1331,8 +1345,8 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
       `UPDATE refund_cases
        SET return_received = TRUE,
            return_received_at = $1,
-           resolution_status = 'awaiting_refund_release',
-           status = 'awaiting_refund_release',
+           resolution_status = 'refund_processing',
+           status = 'refund_processing',
            updated_at = NOW()
        WHERE id = $2
        RETURNING *`,
@@ -1342,6 +1356,13 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
     const updatedCase = updateRes.rows[0];
     if (!updatedCase) {
       return sendError(res, 500, 'Failed to confirm return received');
+    }
+
+    let paymentPreparationResult = null;
+    try {
+      paymentPreparationResult = await prepareRefundForPayment({ refundCase: updatedCase, actor: 'seller' });
+    } catch (prepErr) {
+      console.error('⚠️ Refund payment preparation failed after receipt confirmation:', prepErr.message || prepErr);
     }
 
     const notificationPromises = [];
@@ -1386,7 +1407,10 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
 
     await Promise.allSettled(notificationPromises);
 
-    return sendSuccess(res, 200, 'Return receipt confirmed successfully', { refundCase: updatedCase });
+    return sendSuccess(res, 200, 'Return receipt confirmed successfully', {
+      refundCase: paymentPreparationResult?.refundCase || updatedCase,
+      paymentPreparation: paymentPreparationResult
+    });
   } catch (error) {
     console.error('❌ Error in /api/seller/refunds/:refundId/confirm-return-received:', error);
     return sendError(res, 500, 'Error confirming return receipt', error.message);
