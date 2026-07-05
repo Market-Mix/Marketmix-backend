@@ -189,6 +189,35 @@ router.post('/create', async (req, res) => {
       console.warn('⚠️ Could not fetch buyer name or amount:', err.message);
     }
 
+    // Resolve store/seller name for display in refund case to avoid relying on order enrichment later
+    let storeName = null;
+    let sellerName = null;
+    try {
+      // Try stores table first
+      const storeRes = await db.query('SELECT business_name FROM stores WHERE (user_id = $1 OR id = $1) AND is_deleted = FALSE LIMIT 1', [resolvedSellerId]);
+      if (storeRes.rows.length > 0 && storeRes.rows[0].business_name) {
+        storeName = storeRes.rows[0].business_name;
+      }
+    } catch (e) {
+      // ignore
+    }
+    if (!storeName) {
+      try {
+        const profileRes = await db.query('SELECT business_name FROM seller_profiles WHERE user_id = $1 AND is_deleted = FALSE LIMIT 1', [resolvedSellerId]);
+        if (profileRes.rows.length > 0 && profileRes.rows[0].business_name) storeName = profileRes.rows[0].business_name;
+      } catch (e) {}
+    }
+    if (!storeName) {
+      try {
+        const userRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1 LIMIT 1', [resolvedSellerId]);
+        if (userRes.rows.length > 0) {
+          const r = userRes.rows[0];
+          sellerName = `${r.first_name || ''} ${r.last_name || ''}`.trim();
+          storeName = sellerName || null;
+        }
+      } catch (e) {}
+    }
+
     const refundPayload = {
       buyer_id,
       seller_id: resolvedSellerId,
@@ -198,6 +227,10 @@ router.post('/create', async (req, res) => {
       product_name,
       complaint_text,
       evidence_url: evidence_url || null,
+      total_amount: totalAmount,
+      refund_amount: totalAmount,
+      store_name: storeName || null,
+      seller_name: sellerName || null,
       status: 'pending',
       resolution_status: 'pending',
       seller_marked_resolved: false,
