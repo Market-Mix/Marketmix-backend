@@ -7,7 +7,7 @@ const { sendSuccess, sendError } = require('../utils/response');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 const { createDedupedNotification } = require('../controllers/notification.controller');
-const { prepareRefundForPayment } = require('../services/refundPaymentPreparationService');
+const { prepareRefundForPayment, getPaymentSummaryForRefundCase } = require('../services/refundPaymentPreparationService');
 const multer = require('multer');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -1502,6 +1502,15 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
           } catch (err) {
             console.warn('⚠️ Could not resolve total_amount for refund case', caseCopy.id, err.message);
           }
+        }
+
+        try {
+          const paymentSummary = await getPaymentSummaryForRefundCase(caseCopy.id);
+          if (paymentSummary) {
+            caseCopy.payment_summary = paymentSummary;
+          }
+        } catch (err) {
+          console.warn('⚠️ Could not enrich seller refund case with payment summary', caseCopy.id, err.message || err);
         }
 
         // Fetch color, size, and product_snapshot from order_items for seller refund cases

@@ -7,6 +7,7 @@ const { isSeller } = require('../middlewares/role.middleware');
 const { notifySeller } = require('../utils/sellerEmailService');
 const { notifyBuyer } = require('../utils/sellerEmailService');
 const { createDedupedNotification } = require('../controllers/notification.controller');
+const { getPaymentSummaryForRefundCase } = require('../services/refundPaymentPreparationService');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -632,10 +633,20 @@ router.get('/buyer/:buyerId', protect, async (req, res) => {
     }
 
     const refundCases = await response.json();
-    console.log('Refund cases loaded:', refundCases);
-    console.log('Refund owners:', refundCases.map(r => r.buyer_id));
-    console.log('✅ Refund cases fetched successfully:', refundCases.length);
-    return res.status(200).json({ success: true, refundCases });
+    const enrichedRefundCases = await Promise.all((refundCases || []).map(async (refundCase) => {
+      try {
+        const paymentSummary = await getPaymentSummaryForRefundCase(refundCase.id);
+        return paymentSummary ? { ...refundCase, payment_summary: paymentSummary } : refundCase;
+      } catch (err) {
+        console.warn('⚠️ Could not enrich refund case with payment summary:', refundCase?.id, err.message || err);
+        return refundCase;
+      }
+    }));
+
+    console.log('Refund cases loaded:', enrichedRefundCases);
+    console.log('Refund owners:', enrichedRefundCases.map(r => r.buyer_id));
+    console.log('✅ Refund cases fetched successfully:', enrichedRefundCases.length);
+    return res.status(200).json({ success: true, refundCases: enrichedRefundCases });
   } catch (error) {
     console.error('❌ Error in /api/refunds/buyer/:buyerId:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
