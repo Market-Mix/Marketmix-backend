@@ -7,6 +7,7 @@ const { isSeller } = require('../middlewares/role.middleware');
 const { notifySeller } = require('../utils/sellerEmailService');
 const { notifyBuyer } = require('../utils/sellerEmailService');
 const { createDedupedNotification } = require('../controllers/notification.controller');
+const { getPaymentSummaryForRefundCase } = require('../services/refundPaymentPreparationService');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -189,6 +190,35 @@ router.post('/create', async (req, res) => {
       console.warn('⚠️ Could not fetch buyer name or amount:', err.message);
     }
 
+    // Resolve store/seller name for display in refund case to avoid relying on order enrichment later
+    let storeName = null;
+    let sellerName = null;
+    try {
+      // Try stores table first
+      const storeRes = await db.query('SELECT business_name FROM stores WHERE (user_id = $1 OR id = $1) AND is_deleted = FALSE LIMIT 1', [resolvedSellerId]);
+      if (storeRes.rows.length > 0 && storeRes.rows[0].business_name) {
+        storeName = storeRes.rows[0].business_name;
+      }
+    } catch (e) {
+      // ignore
+    }
+    if (!storeName) {
+      try {
+        const profileRes = await db.query('SELECT business_name FROM seller_profiles WHERE user_id = $1 AND is_deleted = FALSE LIMIT 1', [resolvedSellerId]);
+        if (profileRes.rows.length > 0 && profileRes.rows[0].business_name) storeName = profileRes.rows[0].business_name;
+      } catch (e) {}
+    }
+    if (!storeName) {
+      try {
+        const userRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1 LIMIT 1', [resolvedSellerId]);
+        if (userRes.rows.length > 0) {
+          const r = userRes.rows[0];
+          sellerName = `${r.first_name || ''} ${r.last_name || ''}`.trim();
+          storeName = sellerName || null;
+        }
+      } catch (e) {}
+    }
+
     const refundPayload = {
       buyer_id,
       seller_id: resolvedSellerId,
@@ -198,6 +228,10 @@ router.post('/create', async (req, res) => {
       product_name,
       complaint_text,
       evidence_url: evidence_url || null,
+      total_amount: totalAmount,
+      refund_amount: totalAmount,
+      store_name: storeName || null,
+      seller_name: sellerName || null,
       status: 'pending',
       resolution_status: 'pending',
       seller_marked_resolved: false,
@@ -599,10 +633,20 @@ router.get('/buyer/:buyerId', protect, async (req, res) => {
     }
 
     const refundCases = await response.json();
-    console.log('Refund cases loaded:', refundCases);
-    console.log('Refund owners:', refundCases.map(r => r.buyer_id));
-    console.log('✅ Refund cases fetched successfully:', refundCases.length);
-    return res.status(200).json({ success: true, refundCases });
+    const enrichedRefundCases = await Promise.all((refundCases || []).map(async (refundCase) => {
+      try {
+        const paymentSummary = await getPaymentSummaryForRefundCase(refundCase.id);
+        return paymentSummary ? { ...refundCase, payment_summary: paymentSummary } : refundCase;
+      } catch (err) {
+        console.warn('⚠️ Could not enrich refund case with payment summary:', refundCase?.id, err.message || err);
+        return refundCase;
+      }
+    }));
+
+    console.log('Refund cases loaded:', enrichedRefundCases);
+    console.log('Refund owners:', enrichedRefundCases.map(r => r.buyer_id));
+    console.log('✅ Refund cases fetched successfully:', enrichedRefundCases.length);
+    return res.status(200).json({ success: true, refundCases: enrichedRefundCases });
   } catch (error) {
     console.error('❌ Error in /api/refunds/buyer/:buyerId:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });

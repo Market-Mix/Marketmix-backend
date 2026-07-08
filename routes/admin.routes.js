@@ -8,6 +8,7 @@ const { sendSuccess, sendError } = require('../utils/response');
 const { stripFee } = require('../utils/pricing');
 const { processWithdrawal } = require('../services/payout.service');
 const { createDedupedNotification } = require('../controllers/notification.controller');
+const { getPaymentSummaryForRefundCase } = require('../services/refundPaymentPreparationService');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -92,6 +93,89 @@ async function enrichRefundCases(refundCases) {
 
     return enrichedCase;
   });
+}
+
+async function enrichRefundCaseWithSummary(refundCase) {
+  if (!refundCase?.id) return refundCase;
+
+  try {
+    const paymentSummary = await getPaymentSummaryForRefundCase(refundCase.id);
+    if (paymentSummary) {
+      return { ...refundCase, payment_summary: paymentSummary };
+    }
+  } catch (err) {
+    console.warn('⚠️ Could not enrich admin refund case with payment summary', refundCase.id, err.message || err);
+  }
+
+  return refundCase;
+}
+
+async function enrichRefundCasesWithSummary(refundCases) {
+  if (!Array.isArray(refundCases)) return [];
+  return Promise.all(refundCases.map(enrichRefundCaseWithSummary));
+}
+
+async function enrichRefundCases(refundCases) {
+  if (!Array.isArray(refundCases) || refundCases.length === 0) {
+    return [];
+  }
+
+  const buyerIds = [...new Set(refundCases.map((refundCase) => refundCase?.buyer_id).filter(Boolean))];
+  const sellerIds = [...new Set(refundCases.map((refundCase) => refundCase?.seller_id).filter(Boolean))];
+
+  const buyerNameMap = new Map();
+  if (buyerIds.length) {
+    const buyerRes = await db.query(
+      `SELECT id, first_name, last_name FROM users WHERE id = ANY($1::uuid[])`,
+      [buyerIds]
+    );
+    buyerRes.rows.forEach((row) => {
+      buyerNameMap.set(row.id, `${row.first_name || ''} ${row.last_name || ''}`.trim() || null);
+    });
+  }
+
+  const sellerNameMap = new Map();
+  const storeNameMap = new Map();
+  if (sellerIds.length) {
+    const sellerRes = await db.query(
+      `SELECT id, first_name, last_name FROM users WHERE id = ANY($1::uuid[])`,
+      [sellerIds]
+    );
+    sellerRes.rows.forEach((row) => {
+      sellerNameMap.set(row.id, `${row.first_name || ''} ${row.last_name || ''}`.trim() || null);
+    });
+
+    const storeRes = await db.query(
+      `SELECT DISTINCT ON (user_id) user_id, business_name
+       FROM stores
+       WHERE user_id = ANY($1::uuid[]) AND is_deleted = false
+       ORDER BY user_id, store_number ASC, id ASC`,
+      [sellerIds]
+    );
+    storeRes.rows.forEach((row) => {
+      storeNameMap.set(row.user_id, row.business_name || null);
+    });
+  }
+
+  const enriched = refundCases.map((refundCase) => {
+    const enrichedCase = { ...refundCase };
+
+    if (enrichedCase.buyer_id) {
+      enrichedCase.buyer_name = buyerNameMap.get(enrichedCase.buyer_id) || null;
+    }
+
+    if (enrichedCase.seller_id) {
+      enrichedCase.seller_name = sellerNameMap.get(enrichedCase.seller_id) || null;
+      enrichedCase.store_name = storeNameMap.get(enrichedCase.seller_id) || null;
+    }
+
+    enrichedCase.return_received = enrichedCase.return_received || false;
+    enrichedCase.return_received_at = enrichedCase.return_received_at || enrichedCase.returnReceivedAt || null;
+
+    return enrichedCase;
+  });
+
+  return enrichRefundCasesWithSummary(enriched);
 }
 
 // POST /api/admin/escrow/:escrowId/resolve
