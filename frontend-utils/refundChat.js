@@ -145,7 +145,7 @@ const RefundChat = (() => {
           if (onNewMessage) onNewMessage(msgs);
         }
       } catch (e) { /* silent */ }
-    }, 15000);
+    }, 60000); // poll every 60 seconds
   }
 
   function stopPolling(keepConfig = false) {
