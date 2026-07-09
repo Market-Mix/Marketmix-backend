@@ -13,7 +13,7 @@ const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const refundCache = new Map();
-const CACHE_MS = 30_000;
+const CACHE_MS = 5 * 60_000; // was 30_000
 
 function normalizeKycStatus(isVerified, status) {
   const normalized = String(status || 'not_submitted').toLowerCase();
