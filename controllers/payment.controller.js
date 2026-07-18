@@ -501,7 +501,7 @@ async function _fulfillOrder(reference, payResult) {
 
     // Create escrow record
     const orderData = await db.query(
-  `SELECT o.buyer_id, o.total_amount, oi.seller_id,
+  `SELECT o.buyer_id, o.total_amount, oi.seller_id, oi.store_id,
           u.first_name, u.last_name
    FROM orders o
    JOIN order_items oi ON oi.order_id = o.id
@@ -512,17 +512,17 @@ async function _fulfillOrder(reference, payResult) {
 );
 
 if (orderData.rows.length) {
-  const { buyer_id, seller_id, total_amount, first_name, last_name } = orderData.rows[0];
+  const { buyer_id, seller_id, store_id, total_amount, first_name, last_name } = orderData.rows[0];
   const buyerName = `${first_name || ''} ${last_name || ''}`.trim() || 'A customer';
   const autoReleaseAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
 
   await db.query(
     `INSERT INTO escrow_transactions
-       (order_id, seller_id, buyer_id, amount, status,
+       (order_id, seller_id, store_id, buyer_id, amount, status,
         payment_reference, payment_provider, auto_release_at)
-     VALUES ($1,$2,$3,$4,'held',$5,$6,$7)
+     VALUES ($1,$2,$3,$4,$5,'held',$6,$7,$8)
      ON CONFLICT DO NOTHING`,
-    [tx.order_id, seller_id, buyer_id, total_amount,
+    [tx.order_id, seller_id, store_id, buyer_id, total_amount,
      reference, tx.provider, autoReleaseAt]
   );
   

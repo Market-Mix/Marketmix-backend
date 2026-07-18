@@ -264,14 +264,17 @@ const getStoreStats = async (req, res) => {
       [userId, storeId]
     );
 
-    // Balance from stores table
-    const balanceRes = await db.query(
-      `SELECT total_earnings, available_balance FROM stores WHERE id = $1`,
-      [storeId]
+    // Balance from earnings table (live compute instead of stale store denormalized columns)
+    const earningsRes = await db.query(
+      `SELECT COALESCE(SUM(net_amount) FILTER (WHERE status = 'available'), 0) AS total_earnings,
+              COALESCE(SUM(net_amount) FILTER (WHERE status = 'available'), 0)
+                - COALESCE(SUM(ABS(amount)) FILTER (WHERE status = 'withdrawn'), 0) AS available_balance
+       FROM earnings WHERE seller_id = $1 AND store_id = $2`,
+      [userId, storeId]
     );
 
     const o = orderStats.rows[0];
-    const b = balanceRes.rows[0] || {};
+    const b = earningsRes.rows[0] || {};
 
     return sendSuccess(res, 200, 'Store stats fetched', {
       stats: {
