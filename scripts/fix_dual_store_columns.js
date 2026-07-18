@@ -6,6 +6,7 @@ const db = require('../config/db');
     ALTER TABLE escrow_transactions ADD COLUMN IF NOT EXISTS store_id UUID REFERENCES stores(id);
     ALTER TABLE earnings           ADD COLUMN IF NOT EXISTS store_id UUID REFERENCES stores(id);
     ALTER TABLE withdrawals        ADD COLUMN IF NOT EXISTS store_id UUID REFERENCES stores(id);
+    ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS store_id UUID REFERENCES stores(id);
   `);
   // Backfill from order_items -> vendor_orders -> store_id, for existing rows
   await db.query(`
