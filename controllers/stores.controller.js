@@ -56,6 +56,7 @@ const getMyStores = async (req, res) => {
     return sendSuccess(res, 200, 'Stores fetched', {
       stores: result.rows.map(s => ({
         ...s,
+        accountSlug:      s.account_slug,
         rating:           parseFloat(s.rating)           || 0,
         totalEarnings:    parseFloat(s.total_earnings)    || 0,
         availableBalance: parseFloat(s.available_balance) || 0,
