@@ -8,6 +8,7 @@ const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 const { createDedupedNotification } = require('../controllers/notification.controller');
 const { prepareRefundForPayment, getPaymentSummaryForRefundCase, getPaymentSummariesForRefundCases } = require('../services/refundPaymentPreparationService');
+const { slugify, uniqueAccountSlug } = require('../utils/slugify');
 const multer = require('multer');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -458,6 +459,18 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
 
     if (!storeName) return sendError(res, 400, 'Store name is required');
 
+    const userRow = await db.query(
+      'SELECT first_name, account_slug FROM users WHERE id = $1',
+      [userId]
+    );
+    let accountSlug = userRow.rows[0]?.account_slug;
+    if (!accountSlug) {
+      accountSlug = await uniqueAccountSlug(db, userRow.rows[0]?.first_name || 'seller');
+      await db.query('UPDATE users SET account_slug = $1 WHERE id = $2', [accountSlug, userId]);
+    }
+
+    const storeSlug = slugify(storeName);
+
     // Check if store #1 already exists for this user
     const existing = await db.query(
       `SELECT id FROM stores WHERE user_id = $1 AND store_number = 1 AND is_deleted = false`,
@@ -470,24 +483,25 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
       // Update existing store #1
       result = await db.query(
         `UPDATE stores SET
-           business_name        = $1,
-           business_description = $2,
-           business_email       = $3,
-           business_phone       = $4,
-           business_address     = $5,
-           store_logo_url       = COALESCE($6, store_logo_url),
-           website              = $7,
-           facebook             = $8,
-           twitter              = $9,
-           instagram            = $10,
-           tiktok               = $11,
-           telegram             = $12,
-           category             = $13,
+           slug                 = $1,
+           business_name        = $2,
+           business_description = $3,
+           business_email       = $4,
+           business_phone       = $5,
+           business_address     = $6,
+           store_logo_url       = COALESCE($7, store_logo_url),
+           website              = $8,
+           facebook             = $9,
+           twitter              = $10,
+           instagram            = $11,
+           tiktok               = $12,
+           telegram             = $13,
+           category             = $14,
            updated_at           = NOW()
-         WHERE user_id = $14 AND store_number = 1
+         WHERE user_id = $15 AND store_number = 1
          RETURNING id, store_number, business_name, store_logo_url, is_verified, created_at`,
         [
-          storeName, storeDescription || null, businessEmail || null,
+          storeSlug, storeName, storeDescription || null, businessEmail || null,
           businessPhone || null, businessAddress || null,
           storeLogoUrl || null, website || null,
           facebook || null, twitter || null, instagram || null,
@@ -499,14 +513,14 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
       // Create store #1
       result = await db.query(
         `INSERT INTO stores (
-           user_id, store_number, business_name, business_description,
+           user_id, store_number, slug, business_name, business_description,
            business_address, business_phone, business_email,
            store_logo_url, website, facebook, twitter, instagram,
            tiktok, telegram, category
          ) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          RETURNING id, store_number, business_name, store_logo_url, is_verified, created_at`,
         [
-          userId, storeName, storeDescription || null,
+          userId, storeSlug, storeName, storeDescription || null,
           businessAddress || null, businessPhone || null, businessEmail || null,
           storeLogoUrl || null, website || null,
           facebook || null, twitter || null, instagram || null,
