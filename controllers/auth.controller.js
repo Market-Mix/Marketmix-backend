@@ -6,6 +6,7 @@ const { notifySeller } = require('../utils/sellerEmailService');
 const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
 
+// Refresh tokens are stored as httpOnly cookies to prevent JavaScript access.
 const REFRESH_COOKIE_OPTS = {
   httpOnly: true,
   secure: true,        // both render + vercel are https
@@ -17,7 +18,8 @@ const { generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 
 function setRefreshCookie(res, user) {
   const refreshToken = generateRefreshToken({ id: user.id, email: user.email, role: user.role });
-  res.cookie('mm_refresh', refreshToken, REFRESH_COOKIE_OPTS);
+  // Cookie-based refresh token setting disabled.
+  // res.cookie('mm_refresh', refreshToken, REFRESH_COOKIE_OPTS);
 }
 
 const createSellerWelcomeNotification = async (userId) => {
@@ -554,9 +556,9 @@ const logout = async (req, res) => {
       return null;
     });
 
-    // If using httpOnly cookies, clear them
-    res.clearCookie('token');
-    res.clearCookie('mm_refresh', REFRESH_COOKIE_OPTS);
+    // Cookie clearing disabled.
+    // res.clearCookie('token');
+    // res.clearCookie('mm_refresh', REFRESH_COOKIE_OPTS);
     
     return sendSuccess(res, 200, 'Logged out successfully', {
       message: 'Your cart has been saved locally. It will sync when you log back in.',
@@ -1032,7 +1034,8 @@ const resetPassword = async (req, res) => {
  */
 const silentLogin = async (req, res) => {
   try {
-    const refreshToken = req.cookies?.mm_refresh;
+    // Cookie-based silent login disabled.
+    const refreshToken = null;
     if (!refreshToken) return sendError(res, 401, 'No active session');
 
     const decoded = verifyRefreshToken(refreshToken);
@@ -1043,7 +1046,8 @@ const silentLogin = async (req, res) => {
       [decoded.id]
     );
     if (!result.rows.length) {
-      res.clearCookie('mm_refresh', REFRESH_COOKIE_OPTS);
+      // Cookie clearing disabled.
+      // res.clearCookie('mm_refresh', REFRESH_COOKIE_OPTS);
       return sendError(res, 401, 'Session invalid');
     }
 
@@ -1064,7 +1068,8 @@ const silentLogin = async (req, res) => {
       token
     });
   } catch (error) {
-    res.clearCookie('mm_refresh', REFRESH_COOKIE_OPTS);
+    // Cookie clearing disabled.
+    // res.clearCookie('mm_refresh', REFRESH_COOKIE_OPTS);
     return sendError(res, 401, 'Session expired, please log in again');
   }
 };
