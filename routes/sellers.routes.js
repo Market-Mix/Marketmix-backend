@@ -7,13 +7,14 @@ const { sendSuccess, sendError } = require('../utils/response');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
 const { createDedupedNotification } = require('../controllers/notification.controller');
-const { prepareRefundForPayment, getPaymentSummaryForRefundCase } = require('../services/refundPaymentPreparationService');
+const { prepareRefundForPayment, getPaymentSummaryForRefundCase, getPaymentSummariesForRefundCases } = require('../services/refundPaymentPreparationService');
+const { slugify, uniqueAccountSlug } = require('../utils/slugify');
 const multer = require('multer');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const refundCache = new Map();
-const CACHE_MS = 30_000;
+const CACHE_MS = 20 * 60_000; // now genuinely absorbs the 15-min dashboard poll
 
 function normalizeKycStatus(isVerified, status) {
   const normalized = String(status || 'not_submitted').toLowerCase();
@@ -458,6 +459,18 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
 
     if (!storeName) return sendError(res, 400, 'Store name is required');
 
+    const userRow = await db.query(
+      'SELECT first_name, account_slug FROM users WHERE id = $1',
+      [userId]
+    );
+    let accountSlug = userRow.rows[0]?.account_slug;
+    if (!accountSlug) {
+      accountSlug = await uniqueAccountSlug(db, userRow.rows[0]?.first_name || 'seller');
+      await db.query('UPDATE users SET account_slug = $1 WHERE id = $2', [accountSlug, userId]);
+    }
+
+    const storeSlug = slugify(storeName);
+
     // Check if store #1 already exists for this user
     const existing = await db.query(
       `SELECT id FROM stores WHERE user_id = $1 AND store_number = 1 AND is_deleted = false`,
@@ -470,24 +483,25 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
       // Update existing store #1
       result = await db.query(
         `UPDATE stores SET
-           business_name        = $1,
-           business_description = $2,
-           business_email       = $3,
-           business_phone       = $4,
-           business_address     = $5,
-           store_logo_url       = COALESCE($6, store_logo_url),
-           website              = $7,
-           facebook             = $8,
-           twitter              = $9,
-           instagram            = $10,
-           tiktok               = $11,
-           telegram             = $12,
-           category             = $13,
+           slug                 = $1,
+           business_name        = $2,
+           business_description = $3,
+           business_email       = $4,
+           business_phone       = $5,
+           business_address     = $6,
+           store_logo_url       = COALESCE($7, store_logo_url),
+           website              = $8,
+           facebook             = $9,
+           twitter              = $10,
+           instagram            = $11,
+           tiktok               = $12,
+           telegram             = $13,
+           category             = $14,
            updated_at           = NOW()
-         WHERE user_id = $14 AND store_number = 1
+         WHERE user_id = $15 AND store_number = 1
          RETURNING id, store_number, business_name, store_logo_url, is_verified, created_at`,
         [
-          storeName, storeDescription || null, businessEmail || null,
+          storeSlug, storeName, storeDescription || null, businessEmail || null,
           businessPhone || null, businessAddress || null,
           storeLogoUrl || null, website || null,
           facebook || null, twitter || null, instagram || null,
@@ -499,14 +513,14 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
       // Create store #1
       result = await db.query(
         `INSERT INTO stores (
-           user_id, store_number, business_name, business_description,
+           user_id, store_number, slug, business_name, business_description,
            business_address, business_phone, business_email,
            store_logo_url, website, facebook, twitter, instagram,
            tiktok, telegram, category
          ) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          RETURNING id, store_number, business_name, store_logo_url, is_verified, created_at`,
         [
-          userId, storeName, storeDescription || null,
+          userId, storeSlug, storeName, storeDescription || null,
           businessAddress || null, businessPhone || null, businessEmail || null,
           storeLogoUrl || null, website || null,
           facebook || null, twitter || null, instagram || null,
@@ -1438,7 +1452,7 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
 
     // Fetch refund cases from Supabase using service role key (request all fields so UI can render full details)
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/refund_cases?select=*&seller_id=eq.${sellerId}&order=created_at.desc`,
+      `${SUPABASE_URL}/rest/v1/refund_cases?select=id,buyer_id,seller_id,order_id,order_item_id,product_name,status,resolution_status,total_amount,refund_amount,created_at,updated_at,seller_return_choice,return_received&seller_id=eq.${sellerId}&order=created_at.desc`,
       {
         method: 'GET',
         headers: {
@@ -1457,101 +1471,87 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
     }
 
     const data = await response.json();
-    // Enrich refund cases with local DB data (buyer name, total amount) when available
-    const enriched = await Promise.all((data || []).map(async (c) => {
+    // Enrich refund cases with local DB data (batched lookups for performance)
+    const cases = data || [];
+    const buyerIds = [...new Set(cases.map(c => c.buyer_id).filter(Boolean))];
+    const orderItemIds = [...new Set(cases.map(c => c.order_item_id).filter(Boolean))];
+    const orderIdsNeedingSum = [...new Set(
+      cases.filter(c => !c.order_item_id && (c.total_amount == null)).map(c => c.order_id).filter(Boolean)
+    )];
+    const caseIds = cases.map(c => c.id).filter(Boolean);
+
+    // 1. Batch buyer names
+    const buyerMap = new Map();
+    if (buyerIds.length) {
       try {
-        const caseCopy = { ...c };
-
-        // Resolve buyer name from local users table if missing
-        if (!caseCopy.buyer_name && caseCopy.buyer_id) {
-          try {
-            const userRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [caseCopy.buyer_id]);
-            if (userRes.rows.length > 0) {
-              const row = userRes.rows[0];
-              caseCopy.buyer_name = `${row.first_name || ''} ${row.last_name || ''}`.trim() || null;
-            }
-          } catch (err) {
-            console.warn('⚠️ Could not resolve buyer name for refund case', caseCopy.id, err.message);
-          }
-        }
-
-        // Resolve total amount from order_items if missing
-        if ((caseCopy.total_amount === undefined || caseCopy.total_amount === null) && (caseCopy.order_item_id || caseCopy.order_id)) {
-          try {
-            if (caseCopy.order_item_id) {
-              const itemRes = await db.query(
-                'SELECT quantity, price_at_purchase FROM order_items WHERE id = $1 LIMIT 1',
-                [caseCopy.order_item_id]
-              );
-              if (itemRes.rows.length > 0) {
-                const r = itemRes.rows[0];
-                caseCopy.total_amount = (parseFloat(r.quantity) || 1) * (parseFloat(r.price_at_purchase) || 0);
-              }
-            } else if (caseCopy.order_id) {
-              // Fallback: sum order_items for the order (optionally filtered by seller_id)
-              const itemsRes = await db.query(
-                'SELECT quantity, price_at_purchase FROM order_items WHERE order_id = $1',
-                [caseCopy.order_id]
-              );
-              if (itemsRes.rows.length > 0) {
-                caseCopy.total_amount = itemsRes.rows.reduce((sum, r) => {
-                  return sum + ((parseFloat(r.quantity) || 1) * (parseFloat(r.price_at_purchase) || 0));
-                }, 0);
-              }
-            }
-          } catch (err) {
-            console.warn('⚠️ Could not resolve total_amount for refund case', caseCopy.id, err.message);
-          }
-        }
-
-        try {
-          const paymentSummary = await getPaymentSummaryForRefundCase(caseCopy.id);
-          if (paymentSummary) {
-            caseCopy.payment_summary = paymentSummary;
-          }
-        } catch (err) {
-          console.warn('⚠️ Could not enrich seller refund case with payment summary', caseCopy.id, err.message || err);
-        }
-
-        // Fetch color, size, and product_snapshot from order_items for seller refund cases
-        if (caseCopy.order_item_id) {
-          try {
-            const itemSpecRes = await db.query(
-              'SELECT color, size, product_snapshot FROM order_items WHERE id = $1 LIMIT 1',
-              [caseCopy.order_item_id]
-            );
-            if (itemSpecRes.rows.length > 0) {
-              const r = itemSpecRes.rows[0];
-              caseCopy.color = r.color ?? caseCopy.color ?? null;
-              caseCopy.size = r.size ?? caseCopy.size ?? null;
-              caseCopy.product_snapshot = r.product_snapshot ?? caseCopy.product_snapshot ?? null;
-            }
-          } catch (err) {
-            console.warn('⚠️ Could not resolve specifications for refund case', caseCopy.id, err.message);
-          }
-        } else if (caseCopy.order_id) {
-          try {
-            const itemSpecRes = await db.query(
-              'SELECT color, size, product_snapshot FROM order_items WHERE order_id = $1 LIMIT 1',
-              [caseCopy.order_id]
-            );
-            if (itemSpecRes.rows.length > 0) {
-              const r = itemSpecRes.rows[0];
-              caseCopy.color = r.color ?? caseCopy.color ?? null;
-              caseCopy.size = r.size ?? caseCopy.size ?? null;
-              caseCopy.product_snapshot = r.product_snapshot ?? caseCopy.product_snapshot ?? null;
-            }
-          } catch (err) {
-            console.warn('⚠️ Could not resolve specifications for refund case fallback', caseCopy.id, err.message);
-          }
-        }
-
-        return caseCopy;
+        const r = await db.query(
+          `SELECT id, first_name, last_name FROM users WHERE id = ANY($1::uuid[])`,
+          [buyerIds]
+        );
+        r.rows.forEach(row => buyerMap.set(row.id, `${row.first_name||''} ${row.last_name||''}`.trim() || null));
       } catch (err) {
-        console.warn('⚠️ Failed to enrich refund case', c?.id, err?.message || err);
-        return c;
+        console.warn('⚠️ Could not batch fetch buyer names:', err.message || err);
       }
-    }));
+    }
+
+    // 2. Batch order_item amounts + specs (covers both total_amount AND color/size/snapshot)
+    const itemMap = new Map();
+    if (orderItemIds.length) {
+      try {
+        const r = await db.query(
+          `SELECT id, quantity, price_at_purchase, color, size, product_snapshot
+           FROM order_items WHERE id = ANY($1::uuid[])`,
+          [orderItemIds]
+        );
+        r.rows.forEach(row => itemMap.set(row.id, row));
+      } catch (err) {
+        console.warn('⚠️ Could not batch fetch order_items:', err.message || err);
+      }
+    }
+
+    // 3. Batch fallback sums for cases with only order_id (no order_item_id)
+    const orderSumMap = new Map();
+    if (orderIdsNeedingSum.length) {
+      try {
+        const r = await db.query(
+          `SELECT order_id, SUM(quantity * price_at_purchase) AS total,
+                  (array_agg(color))[1] AS color, (array_agg(size))[1] AS size,
+                  (array_agg(product_snapshot))[1] AS product_snapshot
+           FROM order_items WHERE order_id = ANY($1::uuid[])
+           GROUP BY order_id`,
+          [orderIdsNeedingSum]
+        );
+        r.rows.forEach(row => orderSumMap.set(row.order_id, row));
+      } catch (err) {
+        console.warn('⚠️ Could not batch fetch order sums:', err.message || err);
+      }
+    }
+
+    // 4. Batch payment summaries
+    const paymentSummaryMap = await getPaymentSummariesForRefundCases(caseIds);
+
+    // Assemble — no awaits inside the loop
+    const enriched = cases.map(c => {
+      const out = { ...c };
+      if (!out.buyer_name && out.buyer_id) out.buyer_name = buyerMap.get(out.buyer_id) || null;
+
+      const item = out.order_item_id ? itemMap.get(out.order_item_id) : orderSumMap.get(out.order_id);
+      if (item) {
+        if (out.total_amount == null) {
+          out.total_amount = out.order_item_id
+            ? (parseFloat(item.quantity)||1) * (parseFloat(item.price_at_purchase)||0)
+            : parseFloat(item.total) || 0;
+        }
+        out.color = item.color ?? out.color ?? null;
+        out.size = item.size ?? out.size ?? null;
+        out.product_snapshot = item.product_snapshot ?? out.product_snapshot ?? null;
+      }
+
+      const summary = paymentSummaryMap.get(out.id);
+      if (summary) out.payment_summary = summary;
+
+      return out;
+    });
 
     refundCache.set(sellerId, { data: enriched, ts: Date.now() });
 

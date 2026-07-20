@@ -38,7 +38,7 @@ async function validateAddress({ name, phone, email, address }) {
   return data.data.address_code;
 }
 
-async function getSellerOrigin(sellerId) {
+async function getSellerOrigin(sellerId, storeId = null) {
   const r = await db.query(
     `SELECT COALESCE(s.business_address, sp.business_address) AS address,
             COALESCE(s.business_phone, sp.business_phone, u.phone) AS phone,
@@ -46,8 +46,9 @@ async function getSellerOrigin(sellerId) {
             COALESCE(s.business_email, sp.business_email, u.email) AS email
      FROM users u
      LEFT JOIN seller_profiles sp ON sp.user_id = u.id
-     LEFT JOIN stores s ON s.user_id = u.id AND s.store_number = 1
-     WHERE u.id = $1`, [sellerId]
+     LEFT JOIN stores s ON s.user_id = u.id
+       AND s.id = COALESCE($2, (SELECT id FROM stores WHERE user_id = u.id ORDER BY store_number LIMIT 1))
+     WHERE u.id = $1`, [sellerId, storeId]
   );
   return r.rows[0] || null;
 }
@@ -59,7 +60,8 @@ async function getQuotes(sessionId, items, address, sellerId) {
     console.log('[shipbubble] sellerItems:', sellerItems.length, 'sellerId:', sellerId);
     if (!sellerItems.length) return [];
 
-    const origin = await getSellerOrigin(sellerId);
+    const storeId = sellerItems[0]?.store_id || null;
+    const origin = await getSellerOrigin(sellerId, storeId);
     console.log('[shipbubble] origin:', origin);
     if (!origin) return [];
 // adapter/shipbubble.adapter.js — inside getQuotes(), replace the two validateAddress calls

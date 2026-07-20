@@ -541,13 +541,13 @@ const confirmDelivery = async (req, res) => {
            released_at = NOW(),
            updated_at = NOW()
        WHERE order_id = $1 AND status = 'held'
-       RETURNING seller_id, amount`,
+       RETURNING seller_id, store_id, amount`,
       [orderId]
     );
 
     // Credit seller balance and insert earnings per released escrow row
    if (escrowUpdate.rows.length) {
-      for (const { seller_id, amount } of escrowUpdate.rows) {
+      for (const { seller_id, store_id, amount } of escrowUpdate.rows) {
         const netAmount = stripFee(amount);
 
         await db.query(
@@ -589,9 +589,9 @@ const confirmDelivery = async (req, res) => {
           for (const it of items.rows) {
             const gross = parseFloat(it.price_at_purchase) * it.quantity;
             await db.query(
-              `INSERT INTO earnings (seller_id, order_id, order_item_id, amount, net_amount, status, created_at)
-               VALUES ($1,$2,$3,$4,$5,'available',NOW())`,
-              [seller_id, orderId, it.id, gross, stripFee(gross)]
+              `INSERT INTO earnings (seller_id, store_id, order_id, order_item_id, amount, net_amount, status, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,'available',NOW())`,
+              [seller_id, store_id, orderId, it.id, gross, stripFee(gross)]
             );
           }
         } catch (e) {

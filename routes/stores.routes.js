@@ -26,6 +26,25 @@ const upload = multer({
 /* ── Public routes (no auth) ────────────────────────────────────────────── */
 router.get('/public/:storeId',          getPublicStore);
 router.get('/public/:storeId/products', getPublicStoreProducts);
+router.get('/public-by-slug/:acctSlug/:storeSlug', async (req, res) => {
+  const db = require('../config/db');
+  const { sendSuccess, sendError } = require('../utils/response');
+  const { acctSlug, storeSlug } = req.params;
+  try {
+    const r = await db.query(
+      `SELECT s.id FROM stores s
+       JOIN users u ON u.id = s.user_id
+       WHERE u.account_slug = $1 AND s.slug = $2
+         AND s.is_active = true AND s.is_deleted = false`,
+      [acctSlug, storeSlug]
+    );
+    if (!r.rows.length) return sendError(res, 404, 'Store not found');
+    req.params.storeId = r.rows[0].id;
+    return require('../controllers/stores.controller').getPublicStore(req, res);
+  } catch (err) {
+    return sendError(res, 500, 'Error resolving store', err.message);
+  }
+});
 
 /* ── Protected routes (seller only) ────────────────────────────────────── */
 router.use(protect, isSeller);

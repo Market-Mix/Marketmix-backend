@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
+const { slugify, uniqueAccountSlug } = require('../utils/slugify');
 
 /* ─── helpers ────────────────────────────────────────────────────────────── */
 
@@ -33,24 +34,29 @@ const getMyStores = async (req, res) => {
 
     const result = await db.query(
       `SELECT
-         id, store_number, business_name, business_description,
-         business_address, business_phone, business_email,
-         store_logo_url, store_banner_url, store_theme, website, facebook, twitter, instagram,
-         tiktok, telegram, category,
-         is_verified, rating, total_reviews, total_sales,
-         total_earnings, available_balance, is_active, created_at,
+         stores.id, stores.store_number, stores.slug,
+         stores.business_name, stores.business_description,
+         stores.business_address, stores.business_phone, stores.business_email,
+         stores.store_logo_url, stores.store_banner_url, stores.store_theme, stores.website,
+         stores.facebook, stores.twitter, stores.instagram,
+         stores.tiktok, stores.telegram, stores.category,
+         stores.is_verified, stores.rating, stores.total_reviews, stores.total_sales,
+         stores.total_earnings, stores.available_balance, stores.is_active, stores.created_at,
+         u.account_slug,
          (SELECT COUNT(*) FROM products p
           WHERE p.store_id = stores.id
             AND p.is_active = true AND p.is_deleted = false) AS product_count
        FROM stores
-       WHERE user_id = $1 AND is_deleted = false
-       ORDER BY store_number ASC`,
+       JOIN users u ON u.id = stores.user_id
+       WHERE stores.user_id = $1 AND stores.is_deleted = false
+       ORDER BY stores.store_number ASC`,
       [userId]
     );
 
     return sendSuccess(res, 200, 'Stores fetched', {
       stores: result.rows.map(s => ({
         ...s,
+        accountSlug:      s.account_slug,
         rating:           parseFloat(s.rating)           || 0,
         totalEarnings:    parseFloat(s.total_earnings)    || 0,
         availableBalance: parseFloat(s.available_balance) || 0,
@@ -79,6 +85,15 @@ const createStore = async (req, res) => {
 
     if (!storeName) return sendError(res, 400, 'Store name is required');
 
+    const userRow = await db.query('SELECT first_name, account_slug FROM users WHERE id = $1', [userId]);
+    let accountSlug = userRow.rows[0]?.account_slug;
+    if (!accountSlug) {
+      accountSlug = await uniqueAccountSlug(db, userRow.rows[0]?.first_name || 'seller');
+      await db.query('UPDATE users SET account_slug = $1 WHERE id = $2', [accountSlug, userId]);
+    }
+
+    const storeSlug = slugify(storeName);
+
     const count = await countStores(userId);
     if (count >= 2) {
       return sendError(res, 400, 'You can only have 2 stores per account');
@@ -97,14 +112,14 @@ const createStore = async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO stores (
-         user_id, store_number, business_name, business_description,
+         user_id, store_number, slug, business_name, business_description,
          business_address, business_phone, business_email,
          store_logo_url, store_banner_url, store_theme, website, facebook, twitter, instagram,
          tiktok, telegram, category, is_verified
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING id, store_number, business_name, store_logo_url, is_verified, created_at`,
       [
-        userId, storeNumber, storeName, storeDescription || null,
+        userId, storeNumber, storeSlug, storeName, storeDescription || null,
         businessAddress || null, businessPhone || null, businessEmail || null,
         storeLogoUrl || null, website || null,
         facebook || null, twitter || null, instagram || null,
@@ -184,38 +199,41 @@ const updateStore = async (req, res) => {
 
     if (!storeName) return sendError(res, 400, 'Store name is required');
 
-  // In updateStore(), replace the db.query UPDATE with:
-const result = await db.query(
-  `UPDATE stores SET
-     business_name        = $1,
-     business_description = $2,
-     business_email       = $3,
-     business_phone       = $4,
-     business_address     = $5,
-     store_logo_url       = COALESCE($6, store_logo_url),
-     website              = $7,
-     facebook             = $8,
-     twitter              = $9,
-     instagram            = $10,
-     tiktok               = $11,
-     telegram             = $12,
-     category             = $13,
-     store_banner_url     = COALESCE($14, store_banner_url),
-     store_theme          = COALESCE($15, store_theme),
-     updated_at           = NOW()
-   WHERE id = $16
-   RETURNING id, store_number, business_name, store_logo_url, store_banner_url, store_theme, updated_at`,
-  [
-    storeName, storeDescription || null, businessEmail || null,
-    businessPhone || null, businessAddress || null,
-    storeLogoUrl || null, website || null,
-    facebook || null, twitter || null, instagram || null,
-    tiktok || null, telegram || null, category || null,
-    req.body.storeBannerUrl || null,
-    req.body.storeTheme ? JSON.stringify(req.body.storeTheme) : null,
-    storeId
-  ]
-);
+    const storeSlug = slugify(storeName);
+
+    const result = await db.query(
+      `UPDATE stores SET
+         slug                 = $1,
+         business_name        = $2,
+         business_description = $3,
+         business_email       = $4,
+         business_phone       = $5,
+         business_address     = $6,
+         store_logo_url       = COALESCE($7, store_logo_url),
+         website              = $8,
+         facebook             = $9,
+         twitter              = $10,
+         instagram            = $11,
+         tiktok               = $12,
+         telegram             = $13,
+         category             = $14,
+         store_banner_url     = COALESCE($15, store_banner_url),
+         store_theme          = COALESCE($16, store_theme),
+         updated_at           = NOW()
+       WHERE id = $17
+       RETURNING id, store_number, business_name, store_logo_url, store_banner_url, store_theme, updated_at`,
+      [
+        storeSlug,
+        storeName, storeDescription || null, businessEmail || null,
+        businessPhone || null, businessAddress || null,
+        storeLogoUrl || null, website || null,
+        facebook || null, twitter || null, instagram || null,
+        tiktok || null, telegram || null, category || null,
+        req.body.storeBannerUrl || null,
+        req.body.storeTheme ? JSON.stringify(req.body.storeTheme) : null,
+        storeId
+      ]
+    );
 
     console.log(`✅ Store ${storeId} updated by user ${userId}`);
     return sendSuccess(res, 200, 'Store updated successfully', { store: result.rows[0] });
@@ -264,14 +282,17 @@ const getStoreStats = async (req, res) => {
       [userId, storeId]
     );
 
-    // Balance from stores table
-    const balanceRes = await db.query(
-      `SELECT total_earnings, available_balance FROM stores WHERE id = $1`,
-      [storeId]
+    // Balance from earnings table (live compute instead of stale store denormalized columns)
+    const earningsRes = await db.query(
+      `SELECT COALESCE(SUM(net_amount) FILTER (WHERE status = 'available'), 0) AS total_earnings,
+              COALESCE(SUM(net_amount) FILTER (WHERE status = 'available'), 0)
+                - COALESCE(SUM(ABS(amount)) FILTER (WHERE status = 'withdrawn'), 0) AS available_balance
+       FROM earnings WHERE seller_id = $1 AND store_id = $2`,
+      [userId, storeId]
     );
 
     const o = orderStats.rows[0];
-    const b = balanceRes.rows[0] || {};
+    const b = earningsRes.rows[0] || {};
 
     return sendSuccess(res, 200, 'Store stats fetched', {
       stats: {

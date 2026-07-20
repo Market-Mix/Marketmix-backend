@@ -16,7 +16,7 @@ function parseOriginAddress(addressStr = '') {
   };
 }
 
-async function getSellerOrigin(sellerId) {
+async function getSellerOrigin(sellerId, storeId = null) {
   const db = require('../../config/db');
   const r = await db.query(
     `SELECT COALESCE(s.business_address, sp.business_address) AS address,
@@ -25,8 +25,9 @@ async function getSellerOrigin(sellerId) {
             COALESCE(s.business_email, sp.business_email, u.email) AS email
      FROM users u
      LEFT JOIN seller_profiles sp ON sp.user_id = u.id
-     LEFT JOIN stores s ON s.user_id = u.id AND s.store_number = 1
-     WHERE u.id = $1`, [sellerId]
+     LEFT JOIN stores s ON s.user_id = u.id
+       AND s.id = COALESCE($2, (SELECT id FROM stores WHERE user_id = u.id ORDER BY store_number LIMIT 1))
+     WHERE u.id = $1`, [sellerId, storeId]
   );
   return r.rows[0] || null;
 }
@@ -39,7 +40,8 @@ const itemsPayload = items => items.map(i => ({
 
 async function getQuotes(sessionId, items, address) {
   if (!items.length) return [];
-  const origin = await getSellerOrigin(items[0].seller_id);
+  const storeId = items[0]?.store_id || null;
+  const origin = await getSellerOrigin(items[0].seller_id, storeId);
   if (!origin?.address) return [];
   const o = parseOriginAddress(origin.address);
 
@@ -72,7 +74,8 @@ async function getQuotes(sessionId, items, address) {
 }
 
 async function bookShipment({ sellerId, address, items, callbackUrl }) {
-  const origin = await getSellerOrigin(sellerId);
+  const storeId = items[0]?.store_id || null;
+  const origin = await getSellerOrigin(sellerId, storeId);
   const o = parseOriginAddress(origin?.address || '');
   const payload = {
     origin: { first_name: origin?.name || 'Seller', last_name: '', phone: origin?.phone || '0000000000',

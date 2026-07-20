@@ -212,6 +212,31 @@ async function getPaymentSummaryForRefundCase(refundCaseId) {
   return summary;
 }
 
+async function getPaymentSummariesForRefundCases(refundCaseIds) {
+  if (!refundCaseIds?.length) return new Map();
+  try {
+    await ensurePaymentSummaryColumn({ query: (text, params) => db.query(text, params) });
+  } catch (err) {
+    console.warn('⚠️ Could not ensure refund transaction summary column exists:', err.message || err);
+  }
+
+  const res = await db.query(
+    `SELECT DISTINCT ON (refund_case_id) refund_case_id, payment_summary
+     FROM refund_transactions
+     WHERE refund_case_id = ANY($1::uuid[])
+     ORDER BY refund_case_id, created_at DESC`,
+    [refundCaseIds]
+  );
+
+  const map = new Map();
+  res.rows.forEach(r => {
+    let s = r.payment_summary;
+    if (typeof s === 'string') { try { s = JSON.parse(s); } catch { s = null; } }
+    if (s) map.set(r.refund_case_id, s);
+  });
+  return map;
+}
+
 async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' } = {}) {
   const refund = await resolveRefundCase(refundCase || refundId);
   if (!refund) {
@@ -407,5 +432,6 @@ module.exports = {
   prepareRefundForPayment,
   loadRefundProcessingSummary,
   buildRefundProcessingSummary,
-  getPaymentSummaryForRefundCase
+  getPaymentSummaryForRefundCase,
+  getPaymentSummariesForRefundCases
 };

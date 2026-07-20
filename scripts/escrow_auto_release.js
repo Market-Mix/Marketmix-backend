@@ -73,9 +73,9 @@ async function autoReleaseEscrow() {
         for (const it of items.rows) {
           const gross = parseFloat(it.price_at_purchase) * it.quantity;
           await client.query(
-            `INSERT INTO earnings (seller_id, order_id, order_item_id, amount, net_amount, status, created_at)
-             VALUES ($1,$2,$3,$4,$5,'available',NOW())`,
-            [row.seller_id, row.order_id, it.id, gross, stripFee(gross)]
+            `INSERT INTO earnings (seller_id, store_id, order_id, order_item_id, amount, net_amount, status, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,'available',NOW())`,
+            [row.seller_id, row.store_id, row.order_id, it.id, gross, stripFee(gross)]
           );
         }
       } catch (e) {

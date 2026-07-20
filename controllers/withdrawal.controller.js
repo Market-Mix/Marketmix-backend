@@ -11,10 +11,13 @@ const NEW_USER_HOLD_HOURS = parseInt(process.env.NEW_USER_HOLD_HOURS || '48');
 
 const getWithdrawals = async (req, res) => {
   try {
-    const result = await db.query(
-      `SELECT * FROM withdrawals WHERE seller_id = $1 ORDER BY created_at DESC`,
-      [req.user.id]
-    ).catch(() => ({ rows: [] }));
+    const storeId = req.headers['x-store-id'];
+    const query = storeId
+      ? `SELECT * FROM withdrawals WHERE seller_id = $1 AND store_id = $2 ORDER BY created_at DESC`
+      : `SELECT * FROM withdrawals WHERE seller_id = $1 ORDER BY created_at DESC`;
+    const params = storeId ? [req.user.id, storeId] : [req.user.id];
+
+    const result = await db.query(query, params).catch(() => ({ rows: [] }));
     return sendSuccess(res, 200, 'Withdrawals fetched', { withdrawals: result.rows });
   } catch (err) {
     return sendError(res, 500, 'Error fetching withdrawals', err.message);

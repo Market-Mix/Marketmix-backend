@@ -124,8 +124,8 @@ app.use('/api/coupons', couponsRoutes);
 
 
 const { execFile } = require('child_process');
-const backgroundCronsEnabled = process.env.ENABLE_BACKGROUND_CRONS === 'true' || process.env.NODE_ENV === 'production';
-
+const backgroundCronsEnabled = process.env.ENABLE_BACKGROUND_CRONS === 'true';
+ 
 if (backgroundCronsEnabled) {
   setInterval(() => {
     execFile('node', ['scripts/escrow_auto_release.js'], (err, stdout) => {
