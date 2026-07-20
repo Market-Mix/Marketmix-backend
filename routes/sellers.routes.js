@@ -1452,7 +1452,7 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
 
     // Fetch refund cases from Supabase using service role key (request all fields so UI can render full details)
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/refund_cases?select=id,buyer_id,seller_id,order_id,order_item_id,product_name,complaint_text,evidence_url,status,resolution_status,created_at,updated_at,seller_return_choice,return_received&seller_id=eq.${sellerId}&order=created_at.desc`,
+      `${SUPABASE_URL}/rest/v1/refund_cases?select=id,buyer_id,seller_id,order_id,order_item_id,product_name,complaint_text,evidence_url,status,resolution_status,chat_started,seller_return_choice,return_received,created_at,updated_at&seller_id=eq.${sellerId}&order=created_at.desc`,
       {
         method: 'GET',
         headers: {
