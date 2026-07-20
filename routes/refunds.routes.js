@@ -133,6 +133,21 @@ router.post('/create', async (req, res) => {
     if (!ensureSupabaseConfigured(res)) return;
 
     let resolvedSellerId = seller_id;
+    if (!resolvedSellerId && order_item_id) {
+      try {
+        const itemSellerRes = await db.query(
+          'SELECT seller_id FROM order_items WHERE id = $1 AND seller_id IS NOT NULL LIMIT 1',
+          [order_item_id]
+        );
+        if (itemSellerRes.rows.length > 0) {
+          resolvedSellerId = itemSellerRes.rows[0].seller_id;
+          console.log('🔎 Resolved seller_id from order_item_id:', resolvedSellerId);
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not resolve seller_id from order_item_id:', err.message);
+      }
+    }
+
     if (!resolvedSellerId && order_id) {
       try {
         const orderItemsRes = await db.query(
@@ -141,10 +156,40 @@ router.post('/create', async (req, res) => {
         );
         if (orderItemsRes.rows.length > 0) {
           resolvedSellerId = orderItemsRes.rows[0].seller_id;
-          console.log('🔎 Resolved seller_id from order_items:', resolvedSellerId);
+          console.log('🔎 Resolved seller_id from order_items by order_id:', resolvedSellerId);
         }
       } catch (err) {
         console.warn('⚠️ Could not resolve seller_id from order_items:', err.message);
+      }
+    }
+
+    if (!resolvedSellerId && product_id && order_id) {
+      try {
+        const orderItemRes = await db.query(
+          'SELECT seller_id FROM order_items WHERE order_id = $1 AND product_id = $2 AND seller_id IS NOT NULL LIMIT 1',
+          [order_id, product_id]
+        );
+        if (orderItemRes.rows.length > 0) {
+          resolvedSellerId = orderItemRes.rows[0].seller_id;
+          console.log('🔎 Resolved seller_id from order_items by product_id:', resolvedSellerId);
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not resolve seller_id from order_items by product_id:', err.message);
+      }
+    }
+
+    if (!resolvedSellerId && product_id) {
+      try {
+        const productRes = await db.query(
+          'SELECT seller_id FROM products WHERE id = $1 AND seller_id IS NOT NULL LIMIT 1',
+          [product_id]
+        );
+        if (productRes.rows.length > 0) {
+          resolvedSellerId = productRes.rows[0].seller_id;
+          console.log('🔎 Resolved seller_id from product_id record:', resolvedSellerId);
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not resolve seller_id from product record using product_id:', err.message);
       }
     }
 
@@ -156,7 +201,7 @@ router.post('/create', async (req, res) => {
         );
         if (productRes.rows.length > 0) {
           resolvedSellerId = productRes.rows[0].seller_id;
-          console.log('🔎 Resolved seller_id from product record:', resolvedSellerId);
+          console.log('🔎 Resolved seller_id from product record by product_name:', resolvedSellerId);
         }
       } catch (err) {
         console.warn('⚠️ Could not resolve seller_id from product record:', err.message);
