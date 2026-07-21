@@ -44,41 +44,64 @@ function buildRefundProcessingSummary({ refundAmount = 0, shippingAmount = 0, es
 }
 
 async function resolveRefundAmount(refund) {
-  const explicitAmount = toNumber(refund?.refund_amount ?? refund?.total_amount ?? refund?.amount ?? 0);
-  if (explicitAmount > 0) {
-    return explicitAmount;
+  const approvedAmountCandidates = [
+    refund?.approved_refund_amount,
+    refund?.approved_amount
+  ];
+
+  for (const candidate of approvedAmountCandidates) {
+    const numericValue = toNumber(candidate);
+    if (numericValue > 0) {
+      return numericValue;
+    }
+  }
+
+  if (refund?.order_item_id) {
+    try {
+      const itemRes = await db.query(
+        `SELECT COALESCE((quantity * price_at_purchase), 0) AS line_total
+         FROM order_items
+         WHERE id = $1
+         LIMIT 1`,
+        [refund.order_item_id]
+      );
+      const lineTotal = toNumber(itemRes.rows[0]?.line_total);
+      if (lineTotal > 0) {
+        return lineTotal;
+      }
+    } catch (err) {
+      console.warn('⚠️ Could not resolve refund amount from order_item:', err.message || err);
+    }
   }
 
   if (refund?.order_id) {
     try {
-      const orderRes = await db.query(
-        `SELECT COALESCE(total_amount, 0) AS total_amount
-         FROM orders
-         WHERE id = $1
-         LIMIT 1`,
-        [refund.order_id]
-      );
-      const orderTotal = toNumber(orderRes.rows[0]?.total_amount);
-      if (orderTotal > 0) {
-        return orderTotal;
-      }
-    } catch (err) {
-      console.warn('⚠️ Could not resolve refund amount from orders table:', err.message || err);
-    }
-
-    try {
       const itemRes = await db.query(
-        `SELECT COALESCE(SUM((quantity * price_at_purchase)), 0) AS item_total
+        `SELECT COALESCE((quantity * price_at_purchase), 0) AS line_total
          FROM order_items
-         WHERE order_id = $1`,
-        [refund.order_id]
+         WHERE order_id = $1 AND id = $2
+         LIMIT 1`,
+        [refund.order_id, refund.order_item_id]
       );
-      const itemTotal = toNumber(itemRes.rows[0]?.item_total);
-      if (itemTotal > 0) {
-        return itemTotal;
+      const lineTotal = toNumber(itemRes.rows[0]?.line_total);
+      if (lineTotal > 0) {
+        return lineTotal;
       }
     } catch (err) {
-      console.warn('⚠️ Could not resolve refund amount from order_items:', err.message || err);
+      console.warn('⚠️ Could not resolve refund amount from order item by order id:', err.message || err);
+    }
+  }
+
+  const refundCaseAmountCandidates = [
+    refund?.refund_amount,
+    refund?.amount,
+    refund?.total_amount
+  ];
+
+  for (const candidate of refundCaseAmountCandidates) {
+    const numericValue = toNumber(candidate);
+    if (numericValue > 0) {
+      return numericValue;
     }
   }
 
@@ -102,6 +125,37 @@ async function resolveShippingRefundAmount(refund) {
   }
 
   return 0;
+}
+
+async function applyRefundWalletDeductions(client, refund, paymentSummary) {
+  const deductionAmount = toNumber(paymentSummary?.amountFromEscrow ?? 0) + toNumber(paymentSummary?.amountFromBalance ?? 0);
+  if (refund?.seller_id && deductionAmount > 0) {
+    await client.query(
+      `UPDATE seller_profiles
+       SET available_balance = GREATEST(0, available_balance - $1),
+           updated_at = NOW()
+       WHERE user_id = $2 AND is_deleted = false`,
+      [deductionAmount, refund.seller_id]
+    );
+  }
+}
+
+async function finalizeRefundCasePayment(client, refund, paymentReference, transactionId) {
+  await client.query(
+    `UPDATE refund_cases
+     SET refund_processing_started_at = COALESCE(refund_processing_started_at, NOW()),
+         refund_paid_at = COALESCE(refund_paid_at, NOW()),
+         refund_payment_status = 'paid',
+         refund_payment_reference = COALESCE(NULLIF($1, ''), refund_payment_reference),
+         refund_payment_mode = COALESCE(refund_payment_mode, 'simulation'),
+         refund_transaction_id = COALESCE($2, refund_transaction_id),
+         status = 'resolved',
+         resolution_status = 'resolved',
+         updated_at = NOW()
+     WHERE id = $3
+     RETURNING *`,
+    [paymentReference, transactionId, refund.id]
+  );
 }
 
 async function loadRefundProcessingSummary(refund) {
@@ -273,15 +327,8 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
         [refundAmount, shippingAmount, totalAmount, JSON.stringify(paymentSummary), 'paid', existingTransaction.id]
       );
 
-      if (amountFromBalance > 0 && refund.seller_id) {
-        await db.query(
-          `UPDATE seller_profiles
-           SET available_balance = GREATEST(0, available_balance - $1),
-               updated_at = NOW()
-           WHERE user_id = $2 AND is_deleted = false`,
-          [amountFromBalance, refund.seller_id]
-        );
-      }
+      await applyRefundWalletDeductions({ query: (text, params) => db.query(text, params) }, refund, paymentSummary);
+      await finalizeRefundCasePayment({ query: (text, params) => db.query(text, params) }, refund, refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference(), existingTransaction.id);
 
       return {
         refundCase: refund,
@@ -345,38 +392,20 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
     );
 
     const tx = txRes.rows[0];
-    if (paymentSummary.amountFromBalance > 0 && refund.seller_id) {
-      await client.query(
-        `UPDATE seller_profiles
-         SET available_balance = GREATEST(0, available_balance - $1),
-             updated_at = NOW()
-         WHERE user_id = $2 AND is_deleted = false`,
-        [paymentSummary.amountFromBalance, refund.seller_id]
-      );
-    }
+    await applyRefundWalletDeductions(client, refund, paymentSummary);
 
-    const updateRes = await client.query(
-      `UPDATE refund_cases
-       SET refund_processing_started_at = NOW(),
-           refund_paid_at = NOW(),
-           refund_payment_status = 'processing',
-           refund_payment_reference = $1,
-           refund_payment_mode = 'simulation',
-           refund_transaction_id = $2,
-           status = 'refund_processing',
-           resolution_status = 'refund_processing',
-           updated_at = NOW()
-       WHERE id = $3
-       RETURNING *`,
-      [paymentReference, tx.id, refund.id]
-    );
+    const updateRes = await finalizeRefundCasePayment(client, refund, paymentReference, tx.id);
 
     await client.query(
       `UPDATE refund_transactions
        SET payment_status = 'paid',
-           completed_at = NOW()
+           completed_at = NOW(),
+           refund_amount = $2,
+           shipping_amount = $3,
+           total_amount = $4,
+           payment_summary = $5
        WHERE id = $1`,
-      [tx.id]
+      [tx.id, refundAmount, shippingAmount, totalAmount, JSON.stringify(paymentSummary)]
     );
 
     return {
