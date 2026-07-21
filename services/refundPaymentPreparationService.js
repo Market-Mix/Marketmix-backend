@@ -128,14 +128,61 @@ async function resolveShippingRefundAmount(refund) {
 }
 
 async function applyRefundWalletDeductions(client, refund, paymentSummary) {
-  const deductionAmount = toNumber(paymentSummary?.amountFromEscrow ?? 0) + toNumber(paymentSummary?.amountFromBalance ?? 0);
-  if (refund?.seller_id && deductionAmount > 0) {
+  if (!refund?.seller_id) return;
+
+  const amountFromEscrow = toNumber(paymentSummary?.amountFromEscrow ?? 0);
+  const amountFromBalance = toNumber(paymentSummary?.amountFromBalance ?? 0);
+  const totalDeduction = amountFromEscrow + amountFromBalance;
+
+  if (totalDeduction <= 0) return;
+
+  let remainingEscrowDeduction = amountFromEscrow;
+  if (remainingEscrowDeduction > 0) {
+    const escrowRows = await client.query(
+      `SELECT id, amount
+       FROM escrow_transactions
+       WHERE seller_id = $1 AND status = 'held' AND amount > 0
+       ORDER BY held_at ASC, id ASC`,
+      [refund.seller_id]
+    );
+
+    for (const row of escrowRows.rows) {
+      if (remainingEscrowDeduction <= 0) break;
+
+      const currentAmount = toNumber(row.amount);
+      if (currentAmount <= 0) continue;
+
+      if (currentAmount <= remainingEscrowDeduction) {
+        await client.query(
+          `UPDATE escrow_transactions
+           SET amount = 0,
+               status = 'released',
+               released_at = NOW(),
+               updated_at = NOW()
+           WHERE id = $1`,
+          [row.id]
+        );
+        remainingEscrowDeduction -= currentAmount;
+      } else {
+        await client.query(
+          `UPDATE escrow_transactions
+           SET amount = $1,
+               updated_at = NOW()
+           WHERE id = $2`,
+          [currentAmount - remainingEscrowDeduction, row.id]
+        );
+        remainingEscrowDeduction = 0;
+      }
+    }
+  }
+
+  if (amountFromBalance > 0) {
     await client.query(
       `UPDATE seller_profiles
        SET available_balance = GREATEST(0, available_balance - $1),
            updated_at = NOW()
        WHERE user_id = $2 AND is_deleted = false`,
-      [deductionAmount, refund.seller_id]
+      [amountFromBalance, refund.seller_id]
     );
   }
 }
