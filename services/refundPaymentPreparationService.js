@@ -206,14 +206,17 @@ async function finalizeRefundCasePayment(client, refund, paymentReference, trans
 }
 
 async function loadRefundProcessingSummary(refund) {
+  console.log('[refund-debug] enter loadRefundProcessingSummary', { refundId: refund?.id, sellerId: refund?.seller_id });
   const refundAmount = await resolveRefundAmount(refund);
   const shippingAmount = await resolveShippingRefundAmount(refund);
+  console.log('[refund-debug] resolved refund amounts', { refundId: refund?.id, refundAmount, shippingAmount });
 
   let escrowAvailable = 0;
   let sellerAvailableBalance = 0;
 
   if (refund?.seller_id) {
     try {
+      console.log('[refund-debug] calculating escrow availability', { refundId: refund.id, sellerId: refund.seller_id });
       const escrowRes = await db.query(
         `SELECT COALESCE(SUM(CASE WHEN status = 'held' THEN amount ELSE 0 END), 0) AS escrow_available
          FROM escrow_transactions
@@ -221,11 +224,13 @@ async function loadRefundProcessingSummary(refund) {
         [refund.seller_id]
       );
       escrowAvailable = toNumber(escrowRes.rows[0]?.escrow_available);
+      console.log('[refund-debug] escrow availability result', { refundId: refund.id, escrowAvailable });
     } catch (err) {
       console.warn('⚠️ Could not resolve escrow availability for refund processing summary:', err.message || err);
     }
 
     try {
+      console.log('[refund-debug] calculating seller balance', { refundId: refund.id, sellerId: refund.seller_id });
       const balanceRes = await db.query(
         `SELECT COALESCE(available_balance, 0) AS available_balance
          FROM seller_profiles
@@ -234,6 +239,7 @@ async function loadRefundProcessingSummary(refund) {
         [refund.seller_id]
       );
       sellerAvailableBalance = toNumber(balanceRes.rows[0]?.available_balance);
+      console.log('[refund-debug] seller balance result', { refundId: refund.id, sellerAvailableBalance });
     } catch (err) {
       console.warn('⚠️ Could not resolve seller balance for refund processing summary:', err.message || err);
     }
@@ -246,6 +252,7 @@ async function loadRefundProcessingSummary(refund) {
     sellerAvailableBalance
   });
 
+  console.log('[refund-debug] refund processing summary built', summary);
   console.log('[refund-accounting] Refund Calculation | refundAmount:', summary.refundAmount, '| shippingAmount:', summary.shippingAmount, '| totalRefundAmount:', summary.totalRefundAmount, '| escrowAvailable:', summary.escrowAvailable, '| sellerAvailableBalance:', summary.sellerAvailableBalance, '| amountFromEscrow:', summary.amountFromEscrow, '| amountFromBalance:', summary.amountFromBalance, '| remainingUncovered:', summary.remainingUncovered);
 
   return summary;
@@ -339,8 +346,11 @@ async function getPaymentSummariesForRefundCases(refundCaseIds) {
 }
 
 async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' } = {}) {
+  console.log('[refund-debug] enter prepareRefundForPayment', { refundCaseId: refundCase?.id, refundId, actor });
   const refund = await resolveRefundCase(refundCase || refundId);
+  console.log('[refund-debug] loaded refund', { id: refund?.id, refund_payment_status: refund?.refund_payment_status, refund_transaction_id: refund?.refund_transaction_id, seller_id: refund?.seller_id, order_id: refund?.order_id });
   if (!refund) {
+    console.log('[refund-debug] exit prepareRefundForPayment: refund could not be loaded');
     throw new Error('Refund case could not be loaded');
   }
 
@@ -354,8 +364,11 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
   const existingTransaction = existingTxRes.rows[0] || null;
 
   if (existingPaymentStatus === 'processing' || existingPaymentStatus === 'paid' || existingTxId) {
+    console.log('[refund-debug] existing payment path taken', { existingPaymentStatus, existingTxId, existingTransactionId: existingTransaction?.id });
     if (existingTransaction && (!existingTransaction.payment_summary || !existingTransaction.completed_at)) {
+      console.log('[refund-debug] backfilling existing refund transaction', { existingTransactionId: existingTransaction.id, refundId: refund.id });
       const paymentSummary = await loadRefundProcessingSummary(refund);
+      console.log('[refund-debug] paymentSummary for backfill', paymentSummary);
       const refundAmount = paymentSummary.refundAmount;
       const shippingAmount = paymentSummary.shippingAmount;
       const totalAmount = paymentSummary.totalRefundAmount;
@@ -374,8 +387,11 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
         [refundAmount, shippingAmount, totalAmount, JSON.stringify(paymentSummary), 'paid', existingTransaction.id]
       );
 
+      console.log('[refund-debug] updated existing refund_transactions record', { refundTransactionId: existingTransaction.id, updatedTx: updatedTx.rows[0] });
       await applyRefundWalletDeductions({ query: (text, params) => db.query(text, params) }, refund, paymentSummary);
-      await finalizeRefundCasePayment({ query: (text, params) => db.query(text, params) }, refund, refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference(), existingTransaction.id);
+      console.log('[refund-debug] completed wallet deductions for backfill', { refundId: refund.id, sellerId: refund.seller_id });
+      const finalizedRefund = await finalizeRefundCasePayment({ query: (text, params) => db.query(text, params) }, refund, refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference(), existingTransaction.id);
+      console.log('[refund-debug] after finalizeRefundCasePayment for backfill', { refundId: refund.id, finalizedRefundId: finalizedRefund.rows?.[0]?.id });
 
       return {
         refundCase: refund,
@@ -385,6 +401,7 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
       };
     }
 
+    console.log('[refund-debug] exit prepareRefundForPayment: already prepared or no update needed', { refundId: refund.id, existingTransactionId: existingTransaction?.id });
     return {
       refundCase: refund,
       transaction: existingTransaction,
@@ -394,6 +411,7 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
   }
 
   const paymentSummary = await loadRefundProcessingSummary(refund);
+  console.log('[refund-debug] loaded paymentSummary before insert', { refundId: refund.id, paymentSummary });
   const refundAmount = paymentSummary.refundAmount;
   const shippingAmount = paymentSummary.shippingAmount;
   const totalAmount = paymentSummary.totalRefundAmount;
@@ -404,44 +422,70 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
   const result = await db.transaction(async (client) => {
     await ensurePaymentSummaryColumn(client);
 
-    const txRes = await client.query(
-      `INSERT INTO refund_transactions (
-         refund_case_id,
-         buyer_id,
-         seller_id,
-         order_id,
-         refund_amount,
-         shipping_amount,
-         total_amount,
-         payment_mode,
-         payment_status,
-         payment_reference,
-         processed_by,
-         payment_summary,
-         created_at,
-         completed_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NULL)
-       RETURNING *`,
-      [
-        refund.id,
-        refund.buyer_id || null,
-        refund.seller_id || null,
-        refund.order_id || null,
-        refundAmount,
-        shippingAmount,
-        totalAmount,
-        'simulation',
-        'processing',
-        paymentReference,
-        processedBy,
-        JSON.stringify(paymentSummary)
-      ]
-    );
+    const insertPayload = [
+      refund.id,
+      refund.buyer_id || null,
+      refund.seller_id || null,
+      refund.order_id || null,
+      refundAmount,
+      shippingAmount,
+      totalAmount,
+      'simulation',
+      'processing',
+      paymentReference,
+      processedBy,
+      JSON.stringify(paymentSummary)
+    ];
+
+    console.log('[refund-debug] before INSERT refund_transactions', {
+      refundId: refund.id,
+      sellerId: refund.seller_id,
+      buyerId: refund.buyer_id,
+      orderId: refund.order_id,
+      insertPayload
+    });
+
+    let txRes;
+    try {
+      txRes = await client.query(
+        `INSERT INTO refund_transactions (
+           refund_case_id,
+           buyer_id,
+           seller_id,
+           order_id,
+           refund_amount,
+           shipping_amount,
+           total_amount,
+           payment_mode,
+           payment_status,
+           payment_reference,
+           processed_by,
+           payment_summary,
+           created_at,
+           completed_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NULL)
+         RETURNING *`,
+        insertPayload
+      );
+    } catch (err) {
+      console.error('[refund-debug] INSERT refund_transactions failed', {
+        refundCaseId: refund.id,
+        sellerId: refund.seller_id,
+        paymentSummary,
+        insertPayload,
+        error: err
+      });
+      throw err;
+    }
 
     const tx = txRes.rows[0];
+    console.log('[refund-debug] after INSERT refund_transactions', { refundCaseId: refund.id, transactionId: tx?.id, tx });
     await applyRefundWalletDeductions(client, refund, paymentSummary);
+    console.log('[refund-debug] after applyRefundWalletDeductions', { refundCaseId: refund.id, sellerId: refund.seller_id });
 
+    console.log('[refund-debug] before finalizeRefundCasePayment', { refundId: refund.id, paymentReference, transactionId: tx.id });
     const updateRes = await finalizeRefundCasePayment(client, refund, paymentReference, tx.id);
+    console.log('[refund-debug] after finalizeRefundCasePayment', { refundId: refund.id, finalizedRefundCase: updateRes.rows?.[0] });
 
     await client.query(
       `UPDATE refund_transactions
@@ -454,6 +498,7 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
        WHERE id = $1`,
       [tx.id, refundAmount, shippingAmount, totalAmount, JSON.stringify(paymentSummary)]
     );
+    console.log('[refund-debug] after UPDATE refund_transactions payment_status paid', { transactionId: tx.id });
 
     return {
       refundCase: updateRes.rows[0],
