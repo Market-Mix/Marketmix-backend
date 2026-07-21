@@ -13,9 +13,6 @@ const multer = require('multer');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-const refundCache = new Map();
-const CACHE_MS = 20 * 60_000; // now genuinely absorbs the 15-min dashboard poll
-
 function normalizeKycStatus(isVerified, status) {
   const normalized = String(status || 'not_submitted').toLowerCase();
   if (isVerified === true) return 'approved';
@@ -1442,12 +1439,6 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
     if (!SUPABASE_SERVICE_KEY) {
       console.warn('⚠️ SUPABASE_SERVICE_KEY not configured. Refund cases will not be fetched.');
       return sendSuccess(res, 200, 'Refund cases (service key not configured)', []);
-    }
-
-    const cached = refundCache.get(sellerId);
-    if (cached && Date.now() - cached.ts < CACHE_MS) {
-      console.log('Cache hit for', sellerId);
-      return sendSuccess(res, 200, 'Refund cases (cached)', cached.data);
     }
 
     // Fetch refund cases from Supabase using service role key (request all fields so UI can render full details)
