@@ -1544,8 +1544,6 @@ router.get('/refund-cases', protect, isSeller, async (req, res) => {
       return out;
     });
 
-    refundCache.set(sellerId, { data: enriched, ts: Date.now() });
-
     return sendSuccess(res, 200, 'Refund cases fetched successfully', enriched);
   } catch (error) {
     console.error('Error fetching refund cases:', error);
