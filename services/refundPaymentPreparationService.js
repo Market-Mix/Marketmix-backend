@@ -165,13 +165,14 @@ async function applyRefundWalletDeductions(client, refund, paymentSummary) {
     }
   }
 
-  if (amountFromBalance > 0) {
+  const remainingBalanceDeduction = Math.max(0, amountFromBalance);
+  if (remainingBalanceDeduction > 0) {
     await client.query(
       `UPDATE seller_profiles
        SET available_balance = GREATEST(0, available_balance - $1),
            updated_at = NOW()
        WHERE user_id = $2 AND is_deleted = false`,
-      [amountFromBalance, refund.seller_id]
+      [remainingBalanceDeduction, refund.seller_id]
     );
   }
 }
