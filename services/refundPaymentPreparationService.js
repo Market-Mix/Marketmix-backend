@@ -408,11 +408,12 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
     });
   }
 
-  const paymentSummary = await loadRefundProcessingSummary(refund);
-  console.log('[refund-debug] loaded paymentSummary before insert', { refundId: refund.id, paymentSummary });
-  const refundAmount = paymentSummary.refundAmount;
-  const shippingAmount = paymentSummary.shippingAmount;
-  const totalAmount = paymentSummary.totalRefundAmount;
+  const calculatedRefund = await loadRefundProcessingSummary(refund);
+  console.log('[refund-debug] Calculated refund object', { refundId: refund.id, calculatedRefund });
+  const refundAmount = calculatedRefund.refundAmount;
+  const shippingAmount = calculatedRefund.shippingAmount;
+  const totalAmount = calculatedRefund.totalRefundAmount;
+  const paymentSummary = calculatedRefund;
   const processedBy = resolveProcessedBy(refund, actor);
 
   const paymentReference = refund.refund_payment_reference || buildPaymentReference();
@@ -441,6 +442,17 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
       buyerId: refund.buyer_id,
       orderId: refund.order_id,
       insertPayload
+    });
+    console.log('[refund-debug] Calculated refund object before insert', {
+      refundId: refund.id,
+      refundAmount,
+      shippingAmount,
+      totalAmount,
+      paymentSummary
+    });
+    console.log('[refund-debug] Insert payload', {
+      refundId: refund.id,
+      payload: insertPayload
     });
 
     let txRes;
@@ -477,7 +489,14 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
     }
 
     const tx = txRes.rows[0];
-    console.log('[refund-debug] after INSERT refund_transactions', { refundCaseId: refund.id, transactionId: tx?.id, tx });
+    console.log('[refund-debug] Inserted values', {
+      refundId: refund.id,
+      refundAmount: tx?.refund_amount,
+      shippingAmount: tx?.shipping_amount,
+      totalAmount: tx?.total_amount,
+      paymentSummary: tx?.payment_summary
+    });
+    console.log('[refund-debug] Inserted row', { refundCaseId: refund.id, transactionId: tx?.id, tx });
     await applyRefundWalletDeductions(client, refund, paymentSummary);
     console.log('[refund-debug] after applyRefundWalletDeductions', { refundCaseId: refund.id, sellerId: refund.seller_id });
 
