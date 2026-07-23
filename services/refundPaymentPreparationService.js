@@ -355,6 +355,29 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
 
   if ((existingPaymentStatus === 'processing' || existingPaymentStatus === 'paid') && hasExistingTransactionRow) {
     console.log('[refund-debug] existing payment path taken', { existingPaymentStatus, existingTxId, existingTransactionId: existingTransaction?.id });
+
+    const txPaymentStatus = String(existingTransaction.payment_status || '').toLowerCase();
+    if (txPaymentStatus === 'paid' && existingPaymentStatus !== 'paid') {
+      console.log('[refund-debug] synchronizing refund case from existing paid transaction', {
+        refundId: refund.id,
+        existingTransactionId: existingTransaction.id,
+        refundCasePaymentStatus: refund.refund_payment_status,
+        transactionPaymentStatus: existingTransaction.payment_status
+      });
+      const synchronizedRefund = await finalizeRefundCasePayment({ query: (text, params) => db.query(text, params) }, refund, refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference(), existingTransaction.id);
+      console.log('[refund-debug] synchronized refund case after paid transaction discovery', {
+        refundId: refund.id,
+        syncedRefundCase: synchronizedRefund.rows?.[0]
+      });
+
+      return {
+        refundCase: synchronizedRefund.rows?.[0] || refund,
+        transaction: existingTransaction,
+        prepared: true,
+        reason: 'payment_status_synchronized'
+      };
+    }
+
     if (existingTransaction && (!existingTransaction.payment_summary || !existingTransaction.completed_at)) {
       console.log('[refund-debug] backfilling existing refund transaction', { existingTransactionId: existingTransaction.id, refundId: refund.id });
       const paymentSummary = await loadRefundProcessingSummary(refund);
@@ -362,7 +385,6 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
       const refundAmount = paymentSummary.refundAmount;
       const shippingAmount = paymentSummary.shippingAmount;
       const totalAmount = paymentSummary.totalRefundAmount;
-      const amountFromBalance = paymentSummary.amountFromBalance;
 
       const updatedTx = await db.query(
         `UPDATE refund_transactions
@@ -384,7 +406,7 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
       console.log('[refund-debug] after finalizeRefundCasePayment for backfill', { refundId: refund.id, finalizedRefundId: finalizedRefund.rows?.[0]?.id });
 
       return {
-        refundCase: refund,
+        refundCase: finalizedRefund.rows?.[0] || refund,
         transaction: updatedTx.rows[0] || existingTransaction,
         prepared: true,
         reason: 'summary_backfilled'
