@@ -188,7 +188,7 @@ async function applyRefundWalletDeductions(client, refund, paymentSummary) {
 }
 
 async function finalizeRefundCasePayment(client, refund, paymentReference, transactionId) {
-  await client.query(
+  return await client.query(
     `UPDATE refund_cases
      SET refund_processing_started_at = COALESCE(refund_processing_started_at, NOW()),
          refund_paid_at = COALESCE(refund_paid_at, NOW()),
@@ -359,11 +359,12 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
   const existingPaymentStatus = String(refund.refund_payment_status || '').toLowerCase();
   const existingTxId = refund.refund_transaction_id;
   const existingTxRes = existingTxId
-    ? await db.query('SELECT id, payment_summary FROM refund_transactions WHERE id = $1 LIMIT 1', [existingTxId])
-    : await db.query('SELECT id, payment_summary FROM refund_transactions WHERE refund_case_id = $1 ORDER BY created_at DESC LIMIT 1', [refund.id]);
+    ? await db.query('SELECT id, payment_summary, completed_at, payment_status FROM refund_transactions WHERE id = $1 LIMIT 1', [existingTxId])
+    : await db.query('SELECT id, payment_summary, completed_at, payment_status FROM refund_transactions WHERE refund_case_id = $1 ORDER BY created_at DESC LIMIT 1', [refund.id]);
   const existingTransaction = existingTxRes.rows[0] || null;
+  const hasExistingTransactionRow = Boolean(existingTransaction?.id);
 
-  if (existingPaymentStatus === 'processing' || existingPaymentStatus === 'paid' || existingTxId) {
+  if ((existingPaymentStatus === 'processing' || existingPaymentStatus === 'paid') && hasExistingTransactionRow) {
     console.log('[refund-debug] existing payment path taken', { existingPaymentStatus, existingTxId, existingTransactionId: existingTransaction?.id });
     if (existingTransaction && (!existingTransaction.payment_summary || !existingTransaction.completed_at)) {
       console.log('[refund-debug] backfilling existing refund transaction', { existingTransactionId: existingTransaction.id, refundId: refund.id });
@@ -408,6 +409,14 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
       prepared: false,
       reason: 'already_prepared'
     };
+  }
+
+  if (existingTxId && !hasExistingTransactionRow) {
+    console.log('[refund-debug] stale refund_transaction_id detected, proceeding to create a fresh transaction row', {
+      refundId: refund.id,
+      existingTxId,
+      refundPaymentStatus: refund.refund_payment_status
+    });
   }
 
   const paymentSummary = await loadRefundProcessingSummary(refund);
