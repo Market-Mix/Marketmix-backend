@@ -36,26 +36,13 @@ function buildRefundProcessingSummary({ refundAmount = 0, shippingAmount = 0, es
     shippingAmount: shippingAmountValue,
     totalRefundAmount,
     escrowAvailable: escrowAvailableValue,
-    sellerAvailableBalance: sellerAvailableBalanceValue,
     amountFromEscrow,
     amountFromBalance,
-    remainingUncovered: remainingUncovered
+    remainingUncovered
   };
 }
 
 async function resolveRefundAmount(refund) {
-  const approvedAmountCandidates = [
-    refund?.approved_refund_amount,
-    refund?.approved_amount
-  ];
-
-  for (const candidate of approvedAmountCandidates) {
-    const numericValue = toNumber(candidate);
-    if (numericValue > 0) {
-      return numericValue;
-    }
-  }
-
   if (refund?.order_item_id) {
     try {
       const itemRes = await db.query(
@@ -74,7 +61,7 @@ async function resolveRefundAmount(refund) {
     }
   }
 
-  if (refund?.order_id) {
+  if (refund?.order_id && refund?.order_item_id) {
     try {
       const itemRes = await db.query(
         `SELECT COALESCE((quantity * price_at_purchase), 0) AS line_total
@@ -93,6 +80,8 @@ async function resolveRefundAmount(refund) {
   }
 
   const refundCaseAmountCandidates = [
+    refund?.approved_refund_amount,
+    refund?.approved_amount,
     refund?.refund_amount,
     refund?.amount,
     refund?.total_amount
@@ -253,7 +242,7 @@ async function loadRefundProcessingSummary(refund) {
   });
 
   console.log('[refund-debug] refund processing summary built', summary);
-  console.log('[refund-accounting] Refund Calculation | refundAmount:', summary.refundAmount, '| shippingAmount:', summary.shippingAmount, '| totalRefundAmount:', summary.totalRefundAmount, '| escrowAvailable:', summary.escrowAvailable, '| sellerAvailableBalance:', summary.sellerAvailableBalance, '| amountFromEscrow:', summary.amountFromEscrow, '| amountFromBalance:', summary.amountFromBalance, '| remainingUncovered:', summary.remainingUncovered);
+  console.log('[refund-accounting] Refund Calculation | refundAmount:', summary.refundAmount, '| shippingAmount:', summary.shippingAmount, '| totalRefundAmount:', summary.totalRefundAmount, '| escrowAvailable:', summary.escrowAvailable, '| amountFromEscrow:', summary.amountFromEscrow, '| amountFromBalance:', summary.amountFromBalance, '| remainingUncovered:', summary.remainingUncovered);
 
   return summary;
 }
