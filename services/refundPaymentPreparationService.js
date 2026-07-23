@@ -116,7 +116,7 @@ async function resolveShippingRefundAmount(refund) {
   return 0;
 }
 
-async function applyRefundWalletDeductions(client, refund, paymentSummary) {
+async function applyRefundWalletDeductions(client, refund, paymentSummary, transactionId = null) {
   if (!refund?.seller_id) return;
 
   const amountFromEscrow = toNumber(paymentSummary?.amountFromEscrow ?? 0);
@@ -124,6 +124,19 @@ async function applyRefundWalletDeductions(client, refund, paymentSummary) {
   const totalDeduction = amountFromEscrow + amountFromBalance;
 
   if (totalDeduction <= 0) return;
+
+  const pendingBeforeRes = await client.query(
+    `SELECT COALESCE(SUM(amount), 0) AS pending_earnings
+     FROM escrow_transactions
+     WHERE seller_id = $1 AND status = 'held' AND amount > 0`,
+    [refund.seller_id]
+  );
+  const pendingBefore = toNumber(pendingBeforeRes.rows[0]?.pending_earnings ?? 0);
+  console.log('[refund-debug] Pending before deduction', {
+    sellerId: refund.seller_id,
+    refundTransactionId: transactionId,
+    pendingBefore
+  });
 
   let remainingEscrowDeduction = amountFromEscrow;
   if (remainingEscrowDeduction > 0) {
@@ -164,6 +177,27 @@ async function applyRefundWalletDeductions(client, refund, paymentSummary) {
       }
     }
   }
+
+  const pendingAfterRes = await client.query(
+    `SELECT COALESCE(SUM(amount), 0) AS pending_earnings
+     FROM escrow_transactions
+     WHERE seller_id = $1 AND status = 'held' AND amount > 0`,
+    [refund.seller_id]
+  );
+  const pendingAfter = toNumber(pendingAfterRes.rows[0]?.pending_earnings ?? 0);
+  console.log('[refund-debug] Escrow deducted', {
+    sellerId: refund.seller_id,
+    refundTransactionId: transactionId,
+    escrowDeducted: amountFromEscrow,
+    balanceDeducted: amountFromBalance,
+    pendingBefore,
+    pendingAfter
+  });
+  console.log('[refund-debug] Pending after deduction', {
+    sellerId: refund.seller_id,
+    refundTransactionId: transactionId,
+    pendingAfter
+  });
 
   const remainingBalanceDeduction = Math.max(0, amountFromBalance);
   if (remainingBalanceDeduction > 0) {
@@ -401,7 +435,7 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
       );
 
       console.log('[refund-debug] updated existing refund_transactions record', { refundTransactionId: existingTransaction.id, updatedTx: updatedTx.rows[0] });
-      await applyRefundWalletDeductions({ query: (text, params) => db.query(text, params) }, refund, paymentSummary);
+      await applyRefundWalletDeductions({ query: (text, params) => db.query(text, params) }, refund, paymentSummary, existingTransaction.id);
       console.log('[refund-debug] completed wallet deductions for backfill', { refundId: refund.id, sellerId: refund.seller_id });
       const finalizedRefund = await finalizeRefundCasePayment({ query: (text, params) => db.query(text, params) }, refund, refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference(), existingTransaction.id);
       console.log('[refund-debug] after finalizeRefundCasePayment for backfill', { refundId: refund.id, finalizedRefundId: finalizedRefund.rows?.[0]?.id });
@@ -520,7 +554,7 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
       paymentSummary: tx?.payment_summary
     });
     console.log('[refund-debug] Inserted row', { refundCaseId: refund.id, transactionId: tx?.id, tx });
-    await applyRefundWalletDeductions(client, refund, paymentSummary);
+    await applyRefundWalletDeductions(client, refund, paymentSummary, tx.id);
     console.log('[refund-debug] after applyRefundWalletDeductions', { refundCaseId: refund.id, sellerId: refund.seller_id });
 
     console.log('[refund-debug] before finalizeRefundCasePayment', { refundId: refund.id, paymentReference, transactionId: tx.id });

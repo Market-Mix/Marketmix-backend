@@ -49,12 +49,12 @@ const getSellerEarnings = async (req, res) => {
     const pendingResult = await runQuery(
       `SELECT COALESCE(SUM(amount), 0) as pending_earnings
        FROM escrow_transactions 
-       WHERE seller_id = $1${storeId ? ' AND store_id = $2' : ''}`,
+       WHERE seller_id = $1 AND status = 'held'${storeId ? ' AND store_id = $2' : ''}`,
       storeId ? [sellerId, storeId] : [sellerId],
       storeId
         ? `SELECT COALESCE(SUM(amount), 0) as pending_earnings
            FROM escrow_transactions 
-           WHERE seller_id = $1`
+           WHERE seller_id = $1 AND status = 'held'`
         : null,
       storeId ? [sellerId] : null
     );
