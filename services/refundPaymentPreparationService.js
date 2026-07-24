@@ -420,29 +420,38 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
       const refundAmount = paymentSummary.refundAmount;
       const shippingAmount = paymentSummary.shippingAmount;
       const totalAmount = paymentSummary.totalRefundAmount;
+      const paymentReference = refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference();
 
-      const updatedTx = await db.query(
-        `UPDATE refund_transactions
-         SET refund_amount = $1,
-             shipping_amount = $2,
-             total_amount = $3,
-             payment_summary = $4,
-             payment_status = COALESCE(NULLIF($5, ''), payment_status),
-             completed_at = COALESCE(completed_at, NOW())
-         WHERE id = $6
-         RETURNING *`,
-        [refundAmount, shippingAmount, totalAmount, JSON.stringify(paymentSummary), 'paid', existingTransaction.id]
-      );
+      const backfillResult = await db.transaction(async (client) => {
+        const updatedTxRes = await client.query(
+          `UPDATE refund_transactions
+           SET refund_amount = $1,
+               shipping_amount = $2,
+               total_amount = $3,
+               payment_summary = $4,
+               payment_status = COALESCE(NULLIF($5, ''), payment_status),
+               completed_at = COALESCE(completed_at, NOW())
+           WHERE id = $6
+           RETURNING *`,
+          [refundAmount, shippingAmount, totalAmount, JSON.stringify(paymentSummary), 'paid', existingTransaction.id]
+        );
 
-      console.log('[refund-debug] updated existing refund_transactions record', { refundTransactionId: existingTransaction.id, updatedTx: updatedTx.rows[0] });
-      await applyRefundWalletDeductions({ query: (text, params) => db.query(text, params) }, refund, paymentSummary, existingTransaction.id);
-      console.log('[refund-debug] completed wallet deductions for backfill', { refundId: refund.id, sellerId: refund.seller_id });
-      const finalizedRefund = await finalizeRefundCasePayment({ query: (text, params) => db.query(text, params) }, refund, refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference(), existingTransaction.id);
-      console.log('[refund-debug] after finalizeRefundCasePayment for backfill', { refundId: refund.id, finalizedRefundId: finalizedRefund.rows?.[0]?.id });
+        console.log('[refund-debug] updated existing refund_transactions record', { refundTransactionId: existingTransaction.id, updatedTx: updatedTxRes.rows[0] });
+        await applyRefundWalletDeductions(client, refund, paymentSummary, existingTransaction.id);
+        console.log('[refund-debug] completed wallet deductions for backfill', { refundId: refund.id, sellerId: refund.seller_id });
+
+        const finalizedRefund = await finalizeRefundCasePayment(client, refund, paymentReference, existingTransaction.id);
+        console.log('[refund-debug] after finalizeRefundCasePayment for backfill', { refundId: refund.id, finalizedRefundId: finalizedRefund.rows?.[0]?.id });
+
+        return {
+          refundCase: finalizedRefund.rows?.[0] || refund,
+          transaction: updatedTxRes.rows[0]
+        };
+      });
 
       return {
-        refundCase: finalizedRefund.rows?.[0] || refund,
-        transaction: updatedTx.rows[0] || existingTransaction,
+        refundCase: backfillResult.refundCase,
+        transaction: backfillResult.transaction,
         prepared: true,
         reason: 'summary_backfilled'
       };
@@ -561,7 +570,7 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
     const updateRes = await finalizeRefundCasePayment(client, refund, paymentReference, tx.id);
     console.log('[refund-debug] after finalizeRefundCasePayment', { refundId: refund.id, finalizedRefundCase: updateRes.rows?.[0] });
 
-    await client.query(
+    const updatedTxRes = await client.query(
       `UPDATE refund_transactions
        SET payment_status = 'paid',
            completed_at = NOW(),
@@ -569,14 +578,16 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
            shipping_amount = $3,
            total_amount = $4,
            payment_summary = $5
-       WHERE id = $1`,
+       WHERE id = $1
+       RETURNING *`,
       [tx.id, refundAmount, shippingAmount, totalAmount, JSON.stringify(paymentSummary)]
     );
-    console.log('[refund-debug] after UPDATE refund_transactions payment_status paid', { transactionId: tx.id });
+    const updatedTx = updatedTxRes.rows[0];
+    console.log('[refund-debug] after UPDATE refund_transactions payment_status paid', { transactionId: tx.id, updatedTx });
 
     return {
       refundCase: updateRes.rows[0],
-      transaction: tx
+      transaction: updatedTx
     };
   });
 
