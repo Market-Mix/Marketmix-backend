@@ -399,15 +399,50 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
         refundCasePaymentStatus: refund.refund_payment_status,
         transactionPaymentStatus: existingTransaction.payment_status
       });
-      const synchronizedRefund = await finalizeRefundCasePayment({ query: (text, params) => db.query(text, params) }, refund, refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference(), existingTransaction.id);
-      console.log('[refund-debug] synchronized refund case after paid transaction discovery', {
-        refundId: refund.id,
-        syncedRefundCase: synchronizedRefund.rows?.[0]
+
+      const paymentReference = refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference();
+      const syncResult = await db.transaction(async (client) => {
+        await ensurePaymentSummaryColumn(client);
+
+        let updatedTransaction = existingTransaction;
+        const shouldBackfillTx = !existingTransaction.payment_summary || !existingTransaction.completed_at || existingTransaction.refund_amount == null || existingTransaction.shipping_amount == null || existingTransaction.total_amount == null;
+        if (shouldBackfillTx) {
+          const paymentSummary = await loadRefundProcessingSummary(refund);
+          console.log('[refund-debug] backfilling paid transaction during sync path', { refundId: refund.id, transactionId: existingTransaction.id, paymentSummary });
+          const refundAmount = paymentSummary.refundAmount;
+          const shippingAmount = paymentSummary.shippingAmount;
+          const totalAmount = paymentSummary.totalRefundAmount;
+
+          const updatedTxRes = await client.query(
+            `UPDATE refund_transactions
+             SET refund_amount = $1,
+                 shipping_amount = $2,
+                 total_amount = $3,
+                 payment_summary = $4,
+                 completed_at = COALESCE(completed_at, NOW())
+             WHERE id = $5
+             RETURNING *`,
+            [refundAmount, shippingAmount, totalAmount, JSON.stringify(paymentSummary), existingTransaction.id]
+          );
+          updatedTransaction = updatedTxRes.rows[0] || existingTransaction;
+        }
+
+        const finalizedRefund = await finalizeRefundCasePayment(client, refund, paymentReference, existingTransaction.id);
+        console.log('[refund-debug] synchronized refund case after paid transaction discovery', {
+          refundId: refund.id,
+          transactionId: existingTransaction.id,
+          syncedRefundCase: finalizedRefund.rows?.[0]
+        });
+
+        return {
+          refundCase: finalizedRefund.rows?.[0] || refund,
+          transaction: updatedTransaction
+        };
       });
 
       return {
-        refundCase: synchronizedRefund.rows?.[0] || refund,
-        transaction: existingTransaction,
+        refundCase: syncResult.refundCase,
+        transaction: syncResult.transaction,
         prepared: true,
         reason: 'payment_status_synchronized'
       };
