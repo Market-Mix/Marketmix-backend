@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { createDedupedNotification } = require('../controllers/notification.controller');
+const { logActivity } = require('../controllers/seller_activity.controller');
 
 function buildPaymentReference() {
   const today = new Date();
@@ -229,6 +230,62 @@ async function finalizeRefundCasePayment(client, refund, paymentReference, trans
   );
 }
 
+async function notifyRefundPaymentCompleted(refund) {
+  if (!refund) return;
+
+  const notificationPromises = [];
+  if (refund.seller_id) {
+    await logActivity({
+      sellerId: refund.seller_id,
+      type: 'refund',
+      title: 'Refund paid',
+      detail: `Refund case ${refund.id} was paid and finalized.`,
+      entityId: refund.id,
+      entityType: 'refund_case'
+    });
+  }
+  if (refund.buyer_id) {
+    notificationPromises.push(createDedupedNotification({
+      userId: refund.buyer_id,
+      title: 'Refund paid',
+      message: 'Your refund has been completed and processed successfully.',
+      type: 'refund',
+      referenceId: refund.id,
+      link: '/buyers/buyers%20return%20report.html'
+    }));
+  }
+  if (refund.seller_id) {
+    notificationPromises.push(createDedupedNotification({
+      userId: refund.seller_id,
+      title: 'Refund paid',
+      message: 'The refund for this order has been processed successfully.',
+      type: 'refund',
+      referenceId: refund.id,
+      link: '/sellers/sellers%20returns.html'
+    }));
+  }
+
+  try {
+    const adminRes = await db.query("SELECT id FROM users WHERE role = 'admin' AND is_deleted = FALSE");
+    adminRes.rows.forEach((row) => {
+      if (row.id && row.id !== refund.buyer_id && row.id !== refund.seller_id) {
+        notificationPromises.push(createDedupedNotification({
+          userId: row.id,
+          title: 'Refund paid',
+          message: `Refund case ${refund.id} has been finalized and paid.`,
+          type: 'refund',
+          referenceId: refund.id,
+          link: '/admin/refunds/pending'
+        }));
+      }
+    });
+  } catch (err) {
+    console.warn('⚠️ Could not notify admins about refund payment completion:', err.message || err);
+  }
+
+  await Promise.allSettled(notificationPromises);
+}
+
 async function loadRefundProcessingSummary(refund) {
   console.log('[refund-debug] enter loadRefundProcessingSummary', { refundId: refund?.id, sellerId: refund?.seller_id });
   const refundAmount = await resolveRefundAmount(refund);
@@ -383,8 +440,8 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
   const existingPaymentStatus = String(refund.refund_payment_status || '').toLowerCase();
   const existingTxId = refund.refund_transaction_id;
   const existingTxRes = existingTxId
-    ? await db.query('SELECT id, payment_summary, completed_at, payment_status FROM refund_transactions WHERE id = $1 LIMIT 1', [existingTxId])
-    : await db.query('SELECT id, payment_summary, completed_at, payment_status FROM refund_transactions WHERE refund_case_id = $1 ORDER BY created_at DESC LIMIT 1', [refund.id]);
+    ? await db.query('SELECT id, payment_summary, completed_at, payment_status, refund_amount, shipping_amount, total_amount, payment_reference FROM refund_transactions WHERE id = $1 LIMIT 1', [existingTxId])
+    : await db.query('SELECT id, payment_summary, completed_at, payment_status, refund_amount, shipping_amount, total_amount, payment_reference FROM refund_transactions WHERE refund_case_id = $1 ORDER BY created_at DESC LIMIT 1', [refund.id]);
   const existingTransaction = existingTxRes.rows[0] || null;
   const hasExistingTransactionRow = Boolean(existingTransaction?.id);
 
@@ -392,46 +449,62 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
     console.log('[refund-debug] existing payment path taken', { existingPaymentStatus, existingTxId, existingTransactionId: existingTransaction?.id });
 
     const txPaymentStatus = String(existingTransaction.payment_status || '').toLowerCase();
-    if (txPaymentStatus === 'paid' && existingPaymentStatus !== 'paid') {
-      console.log('[refund-debug] synchronizing refund case from existing paid transaction', {
-        refundId: refund.id,
-        existingTransactionId: existingTransaction.id,
-        refundCasePaymentStatus: refund.refund_payment_status,
-        transactionPaymentStatus: existingTransaction.payment_status
-      });
+    const paymentReference = refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference();
+    let currentSummary = null;
+    if (existingTransaction.payment_summary) {
+      if (typeof existingTransaction.payment_summary !== 'string') {
+        currentSummary = existingTransaction.payment_summary;
+      } else {
+        try {
+          currentSummary = JSON.parse(existingTransaction.payment_summary);
+        } catch (err) {
+          currentSummary = null;
+        }
+      }
+    }
 
-      const paymentReference = refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference();
+    const refillCaseState = refund.status !== 'resolved' || refund.resolution_status !== 'resolved';
+    const shouldSyncPaidState = existingPaymentStatus === 'paid' && txPaymentStatus !== 'paid';
+    const shouldBackfillSummary = !currentSummary || !existingTransaction.completed_at || existingTransaction.refund_amount == null || existingTransaction.shipping_amount == null || existingTransaction.total_amount == null;
+    const shouldFinalizeCase = txPaymentStatus === 'paid' && refillCaseState;
+
+    if (shouldSyncPaidState || shouldBackfillSummary || shouldFinalizeCase) {
+      const paymentSummary = currentSummary || await loadRefundProcessingSummary(refund);
+      const refundAmount = paymentSummary.refundAmount;
+      const shippingAmount = paymentSummary.shippingAmount;
+      const totalAmount = paymentSummary.totalRefundAmount;
+
       const syncResult = await db.transaction(async (client) => {
         await ensurePaymentSummaryColumn(client);
 
         let updatedTransaction = existingTransaction;
-        const shouldBackfillTx = !existingTransaction.payment_summary || !existingTransaction.completed_at || existingTransaction.refund_amount == null || existingTransaction.shipping_amount == null || existingTransaction.total_amount == null;
-        if (shouldBackfillTx) {
-          const paymentSummary = await loadRefundProcessingSummary(refund);
-          console.log('[refund-debug] backfilling paid transaction during sync path', { refundId: refund.id, transactionId: existingTransaction.id, paymentSummary });
-          const refundAmount = paymentSummary.refundAmount;
-          const shippingAmount = paymentSummary.shippingAmount;
-          const totalAmount = paymentSummary.totalRefundAmount;
-
+        if (txPaymentStatus !== 'paid' || shouldBackfillSummary || shouldSyncPaidState) {
           const updatedTxRes = await client.query(
             `UPDATE refund_transactions
-             SET refund_amount = $1,
-                 shipping_amount = $2,
-                 total_amount = $3,
-                 payment_summary = $4,
-                 completed_at = COALESCE(completed_at, NOW())
-             WHERE id = $5
+             SET payment_status = 'paid',
+                 completed_at = COALESCE(completed_at, NOW()),
+                 refund_amount = $2,
+                 shipping_amount = $3,
+                 total_amount = $4,
+                 payment_summary = $5,
+                 payment_reference = COALESCE(NULLIF($6, ''), payment_reference)
+             WHERE id = $1
              RETURNING *`,
-            [refundAmount, shippingAmount, totalAmount, JSON.stringify(paymentSummary), existingTransaction.id]
+            [existingTransaction.id, refundAmount, shippingAmount, totalAmount, JSON.stringify(paymentSummary), paymentReference]
           );
           updatedTransaction = updatedTxRes.rows[0] || existingTransaction;
         }
 
+        if (txPaymentStatus !== 'paid') {
+          await applyRefundWalletDeductions(client, refund, paymentSummary, existingTransaction.id);
+          console.log('[refund-debug] applied wallet deductions while syncing paid transaction', { refundId: refund.id, transactionId: existingTransaction.id });
+        }
+
         const finalizedRefund = await finalizeRefundCasePayment(client, refund, paymentReference, existingTransaction.id);
-        console.log('[refund-debug] synchronized refund case after paid transaction discovery', {
+        console.log('[refund-debug] finalized refund case during existing transaction sync', {
           refundId: refund.id,
           transactionId: existingTransaction.id,
-          syncedRefundCase: finalizedRefund.rows?.[0]
+          finalizedRefundId: finalizedRefund.rows?.[0]?.id
         });
 
         return {
@@ -440,55 +513,16 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
         };
       });
 
+      const shouldNotifyCompletion = shouldSyncPaidState || shouldFinalizeCase;
+      if (shouldNotifyCompletion) {
+        await notifyRefundPaymentCompleted(refund);
+      }
+
       return {
         refundCase: syncResult.refundCase,
         transaction: syncResult.transaction,
         prepared: true,
-        reason: 'payment_status_synchronized'
-      };
-    }
-
-    if (existingTransaction && (!existingTransaction.payment_summary || !existingTransaction.completed_at)) {
-      console.log('[refund-debug] backfilling existing refund transaction', { existingTransactionId: existingTransaction.id, refundId: refund.id });
-      const paymentSummary = await loadRefundProcessingSummary(refund);
-      console.log('[refund-debug] paymentSummary for backfill', paymentSummary);
-      const refundAmount = paymentSummary.refundAmount;
-      const shippingAmount = paymentSummary.shippingAmount;
-      const totalAmount = paymentSummary.totalRefundAmount;
-      const paymentReference = refund.refund_payment_reference || existingTransaction.payment_reference || buildPaymentReference();
-
-      const backfillResult = await db.transaction(async (client) => {
-        const updatedTxRes = await client.query(
-          `UPDATE refund_transactions
-           SET refund_amount = $1,
-               shipping_amount = $2,
-               total_amount = $3,
-               payment_summary = $4,
-               payment_status = COALESCE(NULLIF($5, ''), payment_status),
-               completed_at = COALESCE(completed_at, NOW())
-           WHERE id = $6
-           RETURNING *`,
-          [refundAmount, shippingAmount, totalAmount, JSON.stringify(paymentSummary), 'paid', existingTransaction.id]
-        );
-
-        console.log('[refund-debug] updated existing refund_transactions record', { refundTransactionId: existingTransaction.id, updatedTx: updatedTxRes.rows[0] });
-        await applyRefundWalletDeductions(client, refund, paymentSummary, existingTransaction.id);
-        console.log('[refund-debug] completed wallet deductions for backfill', { refundId: refund.id, sellerId: refund.seller_id });
-
-        const finalizedRefund = await finalizeRefundCasePayment(client, refund, paymentReference, existingTransaction.id);
-        console.log('[refund-debug] after finalizeRefundCasePayment for backfill', { refundId: refund.id, finalizedRefundId: finalizedRefund.rows?.[0]?.id });
-
-        return {
-          refundCase: finalizedRefund.rows?.[0] || refund,
-          transaction: updatedTxRes.rows[0]
-        };
-      });
-
-      return {
-        refundCase: backfillResult.refundCase,
-        transaction: backfillResult.transaction,
-        prepared: true,
-        reason: 'summary_backfilled'
+        reason: shouldSyncPaidState ? 'payment_status_synchronized' : 'summary_backfilled'
       };
     }
 
@@ -626,40 +660,7 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
     };
   });
 
-  await Promise.allSettled([
-    createDedupedNotification({
-      userId: refund.buyer_id,
-      title: 'Refund processing started',
-      message: 'Your refund has entered the payment-processing stage. MarketMix will complete the payout shortly.',
-      type: 'refund',
-      referenceId: refund.id,
-      link: '/buyers/buyers%20return%20report.html'
-    }),
-    createDedupedNotification({
-      userId: refund.seller_id,
-      title: 'Refund processing started',
-      message: 'The refund for this order is now being prepared for payment processing.',
-      type: 'refund',
-      referenceId: refund.id,
-      link: '/sellers/sellers%20returns.html'
-    })
-  ]);
-
-  try {
-    const adminRes = await db.query("SELECT id FROM users WHERE role = 'admin' AND is_deleted = FALSE");
-    await Promise.allSettled(adminRes.rows.map((row) => (
-      createDedupedNotification({
-        userId: row.id,
-        title: 'Refund processing started',
-        message: `Refund case ${refund.id} has entered payment processing.`,
-        type: 'refund',
-        referenceId: refund.id,
-        link: '/admin/refunds/pending'
-      })
-    )));
-  } catch (err) {
-    console.warn('⚠️ Could not notify admins about refund processing:', err.message || err);
-  }
+  await notifyRefundPaymentCompleted(refund);
 
   return {
     refundCase: result.refundCase,
