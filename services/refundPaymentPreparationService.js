@@ -230,6 +230,67 @@ async function finalizeRefundCasePayment(client, refund, paymentReference, trans
   );
 }
 
+async function ensureSellerDebtForRefund(client, refund, transactionId, paymentSummary = null) {
+  if (!refund?.seller_id || !refund?.id || !transactionId) {
+    console.log('[refund-debug] No debt required', { refundId: refund?.id, sellerId: refund?.seller_id, transactionId });
+    return null;
+  }
+
+  const summary = paymentSummary || {};
+  const originalDebt = toNumber(summary.totalRefundAmount || summary.refundAmount || 0);
+  const remainingDebt = Math.max(0, toNumber(summary.remainingUncovered ?? originalDebt));
+
+  if (remainingDebt <= 0) {
+    console.log('[refund-debug] No debt required', { refundId: refund.id, sellerId: refund.seller_id, remainingDebt });
+    return null;
+  }
+
+  const existingDebtRes = await client.query(
+    `SELECT id FROM seller_debts WHERE refund_case_id = $1 LIMIT 1`,
+    [refund.id]
+  );
+
+  if (existingDebtRes.rows.length > 0) {
+    console.log('[refund-debug] Debt already exists', { refundId: refund.id, sellerId: refund.seller_id, debtId: existingDebtRes.rows[0].id });
+    return existingDebtRes.rows[0];
+  }
+
+  console.log('[refund-debug] Debt required', {
+    refundId: refund.id,
+    sellerId: refund.seller_id,
+    refundTransactionId: transactionId,
+    originalDebt,
+    remainingDebt
+  });
+
+  const debtRes = await client.query(
+    `INSERT INTO seller_debts (
+       seller_id,
+       refund_case_id,
+       refund_transaction_id,
+       original_debt,
+       remaining_debt,
+       status,
+       reason,
+       created_at,
+       updated_at
+     ) VALUES ($1, $2, $3, $4, $5, 'active', 'Refund exceeded seller escrow', NOW(), NOW())
+     RETURNING *`,
+    [refund.seller_id, refund.id, transactionId, originalDebt, remainingDebt]
+  );
+
+  console.log('[refund-debug] Debt created', {
+    refundId: refund.id,
+    sellerId: refund.seller_id,
+    refundTransactionId: transactionId,
+    debtId: debtRes.rows[0]?.id,
+    originalDebt,
+    remainingDebt
+  });
+
+  return debtRes.rows[0];
+}
+
 async function notifyRefundPaymentCompleted(refund) {
   if (!refund) return;
 
@@ -500,6 +561,8 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
           console.log('[refund-debug] applied wallet deductions while syncing paid transaction', { refundId: refund.id, transactionId: existingTransaction.id });
         }
 
+        await ensureSellerDebtForRefund(client, refund, existingTransaction.id, paymentSummary);
+
         const finalizedRefund = await finalizeRefundCasePayment(client, refund, paymentReference, existingTransaction.id);
         console.log('[refund-debug] finalized refund case during existing transaction sync', {
           refundId: refund.id,
@@ -634,6 +697,8 @@ async function prepareRefundForPayment({ refundCase, refundId, actor = 'system' 
     console.log('[refund-debug] Inserted row', { refundCaseId: refund.id, transactionId: tx?.id, tx });
     await applyRefundWalletDeductions(client, refund, paymentSummary, tx.id);
     console.log('[refund-debug] after applyRefundWalletDeductions', { refundCaseId: refund.id, sellerId: refund.seller_id });
+
+    await ensureSellerDebtForRefund(client, refund, tx.id, paymentSummary);
 
     console.log('[refund-debug] before finalizeRefundCasePayment', { refundId: refund.id, paymentReference, transactionId: tx.id });
     const updateRes = await finalizeRefundCasePayment(client, refund, paymentReference, tx.id);
