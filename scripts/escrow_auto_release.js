@@ -1,6 +1,7 @@
 require('dotenv').config();
 const db = require('../config/db');
 const { stripFee } = require('../utils/pricing');
+const { recoverSellerDebtFromEscrowRelease } = require('../services/sellerDebtRecoveryService');
 
 async function autoReleaseEscrow() {
   console.log('Running escrow auto-release...');
@@ -51,6 +52,14 @@ async function autoReleaseEscrow() {
          WHERE id=$1 AND status='shipped'`,
         [row.order_id]
       );
+
+      await recoverSellerDebtFromEscrowRelease(client, {
+        sellerId: row.seller_id,
+        releaseAmount: netAmount,
+        orderId: row.order_id,
+        escrowId: row.id,
+        context: 'script-escrow-release'
+      });
 
       // Credit seller
       await client.query(

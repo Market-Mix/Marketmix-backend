@@ -212,6 +212,14 @@ router.post('/escrow/:escrowId/resolve', protect, isAdmin, async (req, res) => {
         [escrowId, notes || 'Admin released']
       );
 
+      await recoverSellerDebtFromEscrowRelease(client, {
+        sellerId: escrow.seller_id,
+        releaseAmount: net,
+        orderId: escrow.order_id,
+        escrowId: escrow.id,
+        context: 'admin-escrow-release'
+      });
+
       await client.query(
         `UPDATE seller_profiles
          SET available_balance=available_balance+$1, total_earnings=total_earnings+$1

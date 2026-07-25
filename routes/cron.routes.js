@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const { stripFee } = require('../utils/pricing');
+const { recoverSellerDebtFromEscrowRelease } = require('../services/sellerDebtRecoveryService');
 
 router.get('/release-escrow', async (req, res) => {
   // Simple secret to prevent abuse
@@ -39,6 +40,14 @@ router.get('/release-escrow', async (req, res) => {
          WHERE id=$1`,
         [row.id]
       );
+
+      await recoverSellerDebtFromEscrowRelease(client, {
+        sellerId: row.seller_id,
+        releaseAmount: netAmount,
+        orderId: row.order_id,
+        escrowId: row.id,
+        context: 'cron-escrow-release'
+      });
 
       await client.query(
         `UPDATE seller_profiles

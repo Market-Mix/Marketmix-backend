@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { stripFee } = require('../utils/pricing');
+const { recoverSellerDebtFromEscrowRelease } = require('../services/sellerDebtRecoveryService');
  const { notifySeller } = require('../utils/sellerEmailService');
  const { notifyBuyer } = require('../utils/sellerEmailService');
 
@@ -541,14 +542,22 @@ const confirmDelivery = async (req, res) => {
            released_at = NOW(),
            updated_at = NOW()
        WHERE order_id = $1 AND status = 'held'
-       RETURNING seller_id, store_id, amount`,
+       RETURNING id, seller_id, store_id, amount`,
       [orderId]
     );
 
     // Credit seller balance and insert earnings per released escrow row
    if (escrowUpdate.rows.length) {
-      for (const { seller_id, store_id, amount } of escrowUpdate.rows) {
+      for (const { id, seller_id, store_id, amount } of escrowUpdate.rows) {
         const netAmount = stripFee(amount);
+
+        await recoverSellerDebtFromEscrowRelease(null, {
+          sellerId: seller_id,
+          releaseAmount: netAmount,
+          orderId,
+          escrowId: id,
+          context: 'confirm-delivery-release'
+        });
 
         await db.query(
           `UPDATE seller_profiles
