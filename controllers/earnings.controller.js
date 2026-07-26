@@ -94,6 +94,19 @@ const getSellerEarnings = async (req, res) => {
     const availableBalance = parseFloat(profile.available_balance ?? 0);
     const totalWithdrawn = parseFloat(withdrawnResult.rows[0]?.total_withdrawn ?? 0);
 
+    let outstandingAdjustment = 0;
+    try {
+      const adjustmentRes = await db.query(
+        `SELECT COALESCE(SUM(remaining_debt), 0) AS outstanding_adjustment
+         FROM seller_debts
+         WHERE seller_id = $1 AND status IN ('active', 'partial')`,
+        [sellerId]
+      );
+      outstandingAdjustment = parseFloat(adjustmentRes.rows[0]?.outstanding_adjustment ?? 0);
+    } catch (adjustmentError) {
+      console.warn('Adjustment summary unavailable for seller earnings:', adjustmentError.message || adjustmentError);
+    }
+
     // Total earnings = available + pending + withdrawn (what they've actually earned)
     const totalEarnings = Number.isFinite(availableBalance) && Number.isFinite(pendingEarnings) && Number.isFinite(totalWithdrawn)
       ? availableBalance + pendingEarnings + totalWithdrawn
@@ -197,7 +210,8 @@ const getSellerEarnings = async (req, res) => {
         totalEarnings,
         availableBalance,
         pendingEarnings,
-        totalWithdrawn: parseFloat(withdrawnResult.rows[0].total_withdrawn)
+        totalWithdrawn: parseFloat(withdrawnResult.rows[0].total_withdrawn),
+        outstandingAdjustment
       },
       transactions: allTransactions,
       productEarnings: productEarningsResult.rows.map(row => ({

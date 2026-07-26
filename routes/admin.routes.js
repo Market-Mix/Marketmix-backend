@@ -9,6 +9,7 @@ const { stripFee } = require('../utils/pricing');
 const { processWithdrawal } = require('../services/payout.service');
 const { createDedupedNotification } = require('../controllers/notification.controller');
 const { getPaymentSummaryForRefundCase } = require('../services/refundPaymentPreparationService');
+const { recoverSellerDebtFromEscrowRelease } = require('../services/sellerDebtRecoveryService');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -372,6 +373,82 @@ router.get('/refunds', protect, isAdmin, async (req, res) => {
     return sendSuccess(res, 200, 'Refund cases fetched successfully', { refundCases: enriched });
   } catch (err) {
     return sendError(res, 500, err.message || 'Unable to fetch refund cases');
+  }
+});
+
+// GET /api/admin/seller-adjustments
+router.get('/seller-adjustments', protect, isAdmin, async (req, res) => {
+  try {
+    const refundCaseId = typeof req.query.refundCaseId === 'string' ? req.query.refundCaseId.trim() : '';
+    const normalizedRefundCaseId = refundCaseId ? refundCaseId : null;
+
+    const adjustmentsRes = await db.query(
+      `SELECT id, seller_id, refund_case_id, original_debt, remaining_debt, status, reason, created_at
+       FROM seller_debts
+       WHERE ($1::uuid IS NULL OR refund_case_id = $1::uuid)
+       ORDER BY created_at DESC`,
+      [normalizedRefundCaseId]
+    );
+
+    const adjustments = [];
+
+    for (const adjustment of adjustmentsRes.rows) {
+      const sellerRes = await db.query(
+        `SELECT first_name, last_name FROM users WHERE id = $1 LIMIT 1`,
+        [adjustment.seller_id]
+      );
+      const storeRes = await db.query(
+        `SELECT business_name FROM stores WHERE user_id = $1 AND is_deleted = false ORDER BY store_number ASC, id ASC LIMIT 1`,
+        [adjustment.seller_id]
+      );
+      const recoveriesRes = await db.query(
+        `SELECT release_amount, recovered_amount, remaining_debt, status, created_at, order_id, escrow_transaction_id
+         FROM seller_debt_recoveries
+         WHERE debt_id = $1
+         ORDER BY created_at ASC, id ASC`,
+        [adjustment.id]
+      );
+
+      const originalAmount = Number(adjustment.original_debt || 0);
+      const remainingAmount = Number(adjustment.remaining_debt || 0);
+      const recoveredAmount = Math.max(0, originalAmount - remainingAmount);
+
+      adjustments.push({
+        id: adjustment.id,
+        seller_id: adjustment.seller_id,
+        seller_name: sellerRes.rows[0]
+          ? `${sellerRes.rows[0].first_name || ''} ${sellerRes.rows[0].last_name || ''}`.trim() || 'Unknown Seller'
+          : 'Unknown Seller',
+        store_name: storeRes.rows[0]?.business_name || null,
+        refund_case_id: adjustment.refund_case_id,
+        original_amount: originalAmount,
+        remaining_amount: remainingAmount,
+        recovered_amount: recoveredAmount,
+        status: adjustment.status || 'active',
+        seller_notice: adjustment.reason || null,
+        created_at: adjustment.created_at,
+        recovery_history: recoveriesRes.rows.map((row) => ({
+          created_at: row.created_at,
+          recovered_amount: Number(row.recovered_amount || 0),
+          remaining_debt: Number(row.remaining_debt || 0),
+          status: row.status || 'recovered',
+          release_amount: Number(row.release_amount || 0),
+          order_id: row.order_id,
+          escrow_transaction_id: row.escrow_transaction_id
+        }))
+      });
+    }
+
+    return sendSuccess(res, 200, 'Seller adjustments fetched', {
+      adjustments,
+      total: adjustments.length
+    });
+  } catch (err) {
+    console.warn('⚠️ Could not fetch seller adjustments:', err.message || err);
+    return sendSuccess(res, 200, 'Seller adjustments fetched', {
+      adjustments: [],
+      total: 0
+    });
   }
 });
 
