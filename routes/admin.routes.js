@@ -377,7 +377,7 @@ router.get('/refunds', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/seller-adjustments
-router.get('/seller-adjustments', protect, isAdmin, async (req, res) => {
+router.get(['/seller-adjustments', '/seller-adjustments/'], protect, isAdmin, async (req, res) => {
   try {
     const refundCaseId = typeof req.query.refundCaseId === 'string' ? req.query.refundCaseId.trim() : '';
     const normalizedRefundCaseId = refundCaseId ? refundCaseId : null;
@@ -412,21 +412,27 @@ router.get('/seller-adjustments', protect, isAdmin, async (req, res) => {
       const originalAmount = Number(adjustment.original_debt || 0);
       const remainingAmount = Number(adjustment.remaining_debt || 0);
       const recoveredAmount = Math.max(0, originalAmount - remainingAmount);
+      const sellerName = sellerRes.rows[0]
+        ? `${sellerRes.rows[0].first_name || ''} ${sellerRes.rows[0].last_name || ''}`.trim() || 'Unknown Seller'
+        : 'Unknown Seller';
 
       adjustments.push({
         id: adjustment.id,
         seller_id: adjustment.seller_id,
-        seller_name: sellerRes.rows[0]
-          ? `${sellerRes.rows[0].first_name || ''} ${sellerRes.rows[0].last_name || ''}`.trim() || 'Unknown Seller'
-          : 'Unknown Seller',
+        seller: sellerName,
+        seller_name: sellerName,
         store_name: storeRes.rows[0]?.business_name || null,
+        refund_case: adjustment.refund_case_id,
         refund_case_id: adjustment.refund_case_id,
+        original_debt: originalAmount,
         original_amount: originalAmount,
+        remaining_debt: remainingAmount,
         remaining_amount: remainingAmount,
         recovered_amount: recoveredAmount,
         status: adjustment.status || 'active',
         seller_notice: adjustment.reason || null,
         created_at: adjustment.created_at,
+        created_date: adjustment.created_at,
         recovery_history: recoveriesRes.rows.map((row) => ({
           created_at: row.created_at,
           recovered_amount: Number(row.recovered_amount || 0),
@@ -439,16 +445,11 @@ router.get('/seller-adjustments', protect, isAdmin, async (req, res) => {
       });
     }
 
-    return sendSuccess(res, 200, 'Seller adjustments fetched', {
-      adjustments,
-      total: adjustments.length
-    });
+    console.log('[admin] GET seller adjustments', { refundCaseId: normalizedRefundCaseId || null, count: adjustments.length });
+    return res.status(200).json(adjustments);
   } catch (err) {
-    console.warn('⚠️ Could not fetch seller adjustments:', err.message || err);
-    return sendSuccess(res, 200, 'Seller adjustments fetched', {
-      adjustments: [],
-      total: 0
-    });
+    console.warn('[admin] GET seller adjustments failed:', err.message || err);
+    return res.status(200).json([]);
   }
 });
 
