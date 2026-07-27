@@ -493,7 +493,7 @@ router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => 
       notificationPromises.push(createDedupedNotification({
         userId: seller_id,
         title: 'Refund Approved',
-        message: `MarketMix approved this refund request.\n\nPlease choose how you want the refund handled:\n\n• Return Product\n• Returnless Refund`,
+        message: 'MarketMix approved this refund request. Please choose either Return Product or Returnless Refund.',
         type: 'refund',
         referenceId: refundId,
         link: '/sellers/sellers%20returns.html'
@@ -503,7 +503,7 @@ router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => 
       notificationPromises.push(createDedupedNotification({
         userId: buyer_id,
         title: 'Refund Approved',
-        message: `MarketMix approved your refund request.\n\nPlease wait while the seller chooses whether this refund will require returning the product or will be processed as a returnless refund.`,
+        message: 'MarketMix has approved your refund request. Please wait while the seller chooses the refund method.',
         type: 'refund',
         referenceId: refundId,
         link: '/buyers/buyers%20return%20report.html'
@@ -557,16 +557,20 @@ router.post('/refunds/:refundId/reject', protect, isAdmin, async (req, res) => {
       notificationPromises.push(createDedupedNotification({
         userId: buyer_id,
         title: 'Refund Rejected',
-        message: `After reviewing the evidence, MarketMix rejected your refund request. Reason: ${reasonSummary}`,
-        type: 'refund'
+        message: 'Unfortunately, MarketMix rejected your refund request after reviewing the evidence.',
+        type: 'refund',
+        referenceId: refundId,
+        link: '/buyers/buyers%20return%20report.html'
       }));
     }
     if (seller_id) {
       notificationPromises.push(createDedupedNotification({
         userId: seller_id,
-        title: 'Refund Rejected',
-        message: `MarketMix rejected this refund request. Reason: ${reasonSummary}`,
-        type: 'refund'
+        title: 'Refund Closed',
+        message: 'MarketMix rejected this refund request. No further action is required.',
+        type: 'refund',
+        referenceId: refundId,
+        link: '/sellers/sellers%20returns.html'
       }));
     }
 

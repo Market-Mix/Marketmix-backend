@@ -349,8 +349,8 @@ router.post('/create', async (req, res) => {
       try {
         await createDedupedNotification({
           userId: seller_id,
-          title: 'New refund request received.',
-          message: `A refund request was submitted for order ${order_id}.`,
+          title: 'New Refund Request',
+          message: `A buyer has requested a refund for Order #${order_id}. Review the request.`,
           type: 'refund',
           link: '/sellers/sellers%20returns.html',
           referenceId: refundCase.id
@@ -615,21 +615,31 @@ router.post('/escalate', async (req, res) => {
 
     console.log(`✅ Refund ${refund_id} escalated to MarketMix by ${escalated_by}`);
 
-    // Notify buyer that refund has been escalated to MarketMix
+    // Notify buyer and seller that refund has been escalated to MarketMix
     try {
       const updated = Array.isArray(updatedData) ? updatedData[0] : updatedData;
       if (updated && updated.buyer_id) {
         await createDedupedNotification({
           userId: updated.buyer_id,
-          title: 'Refund Escalated to MarketMix',
-          message: 'Your refund case has been escalated to MarketMix support for further review and resolution.',
+          title: 'Refund Escalated',
+          message: 'The seller has escalated your refund request to MarketMix. We will review the case shortly.',
           type: 'refund',
           referenceId: refund_id,
           link: '/buyers/buyers%20return%20report.html'
         });
       }
+      if (updated && updated.seller_id) {
+        await createDedupedNotification({
+          userId: updated.seller_id,
+          title: 'Case Escalated',
+          message: 'Your refund case has been sent to MarketMix for review.',
+          type: 'refund',
+          referenceId: refund_id,
+          link: '/sellers/sellers%20returns.html'
+        });
+      }
     } catch (e) {
-      console.warn('Could not create escalation notification for buyer:', e.message || e);
+      console.warn('Could not create escalation notifications:', e.message || e);
     }
 
     return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
