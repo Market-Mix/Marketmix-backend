@@ -10,6 +10,8 @@ const allowedOrigins = [
   'http://127.0.0.1:8000',
   'https://marketmix.vercel.app', // your correct frontend domain
   'https://marketmix-jointhewaitlist.vercel.app', //waitlist
+    'https://marketmix.africa',          // ← add
+  'https://www.marketmix.africa',      // ← add
   'https://marketmix-backend.onrender.com', // Your render backend
   process.env.CLIENT_URL
 ].filter(Boolean);
