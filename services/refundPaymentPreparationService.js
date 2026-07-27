@@ -308,8 +308,8 @@ async function notifyRefundPaymentCompleted(refund) {
   if (refund.buyer_id) {
     notificationPromises.push(createDedupedNotification({
       userId: refund.buyer_id,
-      title: 'Refund paid',
-      message: 'Your refund has been completed and processed successfully.',
+      title: 'Refund Completed',
+      message: 'Your refund has been completed successfully.',
       type: 'refund',
       referenceId: refund.id,
       link: '/buyers/buyers%20return%20report.html'
@@ -318,8 +318,8 @@ async function notifyRefundPaymentCompleted(refund) {
   if (refund.seller_id) {
     notificationPromises.push(createDedupedNotification({
       userId: refund.seller_id,
-      title: 'Refund paid',
-      message: 'The refund for this order has been processed successfully.',
+      title: 'Refund Completed',
+      message: 'The buyer\'s refund has been completed successfully.',
       type: 'refund',
       referenceId: refund.id,
       link: '/sellers/sellers%20returns.html'

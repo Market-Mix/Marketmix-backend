@@ -1407,8 +1407,8 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
     if (updatedCase.buyer_id) {
       notificationPromises.push(createDedupedNotification({
         userId: updatedCase.buyer_id,
-        title: 'Seller confirmed receipt',
-        message: 'Seller confirmed receiving your returned product.\n\nMarketMix is now processing your refund payment.',
+        title: 'Refund Processing',
+        message: 'The seller confirmed receiving your returned product. Your refund is now being processed.',
         type: 'refund',
         referenceId: refundId,
         link: '/buyers/buyers%20return%20report.html'
@@ -1417,8 +1417,8 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
     if (updatedCase.seller_id) {
       notificationPromises.push(createDedupedNotification({
         userId: updatedCase.seller_id,
-        title: 'You confirmed receipt',
-        message: 'You confirmed receipt of the returned product.\n\nMarketMix will now process the buyer\'s refund.',
+        title: 'Refund Started',
+        message: 'Thank you for confirming receipt. The buyer\'s refund is now being processed.',
         type: 'refund',
         referenceId: refundId,
         link: '/sellers/sellers%20returns.html'
