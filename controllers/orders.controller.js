@@ -2,6 +2,7 @@ const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { stripFee } = require('../utils/pricing');
 const { recoverSellerDebtFromEscrowRelease } = require('../services/sellerDebtRecoveryService');
+const { createDedupedNotification } = require('./notification.controller');
  const { notifySeller } = require('../utils/sellerEmailService');
  const { notifyBuyer } = require('../utils/sellerEmailService');
 
@@ -581,6 +582,19 @@ const confirmDelivery = async (req, res) => {
           );
         } catch (e) {
           console.error('Notification insert failed:', e.message);
+        }
+
+        try {
+          await createDedupedNotification({
+            userId: seller_id,
+            title: 'Payment Received',
+            message: `Payment for Order #${orderId} has been released into your earnings.`,
+            type: 'payment',
+            referenceId: orderId,
+            link: '/sellers/sellers%20earning.html'
+          });
+        } catch (e) {
+          console.warn('Payment release notification failed:', e.message || e);
         }
 
         notifySeller(seller_id, 'paymentReceived', {

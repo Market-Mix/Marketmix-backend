@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { createDedupedNotification } = require('../controllers/notification.controller');
 
 function calculateDebtRecovery({ releaseAmount = 0, remainingDebt = 0 } = {}) {
   const normalizedReleaseAmount = Number(releaseAmount) || 0;
@@ -47,6 +48,29 @@ async function ensureSellerDebtRecoveryTables(executor) {
       throw error;
     }
     console.warn('[debt-recovery] Could not ensure recovery table exists:', error.message || error);
+  }
+}
+
+async function ensureSellerRecentTransactionsTable(executor) {
+  try {
+    await executor.query(`
+      CREATE TABLE IF NOT EXISTS seller_recent_transactions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        seller_id UUID NOT NULL,
+        type VARCHAR(100) NOT NULL,
+        description TEXT NOT NULL,
+        amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+        status VARCHAR(50) NOT NULL DEFAULT 'Recovered',
+        reference_id UUID,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+  } catch (error) {
+    if (String(error.message).includes('permission denied') || String(error.message).includes('syntax')) {
+      throw error;
+    }
+    console.warn('[debt-recovery] Could not ensure recent transactions table exists:', error.message || error);
   }
 }
 
@@ -167,6 +191,28 @@ async function recoverSellerDebtFromEscrowRelease(client, options = {}) {
       [sellerId, debt.id, debt.refund_case_id || refundCaseId || null, escrowId || null, orderId || null, releaseAmount, recovery.recoveredAmount, recovery.remainingDebt, recovery.isSettled ? 'settled' : 'partial']
     );
 
+    if (recovery.recoveredAmount > 0) {
+      try {
+        await ensureSellerRecentTransactionsTable(executor);
+        await executor.query(
+          `INSERT INTO seller_recent_transactions (seller_id, type, description, amount, status, reference_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+          [sellerId, 'Debt Recovery', 'Automatic refund debt recovery.', -Number(recovery.recoveredAmount), 'Recovered', debt.refund_case_id || refundCaseId || null]
+        );
+
+        await createDedupedNotification({
+          userId: sellerId,
+          title: 'Debt Recovery',
+          message: `₦${Number(recovery.recoveredAmount).toFixed(2)} has been automatically deducted from your earnings to recover a previous refund debt.`,
+          type: 'refund',
+          referenceId: debt.refund_case_id || refundCaseId || null,
+          link: '/sellers/sellers%20earning.html'
+        });
+      } catch (notificationError) {
+        console.warn('[debt-recovery] Could not create debt recovery notification or recent transaction:', notificationError.message || notificationError);
+      }
+    }
+
     if (recovery.isSettled) {
       console.log('[debt-recovery] Debt fully settled', {
         sellerId,
@@ -216,5 +262,6 @@ async function recoverSellerDebtFromEscrowRelease(client, options = {}) {
 
 module.exports = {
   calculateDebtRecovery,
+  ensureSellerRecentTransactionsTable,
   recoverSellerDebtFromEscrowRelease
 };

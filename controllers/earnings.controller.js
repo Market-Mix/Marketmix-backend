@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { stripFee } = require('../utils/pricing');
+const { ensureSellerRecentTransactionsTable } = require('../services/sellerDebtRecoveryService');
 
 /**
  * @desc    Get seller earnings summary and transactions
@@ -112,6 +113,8 @@ const getSellerEarnings = async (req, res) => {
       ? availableBalance + pendingEarnings + totalWithdrawn
       : 0;
 
+    await ensureSellerRecentTransactionsTable(db);
+
     // Recent transactions
     const transactionsResult = await runQuery(
       `SELECT 
@@ -137,6 +140,24 @@ const getSellerEarnings = async (req, res) => {
         : null,
       storeId ? [sellerId] : null
     );
+
+    let recentTransactionsResult = { rows: [] };
+    try {
+      recentTransactionsResult = await runQuery(
+        `SELECT id, type, description, amount, status, created_at, reference_id
+         FROM seller_recent_transactions
+         WHERE seller_id = $1
+         ORDER BY created_at DESC LIMIT 50`,
+        [sellerId],
+        `SELECT id, type, description, amount, status, created_at, reference_id
+         FROM seller_recent_transactions
+         WHERE seller_id = $1
+         ORDER BY created_at DESC LIMIT 50`,
+        [sellerId]
+      );
+    } catch (recentError) {
+      console.warn('Recent transaction history unavailable:', recentError.message || recentError);
+    }
 
     // Escrow pending transactions (show as pending in transaction list)
     const escrowResult = await runQuery(
@@ -202,6 +223,16 @@ const getSellerEarnings = async (req, res) => {
         productName: row.product_name,
         orderId: row.order_id,
         type: 'Sale'
+      })),
+      ...recentTransactionsResult.rows.map(row => ({
+        id: row.id,
+        date: row.created_at,
+        amount: parseFloat(row.amount),
+        status: row.status,
+        productName: null,
+        orderId: row.reference_id,
+        type: row.type || 'Debt Recovery',
+        description: row.description
       }))
     ];
 
@@ -233,6 +264,8 @@ const getSellerTransactionHistory = async (req, res) => {
     const parsedPage = parseInt(page, 10) || 1;
     const parsedLimit = parseInt(limit, 10) || 20;
     const offset = (parsedPage - 1) * parsedLimit;
+
+    await ensureSellerRecentTransactionsTable(db);
 
     const filters = [];
     const params = [sellerId];
@@ -272,6 +305,10 @@ const getSellerTransactionHistory = async (req, res) => {
       SELECT w.id, 'withdrawal' AS type, -w.amount, w.status,
              'Withdrawal — ' || COALESCE(w.bank_name,'bank'), w.reference, w.created_at
       FROM withdrawals w WHERE w.seller_id = $1
+      UNION ALL
+      SELECT srt.id, 'debt_recovery' AS type, srt.amount, srt.status,
+             srt.description, srt.reference_id::text, srt.created_at
+      FROM seller_recent_transactions srt WHERE srt.seller_id = $1
     `;
 
     const dataQuery = `SELECT * FROM (${unionSql}) t WHERE 1=1 ${filterSql}
