@@ -56,10 +56,6 @@ app.get('/', (req, res) => {
   });
 });
 
-// Parse cookies from incoming requests so auth handlers can access req.cookies.
-// const cookieParser = require('cookie-parser');
-// app.use(cookieParser());
-
 // Import routes (keep your existing imports)
 const authRoutes = require('./routes/auth.routes');
 const buyerRoutes = require('./routes/buyer.routes');

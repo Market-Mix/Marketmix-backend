@@ -15,8 +15,7 @@ const {
   changePassword,
   updateAddress,
   updateNotificationPreferences,
-  deleteAccount,
-  // silentLogin
+  deleteAccount
 } = require('../controllers/auth.controller');
 const { protect } = require('../middlewares/auth.middleware');
 
@@ -24,7 +23,6 @@ const { protect } = require('../middlewares/auth.middleware');
 // Public routes - Email/Password Authentication
 router.post('/register', register);
 router.post('/login', login);
-// router.post('/silent-login', silentLogin); // Cookie-based silent login disabled
 
 // Public routes - Google OAuth Authentication
 router.post('/google-register', googleRegister);
