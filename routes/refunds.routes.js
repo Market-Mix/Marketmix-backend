@@ -785,20 +785,30 @@ router.post('/:refundId/shipment-update', protect, async (req, res) => {
       return res.status(500).json({ success: false, message: 'Failed to update shipment details' });
     }
 
-    // Notify seller that buyer shipped the product
+    // Notify seller and buyer after shipping proof is submitted
     try {
       if (updatedCase.seller_id) {
         await createDedupedNotification({
           userId: updatedCase.seller_id,
-          title: 'Buyer Shipped Product',
-          message: 'The buyer has shipped the returned product.\n\nPlease review the shipment information and confirm once received.',
+          title: 'Product Shipped',
+          message: 'The buyer has uploaded shipping proof. Please inspect the shipment and confirm receipt after receiving the product.',
           type: 'refund',
           referenceId: updatedCase.id,
           link: '/sellers/sellers%20returns.html'
         });
       }
+      if (updatedCase.buyer_id) {
+        await createDedupedNotification({
+          userId: updatedCase.buyer_id,
+          title: 'Shipment Uploaded',
+          message: 'Your shipping proof has been received. The seller will confirm product receipt after delivery.',
+          type: 'refund',
+          referenceId: updatedCase.id,
+          link: '/buyers/buyers%20return%20report.html'
+        });
+      }
     } catch (e) {
-      console.warn('Could not create shipment notification for seller:', e.message || e);
+      console.warn('Could not create shipment notifications:', e.message || e);
     }
 
     return res.status(200).json({ success: true, refundCase: updatedCase });
