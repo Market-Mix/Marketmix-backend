@@ -1273,7 +1273,7 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       console.error('⚠️ Refund payment preparation failed:', prepErr.message || prepErr);
     }
 
-    // Wrap returnless notification creation in try-catch to capture real errors
+    // Wrap notification creation in try-catch to preserve existing flow while adding the requested notices
     if (decisionNormalized === 'returnless_refund') {
       try {
         console.log('📬 Creating returnless refund notifications for buyer_id:', refund.buyer_id);
@@ -1281,12 +1281,23 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
           await createDedupedNotification({
             userId: refund.buyer_id,
             title: 'Returnless Refund',
-            message: 'The seller has approved a returnless refund.\n\nNo return shipment is required.\n\nMarketMix will now process your refund.',
+            message: 'The seller approved a returnless refund. No shipment is required. MarketMix will continue processing your refund.',
             type: 'refund',
             referenceId: refundId,
             link: '/buyers/buyers%20return%20report.html'
           });
           console.log('✅ Returnless buyer notification created');
+        }
+        if (refund.seller_id) {
+          await createDedupedNotification({
+            userId: refund.seller_id,
+            title: 'Returnless Refund Selected',
+            message: 'You selected Returnless Refund. MarketMix will continue processing the refund.',
+            type: 'refund',
+            referenceId: refundId,
+            link: '/sellers/sellers%20returns.html'
+          });
+          console.log('✅ Returnless seller notification created');
         }
       } catch (notifErr) {
         console.error('🚨 RETURNLESS REFUND ERROR - Notification creation failed:', notifErr.message);
@@ -1294,15 +1305,31 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
         throw notifErr;
       }
     } else if (decisionNormalized === 'return_product') {
-      if (refund.buyer_id) {
-        await createDedupedNotification({
-          userId: refund.buyer_id,
-          title: 'Return Required',
-          message: 'The seller has chosen to receive the product back.\n\nPlease ship the product using the provided return address.',
-          type: 'refund',
-          referenceId: refundId,
-          link: '/buyers/buyers%20return%20report.html'
-        });
+      try {
+        if (refund.buyer_id) {
+          await createDedupedNotification({
+            userId: refund.buyer_id,
+            title: 'Return Required',
+            message: 'The seller requested the product be returned. Please ship the product to the provided return address and upload your shipping proof.',
+            type: 'refund',
+            referenceId: refundId,
+            link: '/buyers/buyers%20return%20report.html'
+          });
+        }
+        if (refund.seller_id) {
+          await createDedupedNotification({
+            userId: refund.seller_id,
+            title: 'Waiting For Shipment',
+            message: 'The buyer has been instructed to return the product. You will be notified after shipping proof is uploaded.',
+            type: 'refund',
+            referenceId: refundId,
+            link: '/sellers/sellers%20returns.html'
+          });
+        }
+      } catch (notifErr) {
+        console.error('🚨 RETURN PRODUCT NOTIFICATION ERROR - Notification creation failed:', notifErr.message);
+        console.error('Stack:', notifErr.stack);
+        throw notifErr;
       }
     }
 
