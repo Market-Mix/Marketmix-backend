@@ -9,6 +9,7 @@ const { isSeller } = require('../middlewares/role.middleware');
 const { createDedupedNotification } = require('../controllers/notification.controller');
 const { prepareRefundForPayment, getPaymentSummaryForRefundCase, getPaymentSummariesForRefundCases } = require('../services/refundPaymentPreparationService');
 const { slugify, uniqueAccountSlug } = require('../utils/slugify');
+const { syncRefundCase } = require('../utils/refundSync');
 const multer = require('multer');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -1264,6 +1265,8 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       throw sqlErr;
     }
 
+    syncRefundCase(updatedCaseRes.rows[0]).catch(() => {});
+
     let paymentPreparationResult = null;
     try {
       paymentPreparationResult = decisionNormalized === 'returnless_refund'
@@ -1395,6 +1398,8 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
     if (!updatedCase) {
       return sendError(res, 500, 'Failed to confirm return received');
     }
+
+    syncRefundCase(updatedCase).catch(() => {});
 
     let paymentPreparationResult = null;
     try {

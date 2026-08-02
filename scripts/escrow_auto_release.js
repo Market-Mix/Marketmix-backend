@@ -1,7 +1,6 @@
 require('dotenv').config();
 const db = require('../config/db');
-const { stripFee } = require('../utils/pricing');
-const { recoverSellerDebtFromEscrowRelease } = require('../services/sellerDebtRecoveryService');
+const { releaseEscrowRow } = require('../services/escrowRelease.service');
 
 async function autoReleaseEscrow() {
   console.log('Running escrow auto-release...');
@@ -35,16 +34,7 @@ async function autoReleaseEscrow() {
     console.log(`Found ${due.rows.length} escrows to auto-release`);
 
     for (const row of due.rows) {
-      const netAmount = stripFee(row.amount);
-
-      // Release escrow
-      await client.query(
-        `UPDATE escrow_transactions
-         SET status='released', released_at=NOW(), updated_at=NOW(),
-             notes='Auto-released after 3 days'
-         WHERE id=$1`,
-        [row.id]
-      );
+      const netAmount = await releaseEscrowRow(client, row, 'Auto-released after 3 days');
 
       // Update order status
       await client.query(
@@ -52,44 +42,6 @@ async function autoReleaseEscrow() {
          WHERE id=$1 AND status='shipped'`,
         [row.order_id]
       );
-
-      await recoverSellerDebtFromEscrowRelease(client, {
-        sellerId: row.seller_id,
-        releaseAmount: netAmount,
-        orderId: row.order_id,
-        escrowId: row.id,
-        context: 'script-escrow-release'
-      });
-
-      // Credit seller
-      await client.query(
-        `UPDATE seller_profiles
-         SET available_balance = available_balance + $1,
-             total_earnings = total_earnings + $1,
-             updated_at = NOW()
-         WHERE user_id = $2`,
-        [netAmount, row.seller_id]
-      );
-
-      // insert one earnings row per order_item for this seller/order so
-      // Recent Transactions + Product Revenue tables populate
-      try {
-        const items = await client.query(
-          `SELECT id, product_id, quantity, price_at_purchase FROM order_items WHERE order_id=$1 AND seller_id=$2`,
-          [row.order_id, row.seller_id]
-        );
-
-        for (const it of items.rows) {
-          const gross = parseFloat(it.price_at_purchase) * it.quantity;
-          await client.query(
-            `INSERT INTO earnings (seller_id, store_id, order_id, order_item_id, amount, net_amount, status, created_at)
-             VALUES ($1,$2,$3,$4,$5,$6,'available',NOW())`,
-            [row.seller_id, row.store_id, row.order_id, it.id, gross, stripFee(gross)]
-          );
-        }
-      } catch (e) {
-        console.error('Earnings insert failed for seller', row.seller_id, e.message);
-      }
 
       // Notify seller
       await client.query(

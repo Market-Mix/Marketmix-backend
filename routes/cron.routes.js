@@ -1,8 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
-const { stripFee } = require('../utils/pricing');
-const { recoverSellerDebtFromEscrowRelease } = require('../services/sellerDebtRecoveryService');
+const { releaseEscrowRow } = require('../services/escrowRelease.service');
 
 router.get('/release-escrow', async (req, res) => {
   // Simple secret to prevent abuse
@@ -31,33 +30,7 @@ router.get('/release-escrow', async (req, res) => {
     let released = 0;
 
     for (const row of due.rows) {
-      const netAmount = stripFee(row.amount);
-
-      await client.query(
-        `UPDATE escrow_transactions
-         SET status='released', released_at=NOW(), updated_at=NOW(),
-             notes='Auto-released by cron'
-         WHERE id=$1`,
-        [row.id]
-      );
-
-      await recoverSellerDebtFromEscrowRelease(client, {
-        sellerId: row.seller_id,
-        releaseAmount: netAmount,
-        orderId: row.order_id,
-        escrowId: row.id,
-        context: 'cron-escrow-release'
-      });
-
-      await client.query(
-        `UPDATE seller_profiles
-         SET available_balance = available_balance + $1,
-             total_earnings = total_earnings + $1,
-             updated_at = NOW()
-         WHERE user_id = $2`,
-        [netAmount, row.seller_id]
-      );
-
+      await releaseEscrowRow(client, row, 'Auto-released by cron');
       released++;
     }
 

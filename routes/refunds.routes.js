@@ -8,6 +8,7 @@ const { notifySeller } = require('../utils/sellerEmailService');
 const { notifyBuyer } = require('../utils/sellerEmailService');
 const { createDedupedNotification } = require('../controllers/notification.controller');
 const { getPaymentSummaryForRefundCase } = require('../services/refundPaymentPreparationService');
+const { syncRefundCase } = require('../utils/refundSync');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -317,6 +318,8 @@ router.post('/create', async (req, res) => {
       return res.status(500).json({ success: false, message: 'Refund case created but no ID returned' });
     }
 
+    syncRefundCase(refundCase).catch(() => {});
+
     console.log('✅ Refund case inserted successfully:', { id: refundCase.id, buyer_id: refundCase.buyer_id, order_id: refundCase.order_id });
 
     if (resolvedSellerId) {
@@ -430,7 +433,9 @@ router.post('/chat-started', async (req, res) => {
     }
 
     console.log(`✅ Chat started marked for refund ${refund_id}`);
-    return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
+    const updatedCase = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+    syncRefundCase(updatedCase).catch(() => {});
+    return res.status(200).json({ success: true, refundCase: updatedCase });
   } catch (error) {
     console.error('❌ Error in /api/refunds/chat-started:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
@@ -475,9 +480,11 @@ router.post('/mark-resolved', async (req, res) => {
     }
 
     console.log(`✅ Seller marked refund ${refund_id} resolved`);
+      const updatedCase = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+      syncRefundCase(updatedCase).catch(() => {});
       // Notify buyer that seller confirmed receipt of returned product
       try {
-        const updated = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+        const updated = updatedCase;
         if (updated && updated.buyer_id) {
           await createDedupedNotification({
             userId: updated.buyer_id,
@@ -492,7 +499,7 @@ router.post('/mark-resolved', async (req, res) => {
         console.warn('Could not create product-received notification:', e.message || e);
       }
 
-      return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
+      return res.status(200).json({ success: true, refundCase: updatedCase });
   } catch (error) {
     console.error('❌ Error in /api/refunds/mark-resolved:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
@@ -537,9 +544,11 @@ router.post('/buyer-satisfied', async (req, res) => {
     }
 
     console.log(`✅ Buyer confirmed resolution for refund ${refund_id}`);
+      const updatedCase = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+      syncRefundCase(updatedCase).catch(() => {});
       // Notify buyer and seller that refund has been completed
       try {
-        const updated = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+        const updated = updatedCase;
         if (updated && updated.buyer_id) {
           await createDedupedNotification({
             userId: updated.buyer_id,
@@ -564,7 +573,7 @@ router.post('/buyer-satisfied', async (req, res) => {
         console.warn('Could not create refund completed notifications:', e.message || e);
       }
 
-      return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
+      return res.status(200).json({ success: true, refundCase: updatedCase });
   } catch (error) {
     console.error('❌ Error in /api/refunds/buyer-satisfied:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
@@ -642,7 +651,9 @@ router.post('/escalate', async (req, res) => {
       console.warn('Could not create escalation notifications:', e.message || e);
     }
 
-    return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
+    const updatedCase = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+    syncRefundCase(updatedCase).catch(() => {});
+    return res.status(200).json({ success: true, refundCase: updatedCase });
   } catch (error) {
     console.error('❌ Error in /api/refunds/escalate:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });
@@ -811,6 +822,7 @@ router.post('/:refundId/shipment-update', protect, async (req, res) => {
       console.warn('Could not create shipment notifications:', e.message || e);
     }
 
+    syncRefundCase(updatedCase).catch(() => {});
     return res.status(200).json({ success: true, refundCase: updatedCase });
   } catch (error) {
     console.error('❌ Error in POST /api/refunds/:refundId/shipment-update:', error);
@@ -853,7 +865,9 @@ router.patch('/:caseId/status', async (req, res) => {
       return res.status(response.status).json({ success: false, message: 'Failed to update refund case status', details: updatedData });
     }
 
-    return res.status(200).json({ success: true, refundCase: Array.isArray(updatedData) ? updatedData[0] : updatedData });
+    const updatedCase = Array.isArray(updatedData) ? updatedData[0] : updatedData;
+    syncRefundCase(updatedCase).catch(() => {});
+    return res.status(200).json({ success: true, refundCase: updatedCase });
   } catch (error) {
     console.error('❌ Error in /api/refunds/:caseId/status:', error);
     return res.status(500).json({ success: false, message: error.message || 'Internal server error' });

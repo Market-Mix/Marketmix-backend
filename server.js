@@ -158,6 +158,14 @@ if (backgroundCronsEnabled) {
 
   const { notifySeller } = require('./utils/sellerEmailService');
 
+  // Stale seller debt check — once every 24 hours
+  setInterval(() => {
+    execFile('node', ['scripts/check_stale_debts.js'], (err, stdout) => {
+      if (err) console.error('Stale debt check cron error:', err.message);
+      else if (stdout) console.log(stdout);
+    });
+  }, 24 * 60 * 60 * 1000); // Every 24 hours
+
   // Weekly sales report — every Monday at 8am
   setInterval(async () => {
     const now = new Date();
