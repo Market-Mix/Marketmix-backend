@@ -515,7 +515,7 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
            business_address, business_phone, business_email,
            store_logo_url, website, facebook, twitter, instagram,
            tiktok, telegram, category
-         ) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         ) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          RETURNING id, store_number, business_name, store_logo_url, is_verified, created_at`,
         [
           userId, storeSlug, storeName, storeDescription || null,
