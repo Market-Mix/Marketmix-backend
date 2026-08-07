@@ -881,9 +881,25 @@ router.get('/stores/public/:storeId', async (req, res) => {
           s.tiktok,
           s.telegram,
           s.category,
-          s.rating,
-          s.total_reviews,
-          s.total_sales,
+          COALESCE((
+            SELECT AVG(r.rating)::numeric(10,1)
+            FROM reviews r
+            JOIN products p ON p.id = r.product_id
+            WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+          ), 0) AS rating,
+          COALESCE((
+            SELECT COUNT(*)
+            FROM reviews r
+            JOIN products p ON p.id = r.product_id
+            WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+          ), 0) AS total_reviews,
+          COALESCE((
+            SELECT COUNT(DISTINCT o.id)
+            FROM orders o
+            JOIN order_items oi ON oi.order_id = o.id
+            WHERE oi.store_id = s.id
+              AND o.status NOT IN ('cancelled', 'payment_failed', 'awaiting_payment')
+          ), 0) AS total_sales,
           s.is_verified,
           s.created_at,
           u.first_name,
@@ -925,8 +941,8 @@ router.get('/stores/public/:storeId', async (req, res) => {
         storeLogo:           row.store_logo_url,
         avatarUrl:           row.avatar_url,
         rating:              parseFloat(row.rating) || 0,
-        totalReviews:        row.total_reviews || 0,
-        totalSales:          row.total_sales || 0,
+        totalReviews:        parseInt(row.total_reviews) || 0,
+        totalSales:          parseInt(row.total_sales) || 0,
         isVerified:          row.is_verified,
         website:             row.website,
         category:            row.category,
@@ -1044,9 +1060,25 @@ router.get('/public/:id', async (req, res) => {
           s.tiktok,
           s.telegram,
           s.category,
-          s.rating,
-          s.total_reviews,
-          s.total_sales,
+          COALESCE((
+            SELECT AVG(r.rating)::numeric(10,1)
+            FROM reviews r
+            JOIN products p ON p.id = r.product_id
+            WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+          ), 0) AS rating,
+          COALESCE((
+            SELECT COUNT(*)
+            FROM reviews r
+            JOIN products p ON p.id = r.product_id
+            WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+          ), 0) AS total_reviews,
+          COALESCE((
+            SELECT COUNT(DISTINCT o.id)
+            FROM orders o
+            JOIN order_items oi ON oi.order_id = o.id
+            WHERE oi.store_id = s.id
+              AND o.status NOT IN ('cancelled', 'payment_failed', 'awaiting_payment')
+          ), 0) AS total_sales,
           s.is_verified,
           s.created_at,
           u.first_name,
@@ -1091,8 +1123,8 @@ router.get('/public/:id', async (req, res) => {
         storeLogo:           row.store_logo_url,
         avatarUrl:           row.avatar_url,
         rating:              parseFloat(row.rating) || 0,
-        totalReviews:        row.total_reviews || 0,
-        totalSales:          row.total_sales || 0,
+        totalReviews:        parseInt(row.total_reviews) || 0,
+        totalSales:          parseInt(row.total_sales) || 0,
         isVerified:          row.is_verified,
         website:             row.website,
         category:            row.category,
