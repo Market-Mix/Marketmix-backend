@@ -332,11 +332,33 @@ const getPublicStore = async (req, res) => {
          s.store_logo_url, s.store_banner_url, s.store_theme,
          s.website, s.facebook, s.twitter,
          s.instagram, s.tiktok, s.telegram, s.category,
-         s.rating, s.total_reviews, s.total_sales, s.is_verified,
+         s.is_verified,
          s.created_at,
          u.first_name, u.last_name, u.avatar_url,
+         COALESCE((
+           SELECT AVG(r.rating)::numeric(10,1)
+           FROM reviews r
+           JOIN products p ON p.id = r.product_id
+           WHERE (p.store_id = s.id OR (p.store_id IS NULL AND p.seller_id = s.user_id))
+             AND r.is_deleted = false AND r.is_approved = true
+         ), 0) AS rating,
+         COALESCE((
+           SELECT COUNT(*)
+           FROM reviews r
+           JOIN products p ON p.id = r.product_id
+           WHERE (p.store_id = s.id OR (p.store_id IS NULL AND p.seller_id = s.user_id))
+             AND r.is_deleted = false AND r.is_approved = true
+         ), 0) AS total_reviews,
+         COALESCE((
+           SELECT COUNT(DISTINCT o.id)
+           FROM orders o
+           JOIN order_items oi ON oi.order_id = o.id
+           WHERE (oi.store_id = s.id OR (oi.store_id IS NULL AND oi.seller_id = s.user_id))
+             AND o.status NOT IN ('cancelled', 'payment_failed', 'awaiting_payment')
+         ), 0) AS total_sales,
          (SELECT COUNT(*) FROM products p
-          WHERE p.store_id = s.id AND p.is_active = true AND p.is_deleted = false
+          WHERE (p.store_id = s.id OR (p.store_id IS NULL AND p.seller_id = s.user_id))
+            AND p.is_active = true AND p.is_deleted = false
          ) AS product_count
        FROM stores s
        JOIN users u ON u.id = s.user_id
@@ -370,8 +392,8 @@ const getPublicStore = async (req, res) => {
         },
         category:     s.category,
         rating:       parseFloat(s.rating) || 0,
-        totalReviews: s.total_reviews || 0,
-        totalSales:   s.total_sales || 0,
+        totalReviews: parseInt(s.total_reviews) || 0,
+        totalSales:   parseInt(s.total_sales) || 0,
         isVerified:   s.is_verified,
         productCount: parseInt(s.product_count) || 0,
         memberSince:  s.created_at,
