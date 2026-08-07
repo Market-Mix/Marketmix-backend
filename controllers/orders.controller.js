@@ -248,7 +248,7 @@ const getOrderById = async (req, res) => {
    )
    SELECT
      o.id, o.total_amount, o.status, o.shipping_address, o.payment_method,
-     o.notes, o.created_at, o.updated_at,
+     o.notes, o.created_at, o.updated_at, o.delivery_confirmed_at,
      COALESCE(json_agg(
        json_build_object(
          'sellerId',     os.seller_id,
