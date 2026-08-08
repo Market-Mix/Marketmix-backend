@@ -273,23 +273,35 @@ const updateSellerOrderStatus = async (req, res) => {
       return sendSuccess(res, 200, `Order is already "${status}"`, { order: { id: existingRow.id, status: currentStatus, updated_at: new Date() } });
     }
 
-    // After validation, replace the UPDATE query:
-// updateSellerOrderStatus — replace the orders UPDATE with vendor_orders
-const result = await db.query(
-  `UPDATE vendor_orders SET status=$1, updated_at=NOW(),
-     tracking_code = COALESCE($3, tracking_code),
-     courier_name  = COALESCE($4, courier_name),
-     tracking_link = COALESCE($5, tracking_link)
-   WHERE order_id=$2 AND seller_id=$6
-   RETURNING id, status, updated_at, tracking_code, courier_name, tracking_link`,
-  [status.toLowerCase(), orderId, req.body.trackingId || null,
-   req.body.courierName || null, req.body.trackingLink || null, sellerId]
-);
+    // After validation, update the vendor-specific row and keep the parent order in sync
+    const result = await db.query(
+      `UPDATE vendor_orders SET status=$1, updated_at=NOW(),
+         tracking_code = COALESCE($3, tracking_code),
+         courier_name  = COALESCE($4, courier_name),
+         tracking_link = COALESCE($5, tracking_link)
+       WHERE order_id=$2 AND seller_id=$6
+       RETURNING id, order_id, status, updated_at, tracking_code, courier_name, tracking_link`,
+      [status.toLowerCase(), orderId, req.body.trackingId || null,
+       req.body.courierName || null, req.body.trackingLink || null, sellerId]
+    );
+
+    if (!result.rows.length) {
+      return sendError(res, 404, 'Vendor order not found for this seller');
+    }
+
+    // Keep the parent orders.status in sync (single-seller orders map 1:1;
+    // multi-seller orders will show the most recent vendor's status)
+    const orderUpdate = await db.query(
+      `UPDATE orders SET status=$1, updated_at=NOW()
+       WHERE id=$2
+       RETURNING id, status, buyer_id`,
+      [status.toLowerCase(), orderId]
+    );
 
     const shortId   = String(orderId).substring(0, 8);
     const actType   = ACTIVITY_TYPE_MAP[status.toLowerCase()] || 'order_updated';
     const label     = status.charAt(0).toUpperCase() + status.slice(1);
-    const buyerId   = result.rows[0].buyer_id;
+    const buyerId   = orderUpdate.rows[0]?.buyer_id;
 
     // ── Create seller notification ──
     await db.query(

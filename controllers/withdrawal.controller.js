@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const { sendSuccess, sendError } = require('../utils/response');
 const sendEmail = require('../utils/sendEmail');
 const { notifySeller } = require('../utils/sellerEmailService');
+const { hasUnresolvedCases } = require('../services/withdrawalEligibility.service');
 
 const MIN_WITHDRAWAL = parseFloat(process.env.MIN_WITHDRAWAL || '1000');
 const WITHDRAWAL_DELAY_HOURS = parseInt(process.env.WITHDRAWAL_DELAY_HOURS || '24');
@@ -191,6 +192,12 @@ const requestWithdrawal = async (req, res) => {
     if (!pinMatch) {
       await client.query('ROLLBACK');
       return sendError(res, 401, 'Incorrect PIN');
+    }
+
+    const eligibility = await hasUnresolvedCases(sellerId);
+    if (eligibility.blocked) {
+      await client.query('ROLLBACK');
+      return sendError(res, 403, `Withdrawals are locked: ${eligibility.reason}. Resolve it to continue.`);
     }
 
     if (parseFloat(p.available_balance) < amount) {

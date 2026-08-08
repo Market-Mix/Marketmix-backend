@@ -9,6 +9,7 @@ const { isSeller } = require('../middlewares/role.middleware');
 const { createDedupedNotification } = require('../controllers/notification.controller');
 const { prepareRefundForPayment, getPaymentSummaryForRefundCase, getPaymentSummariesForRefundCases } = require('../services/refundPaymentPreparationService');
 const { slugify, uniqueAccountSlug } = require('../utils/slugify');
+const { syncRefundCase } = require('../utils/refundSync');
 const multer = require('multer');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -514,7 +515,7 @@ router.post('/update-store', protect, isSeller, async (req, res) => {
            business_address, business_phone, business_email,
            store_logo_url, website, facebook, twitter, instagram,
            tiktok, telegram, category
-         ) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         ) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          RETURNING id, store_number, business_name, store_logo_url, is_verified, created_at`,
         [
           userId, storeSlug, storeName, storeDescription || null,
@@ -880,9 +881,25 @@ router.get('/stores/public/:storeId', async (req, res) => {
           s.tiktok,
           s.telegram,
           s.category,
-          s.rating,
-          s.total_reviews,
-          s.total_sales,
+          COALESCE((
+            SELECT AVG(r.rating)::numeric(10,1)
+            FROM reviews r
+            JOIN products p ON p.id = r.product_id
+            WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+          ), 0) AS rating,
+          COALESCE((
+            SELECT COUNT(*)
+            FROM reviews r
+            JOIN products p ON p.id = r.product_id
+            WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+          ), 0) AS total_reviews,
+          COALESCE((
+            SELECT COUNT(DISTINCT o.id)
+            FROM orders o
+            JOIN order_items oi ON oi.order_id = o.id
+            WHERE oi.store_id = s.id
+              AND o.status NOT IN ('cancelled', 'payment_failed', 'awaiting_payment')
+          ), 0) AS total_sales,
           s.is_verified,
           s.created_at,
           u.first_name,
@@ -924,8 +941,8 @@ router.get('/stores/public/:storeId', async (req, res) => {
         storeLogo:           row.store_logo_url,
         avatarUrl:           row.avatar_url,
         rating:              parseFloat(row.rating) || 0,
-        totalReviews:        row.total_reviews || 0,
-        totalSales:          row.total_sales || 0,
+        totalReviews:        parseInt(row.total_reviews) || 0,
+        totalSales:          parseInt(row.total_sales) || 0,
         isVerified:          row.is_verified,
         website:             row.website,
         category:            row.category,
@@ -1043,9 +1060,25 @@ router.get('/public/:id', async (req, res) => {
           s.tiktok,
           s.telegram,
           s.category,
-          s.rating,
-          s.total_reviews,
-          s.total_sales,
+          COALESCE((
+            SELECT AVG(r.rating)::numeric(10,1)
+            FROM reviews r
+            JOIN products p ON p.id = r.product_id
+            WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+          ), 0) AS rating,
+          COALESCE((
+            SELECT COUNT(*)
+            FROM reviews r
+            JOIN products p ON p.id = r.product_id
+            WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+          ), 0) AS total_reviews,
+          COALESCE((
+            SELECT COUNT(DISTINCT o.id)
+            FROM orders o
+            JOIN order_items oi ON oi.order_id = o.id
+            WHERE oi.store_id = s.id
+              AND o.status NOT IN ('cancelled', 'payment_failed', 'awaiting_payment')
+          ), 0) AS total_sales,
           s.is_verified,
           s.created_at,
           u.first_name,
@@ -1090,8 +1123,8 @@ router.get('/public/:id', async (req, res) => {
         storeLogo:           row.store_logo_url,
         avatarUrl:           row.avatar_url,
         rating:              parseFloat(row.rating) || 0,
-        totalReviews:        row.total_reviews || 0,
-        totalSales:          row.total_sales || 0,
+        totalReviews:        parseInt(row.total_reviews) || 0,
+        totalSales:          parseInt(row.total_sales) || 0,
         isVerified:          row.is_verified,
         website:             row.website,
         category:            row.category,
@@ -1264,6 +1297,8 @@ router.post('/refunds/:refundId/seller-return-decision', protect, isSeller, asyn
       throw sqlErr;
     }
 
+    syncRefundCase(updatedCaseRes.rows[0]).catch(() => {});
+
     let paymentPreparationResult = null;
     try {
       paymentPreparationResult = decisionNormalized === 'returnless_refund'
@@ -1395,6 +1430,8 @@ router.post('/refunds/:refundId/confirm-return-received', protect, isSeller, asy
     if (!updatedCase) {
       return sendError(res, 500, 'Failed to confirm return received');
     }
+
+    syncRefundCase(updatedCase).catch(() => {});
 
     let paymentPreparationResult = null;
     try {

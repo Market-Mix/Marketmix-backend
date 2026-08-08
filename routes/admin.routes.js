@@ -10,6 +10,7 @@ const { processWithdrawal } = require('../services/payout.service');
 const { createDedupedNotification } = require('../controllers/notification.controller');
 const { getPaymentSummaryForRefundCase } = require('../services/refundPaymentPreparationService');
 const { recoverSellerDebtFromEscrowRelease } = require('../services/sellerDebtRecoveryService');
+const { syncRefundCase } = require('../utils/refundSync');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -502,7 +503,7 @@ router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => 
            resolution_status = 'waiting_seller_return_decision',
            updated_at = NOW()
        WHERE id = $1
-       RETURNING buyer_id, seller_id`,
+       RETURNING id, buyer_id, seller_id, order_id, resolution_status, status`,
       [refundId, trimmedReason, decidedBy]
     );
 
@@ -511,7 +512,9 @@ router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => 
     }
 
     const reasonSummary = truncateText(trimmedReason, 150);
-    const { buyer_id, seller_id } = result.rows[0];
+    const updatedCase = result.rows[0];
+    const { buyer_id, seller_id } = updatedCase;
+    syncRefundCase(updatedCase).catch(() => {});
 
     const notificationPromises = [];
     if (seller_id) {
@@ -566,7 +569,7 @@ router.post('/refunds/:refundId/reject', protect, isAdmin, async (req, res) => {
            resolution_status = 'refund_rejected',
            updated_at = NOW()
        WHERE id = $1
-       RETURNING buyer_id, seller_id`,
+       RETURNING id, buyer_id, seller_id, order_id, resolution_status, status`,
       [refundId, trimmedReason, decidedBy]
     );
 
@@ -575,7 +578,9 @@ router.post('/refunds/:refundId/reject', protect, isAdmin, async (req, res) => {
     }
 
     const reasonSummary = truncateText(trimmedReason, 150);
-    const { buyer_id, seller_id } = result.rows[0];
+    const updatedCase = result.rows[0];
+    const { buyer_id, seller_id } = updatedCase;
+    syncRefundCase(updatedCase).catch(() => {});
 
     const notificationPromises = [];
     if (buyer_id) {

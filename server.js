@@ -43,8 +43,8 @@ app.post('/api/webhooks/paystack',
 // );
 
 // Body parsing middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Health check route
 app.get('/', (req, res) => {
@@ -157,6 +157,14 @@ if (backgroundCronsEnabled) {
   }, 15 * 60 * 1000); // Every 15 minutes
 
   const { notifySeller } = require('./utils/sellerEmailService');
+
+  // Stale seller debt check — once every 24 hours
+  setInterval(() => {
+    execFile('node', ['scripts/check_stale_debts.js'], (err, stdout) => {
+      if (err) console.error('Stale debt check cron error:', err.message);
+      else if (stdout) console.log(stdout);
+    });
+  }, 24 * 60 * 60 * 1000); // Every 24 hours
 
   // Weekly sales report — every Monday at 8am
   setInterval(async () => {

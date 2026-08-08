@@ -3,6 +3,7 @@ const router = express.Router();
 const { getWithdrawals, requestWithdrawal, setWithdrawalPin, saveBankAccount, getBankAccount, getBanks, resolveAccountNumber, forgotPin, resetPin } = require('../controllers/withdrawal.controller');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
+const { sendSuccess } = require('../utils/response');
 
 // Apply protection to all withdrawal routes
 router.use(protect);
@@ -16,6 +17,11 @@ router.use(isSeller);
 router.get('/', getWithdrawals);
 router.get('/bank-account', getBankAccount);
 router.get('/banks', getBanks);
+router.get('/eligibility', async (req, res) => {
+  const { hasUnresolvedCases } = require('../services/withdrawalEligibility.service');
+  const result = await hasUnresolvedCases(req.user.id);
+  return sendSuccess(res, 200, 'Eligibility checked', result);
+});
 
 
 /**
