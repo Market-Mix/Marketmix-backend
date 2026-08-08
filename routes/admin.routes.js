@@ -269,6 +269,31 @@ router.post('/escrow/:escrowId/resolve', protect, isAdmin, async (req, res) => {
   }
 });
 
+// GET /api/admin/dashboard-stats
+router.get('/dashboard-stats', protect, isAdmin, async (req, res) => {
+  try {
+    const statsRes = await db.query(`
+      SELECT
+        COALESCE((SELECT COUNT(*) FROM users WHERE role = 'buyer' AND is_deleted = false), 0) AS total_buyers,
+        COALESCE((SELECT COUNT(*) FROM users WHERE role = 'seller' AND is_deleted = false), 0) AS total_sellers,
+        COALESCE((SELECT COUNT(*) FROM products WHERE is_deleted = false), 0) AS total_products,
+        COALESCE((SELECT COUNT(*) FROM orders), 0) AS total_orders
+    `);
+
+    const row = statsRes.rows[0] || {};
+
+    return sendSuccess(res, 200, 'Dashboard stats fetched', {
+      totalBuyers: parseInt(row.total_buyers, 10) || 0,
+      totalSellers: parseInt(row.total_sellers, 10) || 0,
+      totalProducts: parseInt(row.total_products, 10) || 0,
+      totalOrders: parseInt(row.total_orders, 10) || 0
+    });
+  } catch (err) {
+    console.error('Error fetching admin dashboard stats:', err);
+    return sendError(res, 500, 'Error fetching dashboard stats', err.message);
+  }
+});
+
 // GET /api/admin/refunds/pending
 // Development-only route for admin refund testing page
 router.get('/refunds/pending', protect, isAdmin, async (req, res) => {
