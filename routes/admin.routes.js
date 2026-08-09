@@ -278,16 +278,32 @@ router.get('/dashboard-stats', protect, isAdmin, async (req, res) => {
         COALESCE((SELECT COUNT(*) FROM users WHERE role = 'buyer' AND is_deleted = false), 0) AS total_buyers,
         COALESCE((SELECT COUNT(*) FROM users WHERE role = 'seller' AND is_deleted = false), 0) AS total_sellers,
         COALESCE((SELECT COUNT(*) FROM products WHERE is_deleted = false), 0) AS total_products,
-        COALESCE((SELECT COUNT(*) FROM orders), 0) AS total_orders
+        COALESCE((SELECT COUNT(*) FROM orders), 0) AS total_orders,
+        COALESCE((SELECT SUM(total_amount) FROM orders WHERE payment_status = 'paid'), 0) AS total_sales,
+        COALESCE((SELECT SUM(amount) FROM escrow_transactions WHERE status = 'held'), 0) AS escrow_held,
+        COALESCE((SELECT SUM(COALESCE(available_balance, 0)) FROM seller_profiles), 0) AS available_seller_funds,
+        COALESCE((SELECT SUM(ABS(amount)) FROM withdrawals WHERE status IN ('pending','processing')), 0) AS pending_withdrawals,
+        COALESCE((SELECT SUM(COALESCE(ABS(refund_amount), 0) + COALESCE(ABS(shipping_amount), 0)) FROM refund_transactions WHERE payment_status = 'paid'), 0) AS total_refunds,
+        COALESCE((SELECT SUM(remaining_debt) FROM seller_debts WHERE status IN ('active','partial')), 0) AS outstanding_seller_debt
     `);
 
     const row = statsRes.rows[0] || {};
+    const totalSales = parseFloat(row.total_sales) || 0;
+    const pendingEscrowGross = parseFloat(row.escrow_held) || 0;
 
     return sendSuccess(res, 200, 'Dashboard stats fetched', {
       totalBuyers: parseInt(row.total_buyers, 10) || 0,
       totalSellers: parseInt(row.total_sellers, 10) || 0,
       totalProducts: parseInt(row.total_products, 10) || 0,
-      totalOrders: parseInt(row.total_orders, 10) || 0
+      totalOrders: parseInt(row.total_orders, 10) || 0,
+      totalSales: totalSales,
+      platformEarnings: Math.max(0, totalSales - stripFee(totalSales)),
+      fundsInEscrow: parseFloat(row.escrow_held) || 0,
+      availableSellerFunds: parseFloat(row.available_seller_funds) || 0,
+      pendingSellerEarnings: stripFee(pendingEscrowGross),
+      pendingWithdrawals: parseFloat(row.pending_withdrawals) || 0,
+      refunds: parseFloat(row.total_refunds) || 0,
+      outstandingSellerDebt: parseFloat(row.outstanding_seller_debt) || 0
     });
   } catch (err) {
     console.error('Error fetching admin dashboard stats:', err);
