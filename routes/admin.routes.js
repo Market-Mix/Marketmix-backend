@@ -284,7 +284,7 @@ router.get('/dashboard-stats', protect, isAdmin, async (req, res) => {
         COALESCE((SELECT SUM(COALESCE(available_balance, 0)) FROM seller_profiles), 0) AS available_seller_funds,
         COALESCE((SELECT SUM(ABS(amount)) FROM withdrawals WHERE status IN ('pending','processing')), 0) AS pending_withdrawals,
         COALESCE((SELECT SUM(COALESCE(ABS(refund_amount), 0) + COALESCE(ABS(shipping_amount), 0)) FROM refund_transactions WHERE payment_status = 'paid'), 0) AS total_refunds,
-        COALESCE((SELECT SUM(remaining_debt) FROM seller_debts WHERE status IN ('active','partial')), 0) AS outstanding_seller_debt
+        COALESCE((SELECT SUM(amount) FROM seller_debts WHERE status IN ('active','partial')), 0) AS outstanding_seller_debt
     `);
 
     const row = statsRes.rows[0] || {};
