@@ -366,6 +366,74 @@ router.get('/pending-actions', protect, isAdmin, async (req, res) => {
   }
 });
 
+// GET /api/admin/dashboard-activity
+router.get('/dashboard-activity', protect, isAdmin, async (req, res) => {
+  try {
+    const recentOrdersRes = await db.query(
+      `SELECT o.id AS order_id,
+              o.total_amount,
+              o.status,
+              o.payment_status,
+              o.created_at,
+              COALESCE(b.first_name || ' ' || b.last_name, b.email, 'Buyer') AS buyer_name,
+              COALESCE(seller_profile.business_name, seller_user.first_name || ' ' || seller_user.last_name, 'Seller') AS seller_name
+       FROM orders o
+       LEFT JOIN users b ON b.id = o.buyer_id
+       LEFT JOIN LATERAL (
+         SELECT oi.seller_id
+         FROM order_items oi
+         WHERE oi.order_id = o.id AND oi.seller_id IS NOT NULL
+         ORDER BY oi.created_at DESC
+         LIMIT 1
+       ) AS recent_seller ON TRUE
+       LEFT JOIN users seller_user ON seller_user.id = recent_seller.seller_id
+       LEFT JOIN seller_profiles seller_profile ON seller_profile.user_id = recent_seller.seller_id
+       ORDER BY o.created_at DESC
+       LIMIT 5`
+    );
+
+    const topProductsRes = await db.query(
+      `SELECT p.id AS product_id,
+              p.name,
+              p.price,
+              p.stock_quantity,
+              p.is_active,
+              COALESCE(seller_profile.business_name, seller_user.first_name || ' ' || seller_user.last_name, 'Seller') AS seller_name,
+              SUM(oi.quantity) AS quantity_sold
+       FROM order_items oi
+       JOIN products p ON p.id = oi.product_id
+       LEFT JOIN users seller_user ON seller_user.id = p.seller_id
+       LEFT JOIN seller_profiles seller_profile ON seller_profile.user_id = p.seller_id
+       GROUP BY p.id, p.name, p.price, p.stock_quantity, p.is_active, seller_profile.business_name, seller_user.first_name, seller_user.last_name
+       ORDER BY SUM(oi.quantity) DESC
+       LIMIT 5`
+    );
+
+    return sendSuccess(res, 200, 'Dashboard activity fetched', {
+      recentOrders: recentOrdersRes.rows.map((row) => ({
+        order_id: row.order_id,
+        total_amount: parseFloat(row.total_amount) || 0,
+        status: row.status || 'unknown',
+        payment_status: row.payment_status || null,
+        created_at: row.created_at,
+        buyer_name: row.buyer_name || 'Buyer',
+        seller_name: row.seller_name || 'Seller'
+      })),
+      topProducts: topProductsRes.rows.map((row) => ({
+        product_id: row.product_id,
+        name: row.name || 'Unknown Product',
+        price: parseFloat(row.price) || 0,
+        stock_quantity: row.stock_quantity != null ? parseInt(row.stock_quantity, 10) : 0,
+        quantity_sold: parseInt(row.quantity_sold, 10) || 0,
+        seller_name: row.seller_name || 'Seller'
+      }))
+    });
+  } catch (err) {
+    console.error('Error fetching admin dashboard activity:', err);
+    return sendError(res, 500, 'Error fetching dashboard activity', err.message);
+  }
+});
+
 // GET /api/admin/marketplace-performance?period=today|7d|30d|6m|1y
 router.get('/marketplace-performance', protect, isAdmin, async (req, res) => {
   try {
