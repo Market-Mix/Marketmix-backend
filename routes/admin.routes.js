@@ -311,6 +311,61 @@ router.get('/dashboard-stats', protect, isAdmin, async (req, res) => {
   }
 });
 
+// GET /api/admin/pending-actions
+router.get('/pending-actions', protect, isAdmin, async (req, res) => {
+  try {
+    const sellersRes = await db.query(
+      `SELECT COUNT(*) AS total FROM seller_profiles WHERE kyc_status = 'pending' AND is_deleted = false`
+    );
+
+    const productsRes = await db.query(
+      `SELECT COUNT(*) AS total FROM products WHERE is_deleted = false AND is_active = false`
+    );
+
+    const withdrawalsRes = await db.query(
+      `SELECT COUNT(*) AS total FROM withdrawals WHERE status IN ('pending', 'processing')`
+    );
+
+    let refundCasesCount = 0;
+    let escalatedCasesCount = 0;
+
+    if (SUPABASE_SERVICE_KEY) {
+      try {
+        const pendingCasesUrl = `${SUPABASE_URL}/rest/v1/refund_cases?select=id&or=(resolution_status.eq.awaiting_admin,resolution_status.eq.escalated)&limit=1`;
+        const escalatedCasesUrl = `${SUPABASE_URL}/rest/v1/refund_cases?select=id&resolution_status=eq.escalated&limit=1`;
+
+        const [pendingResp, escalatedResp] = await Promise.all([
+          fetch(pendingCasesUrl, { method: 'GET', headers: { ...getSupabaseHeaders(), Prefer: 'count=exact' } }),
+          fetch(escalatedCasesUrl, { method: 'GET', headers: { ...getSupabaseHeaders(), Prefer: 'count=exact' } })
+        ]);
+
+        if (pendingResp.ok) {
+          const pendingCount = pendingResp.headers.get('content-range')?.split('/')[1];
+          refundCasesCount = Number(pendingCount) || 0;
+        }
+
+        if (escalatedResp.ok) {
+          const escalatedCount = escalatedResp.headers.get('content-range')?.split('/')[1];
+          escalatedCasesCount = Number(escalatedCount) || 0;
+        }
+      } catch (supabaseErr) {
+        console.warn('Unable to fetch admin pending refund case counts from Supabase:', supabaseErr?.message || supabaseErr);
+      }
+    }
+
+    return sendSuccess(res, 200, 'Pending action counts fetched', {
+      pendingSellers: parseInt(sellersRes.rows[0]?.total, 10) || 0,
+      pendingProducts: parseInt(productsRes.rows[0]?.total, 10) || 0,
+      pendingWithdrawals: parseInt(withdrawalsRes.rows[0]?.total, 10) || 0,
+      refundCases: refundCasesCount,
+      escalatedCases: escalatedCasesCount
+    });
+  } catch (err) {
+    console.error('Error fetching pending action counts:', err);
+    return sendError(res, 500, 'Error fetching pending action counts', err.message);
+  }
+});
+
 // GET /api/admin/marketplace-performance?period=today|7d|30d|6m|1y
 router.get('/marketplace-performance', protect, isAdmin, async (req, res) => {
   try {
