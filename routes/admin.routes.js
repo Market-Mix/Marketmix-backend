@@ -419,6 +419,131 @@ router.get('/marketplace-performance', protect, isAdmin, async (req, res) => {
   }
 });
 
+// GET /api/admin/marketplace-performance/chart?period=today|7d|30d|6m|1y
+router.get('/marketplace-performance/chart', protect, isAdmin, async (req, res) => {
+  try {
+    const period = String(req.query.period || 'today').toLowerCase();
+    const now = new Date();
+    let startDate = new Date(now);
+    let endDate = new Date(now);
+    endDate.setHours(23, 59, 59, 999);
+    startDate.setHours(0, 0, 0, 0);
+
+    switch (period) {
+      case '7d':
+      case '7days':
+        startDate.setDate(now.getDate() - 6);
+        break;
+      case '30d':
+      case '30days':
+        startDate.setDate(now.getDate() - 29);
+        break;
+      case '6m':
+      case '6months':
+        startDate.setMonth(now.getMonth() - 6);
+        break;
+      case '1y':
+      case '1year':
+        startDate.setFullYear(now.getFullYear() - 1);
+        break;
+      case 'today':
+      default:
+        break;
+    }
+
+    // Determine granularity and SQL step
+    let step = '1 day';
+    let trunc = 'day';
+    if (period === 'today') {
+      step = '1 hour';
+      trunc = 'hour';
+    } else if (['6m', '6months', '1y', '1year'].includes(period)) {
+      step = '1 month';
+      trunc = 'month';
+      // normalize start/end to month boundaries
+      startDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+      endDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+      endDate.setMonth(endDate.getMonth() + 1);
+      endDate.setDate(0);
+      endDate.setHours(23,59,59,999);
+    }
+
+    // Build series query using generate_series and left join aggregated sums
+    const seriesQuery = trunc === 'month'
+      ? `SELECT to_char(d::date, 'YYYY-MM') AS label, d::date as period_date
+         FROM generate_series(date_trunc('month', $1::timestamptz)::date, date_trunc('month', $2::timestamptz)::date, '1 month') d` 
+      : `SELECT d AS period_date, to_char(d::date, 'YYYY-MM-DD') AS label
+         FROM generate_series($1::timestamptz::date, $2::timestamptz::date, '${step}') d`;
+
+    // Aggregate orders by trunc
+    const ordersAgg = `
+      SELECT date_trunc('${trunc}', created_at) AS period, COALESCE(SUM(total_amount),0) AS gross
+      FROM orders
+      WHERE payment_status = 'paid' AND created_at >= $1 AND created_at <= $2
+      GROUP BY period
+    `;
+
+    const refundsAgg = `
+      SELECT date_trunc('${trunc}', created_at) AS period, COALESCE(SUM(COALESCE(refund_amount,0) + COALESCE(shipping_amount,0)),0) AS refunds
+      FROM refund_transactions
+      WHERE payment_status = 'paid' AND created_at >= $1 AND created_at <= $2
+      GROUP BY period
+    `;
+
+    const payoutsAgg = `
+      SELECT date_trunc('${trunc}', released_at) AS period, COALESCE(SUM(amount),0) AS payouts
+      FROM escrow_transactions
+      WHERE status = 'released' AND released_at >= $1 AND released_at <= $2
+      GROUP BY period
+    `;
+
+    // Compose main query joining series with aggregates
+    const mainQuery = `
+      WITH series AS (
+        ${seriesQuery}
+      ), o AS (
+        ${ordersAgg}
+      ), r AS (
+        ${refundsAgg}
+      ), p AS (
+        ${payoutsAgg}
+      )
+      SELECT s.label::text,
+             COALESCE(o.gross,0) AS gross_sales,
+             COALESCE(r.refunds,0) AS refunds,
+             COALESCE(p.payouts,0) AS seller_payouts
+      FROM series s
+      LEFT JOIN o ON (date_trunc('${trunc}', s.period_date::timestamp) = o.period)
+      LEFT JOIN r ON (date_trunc('${trunc}', s.period_date::timestamp) = r.period)
+      LEFT JOIN p ON (date_trunc('${trunc}', s.period_date::timestamp) = p.period)
+      ORDER BY s.period_date;
+    `;
+
+    const rowsRes = await db.query(mainQuery, [startDate, endDate]);
+    const rows = rowsRes.rows || [];
+
+    const labels = rows.map(r => r.label);
+    const gross = rows.map(r => parseFloat(r.gross_sales || 0));
+    const refunds = rows.map(r => parseFloat(r.refunds || 0));
+    const sellerPayouts = rows.map(r => parseFloat(r.seller_payouts || 0));
+    const platformRevenue = gross.map(g => Math.max(0, g - stripFee(g)));
+
+    return sendSuccess(res, 200, 'Marketplace performance chart data fetched', {
+      period,
+      labels,
+      datasets: {
+        grossSales: gross,
+        platformRevenue,
+        refunds,
+        sellerPayouts
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching marketplace performance chart data:', err);
+    return sendError(res, 500, 'Error fetching marketplace performance chart data', err.message);
+  }
+});
+
 // GET /api/admin/refunds/pending
 // Development-only route for admin refund testing page
 router.get('/refunds/pending', protect, isAdmin, async (req, res) => {
