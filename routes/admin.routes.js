@@ -311,6 +311,114 @@ router.get('/dashboard-stats', protect, isAdmin, async (req, res) => {
   }
 });
 
+// GET /api/admin/marketplace-performance?period=today|7d|30d|6m|1y
+router.get('/marketplace-performance', protect, isAdmin, async (req, res) => {
+  try {
+    const period = String(req.query.period || 'today').toLowerCase();
+    
+    // Calculate date range based on period
+    const now = new Date();
+    let startDate = new Date(now);
+    let endDate = new Date(now);
+    endDate.setHours(23, 59, 59, 999);
+    startDate.setHours(0, 0, 0, 0);
+    
+    switch (period) {
+      case '7d':
+      case '7days':
+        startDate.setDate(now.getDate() - 6);
+        break;
+      case '30d':
+      case '30days':
+        startDate.setDate(now.getDate() - 29);
+        break;
+      case '6m':
+      case '6months':
+        startDate.setMonth(now.getMonth() - 6);
+        break;
+      case '1y':
+      case '1year':
+        startDate.setFullYear(now.getFullYear() - 1);
+        break;
+      case 'today':
+      default:
+        // startDate is already today
+        break;
+    }
+    
+    // Also calculate previous period for comparison
+    let prevStartDate = new Date(startDate);
+    let prevEndDate = new Date(startDate);
+    prevEndDate.setDate(prevEndDate.getDate() - 1);
+    prevEndDate.setHours(23, 59, 59, 999);
+    const periodDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+    prevStartDate.setDate(prevStartDate.getDate() - periodDays);
+    
+    console.log(`[admin] marketplace-performance for period: ${period}, dates: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+    
+    // Current period metrics - separate queries for clarity
+    const salesRes = await db.query(
+      `SELECT COALESCE(SUM(total_amount), 0) AS gross_sales FROM orders WHERE payment_status = 'paid' AND created_at >= $1 AND created_at <= $2`,
+      [startDate, endDate]
+    );
+    
+    const refundsRes = await db.query(
+      `SELECT COALESCE(SUM(COALESCE(refund_amount, 0) + COALESCE(shipping_amount, 0)), 0) AS total_refunds FROM refund_transactions WHERE payment_status = 'paid' AND created_at >= $1 AND created_at <= $2`,
+      [startDate, endDate]
+    );
+    
+    // Get seller payouts (total amount released from escrow in this period)
+    const payoutsRes = await db.query(
+      `SELECT COALESCE(SUM(amount), 0) AS seller_payouts FROM escrow_transactions WHERE status = 'released' AND released_at >= $1 AND released_at <= $2`,
+      [startDate, endDate]
+    );
+    
+    const grossSales = parseFloat(salesRes.rows[0]?.gross_sales || 0);
+    const totalRefunds = parseFloat(refundsRes.rows[0]?.total_refunds || 0);
+    const sellerPayouts = parseFloat(payoutsRes.rows[0]?.seller_payouts || 0);
+    
+    // Platform revenue is 10% of gross sales (standard marketplace commission)
+    const platformRevenue = stripFee(grossSales);
+    
+    // Previous period metrics for comparison
+    const prevSalesRes = await db.query(
+      `SELECT COALESCE(SUM(total_amount), 0) AS gross_sales FROM orders WHERE payment_status = 'paid' AND created_at >= $1 AND created_at <= $2`,
+      [prevStartDate, prevEndDate]
+    );
+    
+    const prevGrossSales = parseFloat(prevSalesRes.rows[0]?.gross_sales || 0);
+    
+    // Calculate comparison percentage
+    let grossSalesComparison = 0;
+    if (prevGrossSales > 0) {
+      grossSalesComparison = ((grossSales - prevGrossSales) / prevGrossSales) * 100;
+    }
+    
+    return sendSuccess(res, 200, 'Marketplace performance fetched', {
+      period,
+      dateRange: {
+        start: startDate.toISOString().split('T')[0],
+        end: endDate.toISOString().split('T')[0]
+      },
+      metrics: {
+        grossSales,
+        platformRevenue,
+        refunds: totalRefunds,
+        sellerPayouts
+      },
+      comparison: {
+        grossSalesPercentage: parseFloat(grossSalesComparison.toFixed(2)),
+        platformRevenuePercentage: grossSales > 0 ? parseFloat((platformRevenue / grossSales * 100).toFixed(2)) : 0,
+        refundRate: grossSales > 0 ? parseFloat((totalRefunds / grossSales * 100).toFixed(2)) : 0,
+        sellerPayoutPercentage: grossSales > 0 ? parseFloat((sellerPayouts / grossSales * 100).toFixed(2)) : 0
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching marketplace performance:', err);
+    return sendError(res, 500, 'Error fetching marketplace performance', err.message);
+  }
+});
+
 // GET /api/admin/refunds/pending
 // Development-only route for admin refund testing page
 router.get('/refunds/pending', protect, isAdmin, async (req, res) => {
