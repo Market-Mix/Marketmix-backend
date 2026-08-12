@@ -542,6 +542,84 @@ router.get('/marketplace-performance', protect, isAdmin, async (req, res) => {
   }
 });
 
+// GET /api/admin/refund-debt-summary
+router.get('/refund-debt-summary', protect, isAdmin, async (req, res) => {
+  try {
+    // Refunds summary (using local refund_cases table)
+    const openCasesRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') NOT IN ('resolved','refund_rejected')`);
+
+    const awaitingSellerRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') = 'waiting_seller_return_decision'`);
+    const awaitingBuyerRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') = 'waiting_buyer_confirmation'`);
+    const awaitingDecisionRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') IN ('awaiting_admin','escalated')`);
+    const refundProcessingRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') IN ('refund_processing','awaiting_refund_release')`);
+
+    // Completed today: prefer explicit timestamps (refund_paid_at, buyer_confirmed_at, marketmix_decided_at, seller_resolved_at)
+    const completedTodayRes = await db.query(
+      `SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'') = 'resolved' AND (
+         (refund_paid_at IS NOT NULL AND (refund_paid_at::date = CURRENT_DATE)) OR
+         (buyer_confirmed_at IS NOT NULL AND (buyer_confirmed_at::date = CURRENT_DATE)) OR
+         (marketmix_decided_at IS NOT NULL AND (marketmix_decided_at::date = CURRENT_DATE)) OR
+         (seller_resolved_at IS NOT NULL AND (seller_resolved_at::date = CURRENT_DATE))
+      )`
+    );
+
+    // Seller debt summary
+    // seller_debts schema uses `amount`; recoveries use `amount_recovered`.
+    // Calculate outstanding as sum(amount - sum(recovered for debt_id)).
+    const outstandingRes = await db.query(
+      `SELECT COALESCE(SUM(sd.amount - COALESCE(r.recovered,0)),0) AS total
+       FROM seller_debts sd
+       LEFT JOIN (
+         SELECT debt_id, SUM(amount_recovered) AS recovered FROM seller_debt_recoveries GROUP BY debt_id
+       ) r ON r.debt_id = sd.id
+       WHERE sd.status IN ('active','partial')`
+    );
+
+    const sellersWithDebtRes = await db.query(
+      `SELECT COUNT(DISTINCT sd.seller_id) AS total
+       FROM seller_debts sd
+       LEFT JOIN (
+         SELECT debt_id, SUM(amount_recovered) AS recovered FROM seller_debt_recoveries GROUP BY debt_id
+       ) r ON r.debt_id = sd.id
+       WHERE sd.status IN ('active','partial') AND (sd.amount - COALESCE(r.recovered,0)) > 0`
+    );
+
+    const recoveredThisMonthRes = await db.query(
+      `SELECT COALESCE(SUM(amount_recovered),0) AS total FROM seller_debt_recoveries WHERE created_at >= date_trunc('month', now()) AND created_at < (date_trunc('month', now()) + INTERVAL '1 month')`
+    );
+
+    // Unrecovered debt == outstanding
+    const unrecoveredRes = await db.query(
+      `SELECT COALESCE(SUM(sd.amount - COALESCE(r.recovered,0)),0) AS total
+       FROM seller_debts sd
+       LEFT JOIN (
+         SELECT debt_id, SUM(amount_recovered) AS recovered FROM seller_debt_recoveries GROUP BY debt_id
+       ) r ON r.debt_id = sd.id
+       WHERE sd.status IN ('active','partial')`
+    );
+
+    return sendSuccess(res, 200, 'Refund & debt summary fetched', {
+      refunds: {
+        openCases: parseInt(openCasesRes.rows[0]?.total || 0, 10),
+        awaitingSellerResponse: parseInt(awaitingSellerRes.rows[0]?.total || 0, 10),
+        awaitingBuyerResponse: parseInt(awaitingBuyerRes.rows[0]?.total || 0, 10),
+        awaitingDecision: parseInt(awaitingDecisionRes.rows[0]?.total || 0, 10),
+        refundProcessing: parseInt(refundProcessingRes.rows[0]?.total || 0, 10),
+        completedToday: parseInt(completedTodayRes.rows[0]?.total || 0, 10)
+      },
+      debt: {
+        outstandingDebt: parseFloat(outstandingRes.rows[0]?.total || 0),
+        sellersWithDebt: parseInt(sellersWithDebtRes.rows[0]?.total || 0, 10),
+        recoveredThisMonth: parseFloat(recoveredThisMonthRes.rows[0]?.total || 0),
+        unrecoveredDebt: parseFloat(unrecoveredRes.rows[0]?.total || 0)
+      }
+    });
+  } catch (err) {
+    console.error('[admin] refund-debt-summary error:', err);
+    return sendError(res, 500, 'Error fetching refund & debt summary', err.message);
+  }
+});
+
 // GET /api/admin/marketplace-performance/chart?period=today|7d|30d|6m|1y
 router.get('/marketplace-performance/chart', protect, isAdmin, async (req, res) => {
   try {
