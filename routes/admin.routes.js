@@ -53,6 +53,51 @@ async function enrichRefundCases(refundCases) {
     buyerRes.rows.forEach((row) => {
       buyerNameMap.set(row.id, `${row.first_name || ''} ${row.last_name || ''}`.trim() || null);
     });
+  // GET /api/admin/refund-summary
+  router.get('/refund-summary', protect, isAdmin, async (req, res) => {
+    try {
+      // Open cases: any case not in final terminal states
+      const openRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') NOT IN ('resolved','refund_rejected')`);
+
+      // Awaiting seller response
+      const awaitingSellerRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') = 'waiting_seller_return_decision'`);
+
+      // Awaiting buyer response (buyer confirmation or buyer must return)
+      const awaitingBuyerRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') IN ('waiting_buyer_confirmation','return_required')`);
+
+      // Awaiting decision: escalated / awaiting_admin or escalated_to_marketmix w/o decision
+      const awaitingDecisionRes = await db.query(
+        `SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'') IN ('awaiting_admin','escalated') OR (escalated_to_marketmix = true AND (marketmix_decision IS NULL OR marketmix_decision = ''))`
+      );
+
+      // Refund processing: explicit statuses or processing started but not paid
+      const refundProcessingRes = await db.query(
+        `SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'') IN ('refund_processing','awaiting_refund_release') OR (refund_processing_started_at IS NOT NULL AND COALESCE(refund_payment_status,'') != 'paid' AND refund_paid_at IS NULL)`
+      );
+
+      // Completed today: resolved and one of the completion timestamps is today
+      const completedTodayRes = await db.query(
+        `SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'') = 'resolved' AND (
+           (refund_paid_at IS NOT NULL AND (refund_paid_at::date = CURRENT_DATE)) OR
+           (buyer_confirmed_at IS NOT NULL AND (buyer_confirmed_at::date = CURRENT_DATE)) OR
+           (marketmix_decided_at IS NOT NULL AND (marketmix_decided_at::date = CURRENT_DATE)) OR
+           (seller_resolved_at IS NOT NULL AND (seller_resolved_at::date = CURRENT_DATE))
+        )`
+      );
+
+      return sendSuccess(res, 200, 'Refund summary fetched', {
+        openCases: parseInt(openRes.rows[0]?.total || 0, 10),
+        awaitingSellerResponse: parseInt(awaitingSellerRes.rows[0]?.total || 0, 10),
+        awaitingBuyerResponse: parseInt(awaitingBuyerRes.rows[0]?.total || 0, 10),
+        awaitingDecision: parseInt(awaitingDecisionRes.rows[0]?.total || 0, 10),
+        refundProcessing: parseInt(refundProcessingRes.rows[0]?.total || 0, 10),
+        completedToday: parseInt(completedTodayRes.rows[0]?.total || 0, 10)
+      });
+    } catch (err) {
+      console.error('[admin] refund-summary error:', err);
+      return sendError(res, 500, 'Error fetching refund summary', err.message);
+    }
+  });
   }
 
   const sellerNameMap = new Map();
