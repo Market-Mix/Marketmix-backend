@@ -25,6 +25,11 @@ router.post('/', protect, createOrder);
 router.get('/', protect, getUserOrders);
 router.get('/purchased-products', protect, getPurchasedProducts);
 router.get('/reports', protect, getBuyerReports);
+// Vendor-specific routes (per-seller suborders)
+router.get('/vendor/:vendorOrderId', protect, require('../controllers/orders.controller').getVendorOrderById);
+router.put('/vendor/:vendorOrderId/cancel', protect, require('../controllers/orders.controller').cancelVendorOrder);
+router.post('/vendor/:vendorOrderId/confirm-delivery', protect, require('../controllers/orders.controller').confirmVendorDelivery);
+
 router.get('/:orderId', protect, getOrderById);
 router.put('/:orderId/status', protect, updateOrderStatus);
 router.put('/:orderId/cancel', protect, cancelOrder);

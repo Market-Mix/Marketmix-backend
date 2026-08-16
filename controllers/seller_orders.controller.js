@@ -39,7 +39,7 @@ const getSellerOrders = async (req, res) => {
 
     const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
     if (status && status !== 'all' && validStatuses.includes(status.toLowerCase())) {
-      conditions.push(`o.status = $${idx++}`);
+      conditions.push(`vo.status = $${idx++}`);
       params.push(status.toLowerCase());
     }
 
@@ -54,7 +54,7 @@ const getSellerOrders = async (req, res) => {
     const ordersQuery = `
       SELECT
         o.id               AS order_id,
-        o.status,
+        COALESCE(vo.status, o.status) AS status,
         o.created_at,
         o.shipping_address,
         o.delivery_method,
@@ -77,6 +77,7 @@ const getSellerOrders = async (req, res) => {
         (oi.quantity * oi.price_at_purchase) AS line_total
       FROM order_items oi
       JOIN orders o       ON o.id        = oi.order_id
+      LEFT JOIN vendor_orders vo ON vo.order_id = oi.order_id AND vo.seller_id = oi.seller_id
       JOIN users u        ON u.id        = o.buyer_id
       JOIN products p     ON p.id        = oi.product_id
       WHERE ${whereClause}
@@ -89,6 +90,7 @@ const getSellerOrders = async (req, res) => {
       SELECT COUNT(DISTINCT o.id) AS total
       FROM order_items oi
       JOIN orders o ON o.id = oi.order_id
+      LEFT JOIN vendor_orders vo ON vo.order_id = oi.order_id AND vo.seller_id = oi.seller_id
       JOIN users u  ON u.id = o.buyer_id
       JOIN products p ON p.id = oi.product_id
       WHERE ${whereClause}
@@ -156,7 +158,7 @@ const getSellerOrderById = async (req, res) => {
     const result = await db.query(
       `SELECT
         o.id               AS order_id,
-        o.status,
+        COALESCE(vo.status, o.status) AS status,
         o.created_at,
         o.shipping_address,
         o.payment_method,
@@ -181,6 +183,7 @@ const getSellerOrderById = async (req, res) => {
         p.main_image_url   AS product_image
        FROM order_items oi
        JOIN orders o    ON o.id = oi.order_id
+       LEFT JOIN vendor_orders vo ON vo.order_id = oi.order_id AND vo.seller_id = oi.seller_id
        JOIN users u     ON u.id = o.buyer_id
        JOIN products p  ON p.id = oi.product_id
        WHERE o.id = $1 AND oi.seller_id = $2
@@ -289,13 +292,13 @@ const updateSellerOrderStatus = async (req, res) => {
       return sendError(res, 404, 'Vendor order not found for this seller');
     }
 
-    // Keep the parent orders.status in sync (single-seller orders map 1:1;
-    // multi-seller orders will show the most recent vendor's status)
+    // Only sync parent orders.status if vendor_orders are unanimous; otherwise keep parent as 'processing'
+    const allStatuses = await db.query(`SELECT status FROM vendor_orders WHERE order_id=$1`, [orderId]);
+    const statuses = allStatuses.rows.map(r => r.status);
+    const orderStatus = (statuses.length && statuses.every(s => s === statuses[0])) ? statuses[0] : 'processing';
     const orderUpdate = await db.query(
-      `UPDATE orders SET status=$1, updated_at=NOW()
-       WHERE id=$2
-       RETURNING id, status, buyer_id`,
-      [status.toLowerCase(), orderId]
+      `UPDATE orders SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING id, status, buyer_id`,
+      [orderStatus, orderId]
     );
 
     const shortId   = String(orderId).substring(0, 8);

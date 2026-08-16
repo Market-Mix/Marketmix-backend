@@ -141,93 +141,44 @@ const getUserOrders = async (req, res) => {
   try {
     const user_id = req.user.id;
     const { status, page = 1, limit = 10 } = req.query;
-    
-    console.log(`📋 [Orders] Fetching orders for buyer_id=${user_id}, status=${status || 'all'}, page=${page}`);
-
     const offset = (page - 1) * limit;
-    
-    // Build query - join products and seller info to get product names and seller store names
-    let sql = `WITH order_sellers AS (
-  SELECT DISTINCT order_id, seller_id FROM order_items WHERE seller_id IS NOT NULL
-)
-SELECT
-  o.id, o.total_amount, o.status, o.created_at, o.delivery_confirmed_at,
-  o.payment_status, o.payment_method, o.delivery_method,
-  COALESCE(json_agg(
-    json_build_object(
-      'sellerId',     os.seller_id,
-      'sellerName',   COALESCE(sp.business_name, su.first_name || ' ' || su.last_name),
-      'vendorOrderId', vo.id,
-      'status',       COALESCE(vo.status, o.status),
-      'courierName',  COALESCE(vo.courier_name, o.courier_name),
-      'trackingCode', COALESCE(vo.tracking_code, o.tracking_id),
-      'trackingLink', COALESCE(vo.tracking_link, o.tracking_link),
-      'shippingFee',  vo.shipping_fee,
-      'items',        seller_items.items
-    ) ORDER BY os.seller_id
-  ) FILTER (WHERE os.seller_id IS NOT NULL), '[]') AS seller_groups
-FROM orders o
-JOIN order_sellers os ON os.order_id = o.id
-LEFT JOIN vendor_orders vo ON vo.order_id = o.id AND vo.seller_id = os.seller_id
-LEFT JOIN users su ON su.id = os.seller_id
-LEFT JOIN seller_profiles sp ON sp.user_id = os.seller_id
-LEFT JOIN LATERAL (
-  SELECT json_agg(
-    json_build_object(
-      'id', oi.id, 'productId', oi.product_id, 'productName', p.name,
-      'image', p.main_image_url, 'quantity', oi.quantity,
-      'price', oi.price_at_purchase, 'color', oi.color, 'size', oi.size
-    ) ORDER BY oi.created_at
-  ) AS items
-  FROM order_items oi
-  JOIN products p ON p.id = oi.product_id
-  WHERE oi.order_id = o.id AND oi.seller_id = os.seller_id
-) seller_items ON true
-WHERE o.buyer_id = $1`;
 
-const params = [user_id];
+    let sql = `
+      SELECT vo.id AS vendor_order_id, vo.order_id, vo.seller_id, vo.suborder_number,
+             vo.status, vo.shipping_fee, vo.subtotal, vo.delivery_method,
+             vo.courier_name, vo.tracking_code, vo.tracking_link, vo.created_at,
+             o.delivery_confirmed_at,
+             COALESCE(sp.business_name, su.first_name||' '||su.last_name) AS seller_name,
+             COALESCE(json_agg(json_build_object(
+               'id', oi.id, 'productId', oi.product_id, 'productName', p.name,
+               'image', p.main_image_url, 'quantity', oi.quantity,
+               'price', oi.price_at_purchase, 'color', oi.color, 'size', oi.size
+             ) ORDER BY oi.created_at) FILTER (WHERE oi.id IS NOT NULL), '[]') AS items
+      FROM vendor_orders vo
+      JOIN orders o ON o.id = vo.order_id
+      LEFT JOIN users su ON su.id = vo.seller_id
+      LEFT JOIN seller_profiles sp ON sp.user_id = vo.seller_id
+      LEFT JOIN order_items oi ON oi.vendor_order_id = vo.id
+      LEFT JOIN products p ON p.id = oi.product_id
+      WHERE o.buyer_id = $1`;
+    const params = [user_id];
+    if (status) { sql += ` AND vo.status = $2`; params.push(status); }
+    sql += ` GROUP BY vo.id, o.delivery_confirmed_at, sp.business_name, su.first_name, su.last_name
+             ORDER BY vo.created_at DESC LIMIT $${params.length+1} OFFSET $${params.length+2}`;
+    params.push(limit, offset);
 
-if (status) {
-  sql += ` AND o.status = $2`;
-  params.push(status);
-}
-
-sql += ` GROUP BY o.id
-         ORDER BY o.created_at DESC
-         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-
-params.push(limit, offset);
-
-
-    console.log(`🔍 [Orders] Executing query with params:`, params);
-    
-    // Execute main query
     const result = await db.query(sql, params);
 
-    // Build count query
-    let countSql = `SELECT COUNT(*) as total FROM orders o WHERE o.buyer_id = $1`;
-    const countParams = [user_id];
-    
-    if (status) {
-      countSql += ` AND o.status = $2`;
-      countParams.push(status);
-    }
-    
-    const countResult = await db.query(countSql, countParams);
-
-    console.log(`✅ [Orders] Found ${result.rows.length} orders`);
+    let countSql = `SELECT COUNT(*) FROM vendor_orders vo JOIN orders o ON o.id=vo.order_id WHERE o.buyer_id=$1`;
+    const cp = [user_id];
+    if (status) { countSql += ` AND vo.status=$2`; cp.push(status); }
+    const countResult = await db.query(countSql, cp);
 
     return sendSuccess(res, 200, 'Orders fetched successfully', {
       orders: result.rows,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(countResult.rows[0].total / limit),
-        totalItems: parseInt(countResult.rows[0].total)
-      }
+      pagination: { currentPage: +page, totalPages: Math.ceil(countResult.rows[0].count/limit), totalItems: +countResult.rows[0].count }
     });
-
   } catch (error) {
-    console.error('❌ Get user orders error:', error);
     return sendError(res, 500, 'Error fetching orders', error);
   }
 };
@@ -876,6 +827,143 @@ async function retryOrderPayment(req, res) {
   }
 }
 
+// --- Vendor-specific endpoints ---
+const getVendorOrderById = async (req, res) => {
+  try {
+    const { vendorOrderId } = req.params;
+    const result = await db.query(
+      `SELECT vo.id AS vendor_order_id, vo.order_id, vo.seller_id, vo.status,
+              vo.suborder_number, vo.shipping_fee, vo.subtotal, vo.delivery_method,
+              vo.courier_name, vo.tracking_code, vo.tracking_link, vo.created_at,
+              o.shipping_address, o.payment_method, o.delivery_confirmed_at,
+              COALESCE(sp.business_name, su.first_name||' '||su.last_name) AS seller_name,
+              COALESCE(json_agg(json_build_object(
+                'id', oi.id, 'productId', oi.product_id, 'productName', p.name,
+                'image', p.main_image_url, 'quantity', oi.quantity,
+                'price', oi.price_at_purchase, 'color', oi.color, 'size', oi.size
+              ) ORDER BY oi.created_at) FILTER (WHERE oi.id IS NOT NULL), '[]') AS items
+       FROM vendor_orders vo
+       JOIN orders o ON o.id = vo.order_id
+       LEFT JOIN users su ON su.id = vo.seller_id
+       LEFT JOIN seller_profiles sp ON sp.user_id = vo.seller_id
+       LEFT JOIN order_items oi ON oi.vendor_order_id = vo.id
+       LEFT JOIN products p ON p.id = oi.product_id
+       WHERE vo.id = $1 AND o.buyer_id = $2
+       GROUP BY vo.id, o.shipping_address, o.payment_method, o.delivery_confirmed_at, sp.business_name, su.first_name, su.last_name`,
+      [vendorOrderId, req.user.id]
+    );
+    if (!result.rows.length) return sendError(res, 404, 'Order not found');
+    return sendSuccess(res, 200, 'Order fetched', { order: result.rows[0] });
+  } catch (error) { return sendError(res, 500, 'Error fetching order', error); }
+};
+
+const cancelVendorOrder = async (req, res) => {
+  try {
+    const { vendorOrderId } = req.params;
+    const check = await db.query(
+      `SELECT vo.id, vo.status, vo.order_id, vo.seller_id FROM vendor_orders vo
+       JOIN orders o ON o.id=vo.order_id WHERE vo.id=$1 AND o.buyer_id=$2`,
+      [vendorOrderId, req.user.id]
+    );
+    if (!check.rows.length) return sendError(res, 404, 'Order not found');
+    if (!['pending','confirmed','processing'].includes(check.rows[0].status))
+      return sendError(res, 400, 'Order cannot be cancelled at this stage');
+
+    await db.query(`UPDATE vendor_orders SET status='cancelled', updated_at=NOW() WHERE id=$1`, [vendorOrderId]);
+
+    const items = await db.query(`SELECT product_id, quantity FROM order_items WHERE vendor_order_id=$1`, [vendorOrderId]);
+    for (const it of items.rows) {
+      await db.query(`UPDATE products SET stock_quantity=stock_quantity+$1 WHERE id=$2`, [it.quantity, it.product_id]);
+    }
+    notifySeller(check.rows[0].seller_id, 'orderCancelled', { orderId: vendorOrderId, buyerName: 'Buyer' }).catch(()=>{});
+
+    const remaining = await db.query(
+      `SELECT COUNT(*) FROM vendor_orders WHERE order_id=$1 AND status!='cancelled'`, [check.rows[0].order_id]
+    );
+    if (+remaining.rows[0].count === 0) {
+      await db.query(`UPDATE orders SET status='cancelled', updated_at=NOW() WHERE id=$1`, [check.rows[0].order_id]);
+    }
+    return sendSuccess(res, 200, 'Order cancelled successfully');
+  } catch (error) { return sendError(res, 500, 'Error cancelling order', error); }
+};
+
+const confirmVendorDelivery = async (req, res) => {
+  try {
+    const { vendorOrderId } = req.params;
+    const voRes = await db.query(
+      `SELECT vo.id, vo.order_id, vo.seller_id, vo.store_id FROM vendor_orders vo
+       JOIN orders o ON o.id=vo.order_id WHERE vo.id=$1 AND o.buyer_id=$2`,
+      [vendorOrderId, req.user.id]
+    );
+    if (!voRes.rows.length) return sendError(res, 404, 'Order not found');
+    const vo = voRes.rows[0];
+
+    await db.query(`UPDATE vendor_orders SET status='delivered', updated_at=NOW() WHERE id=$1`, [vendorOrderId]);
+    await db.query(`UPDATE orders SET delivery_confirmed_at=COALESCE(delivery_confirmed_at,NOW()), updated_at=NOW() WHERE id=$1`, [vo.order_id]);
+
+    const remaining = await db.query(`SELECT COUNT(*) FROM vendor_orders WHERE order_id=$1 AND status!='delivered'`, [vo.order_id]);
+    if (+remaining.rows[0].count === 0) {
+      await db.query(`UPDATE orders SET status='delivered', updated_at=NOW() WHERE id=$1`, [vo.order_id]);
+    }
+    notifyBuyer(req.user.id, 'orderDelivered', { orderId: vendorOrderId }).catch(()=>{});
+
+    const escrowUpdate = await db.query(
+      `UPDATE escrow_transactions SET status='released', released_at=NOW(), updated_at=NOW()
+       WHERE order_id=$1 AND seller_id=$2 AND status='held'
+       RETURNING id, seller_id, store_id, amount`,
+      [vo.order_id, vo.seller_id]
+    );
+
+    if (escrowUpdate.rows.length) {
+      for (const { id, seller_id, store_id, amount } of escrowUpdate.rows) {
+        const netAmount = stripFee(amount);
+
+        await recoverSellerDebtFromEscrowRelease(null, {
+          sellerId: seller_id,
+          releaseAmount: netAmount,
+          orderId: vo.order_id,
+          escrowId: id,
+          context: 'confirm-vendor-delivery'
+        });
+
+        await db.query(
+          `UPDATE seller_profiles SET available_balance = available_balance + $1, total_earnings = total_earnings + $1, updated_at = NOW() WHERE user_id = $2`,
+          [netAmount, seller_id]
+        );
+
+        try {
+          await db.query(
+            `INSERT INTO notifications (user_id, title, message, type, link, is_read, is_deleted, created_at, updated_at)
+             VALUES ($1,'Funds Released',$2,'payment',$3,FALSE,FALSE,NOW(),NOW())`,
+            [seller_id, `₦${netAmount.toFixed(2)} has been released to your account for order #${vo.order_id.toString().slice(0,8).toUpperCase()}.`, '/sellers/sellers%20earning.html']
+          );
+        } catch (e) {
+          console.error('Notification insert failed:', e.message);
+        }
+
+        try {
+          const items = await db.query(
+            `SELECT id, product_id, quantity, price_at_purchase FROM order_items WHERE order_id=$1 AND seller_id=$2`,
+            [vo.order_id, seller_id]
+          );
+
+          for (const it of items.rows) {
+            const gross = parseFloat(it.price_at_purchase) * it.quantity;
+            await db.query(
+              `INSERT INTO earnings (seller_id, store_id, order_id, order_item_id, amount, net_amount, status, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,'available',NOW())`,
+              [seller_id, store_id, vo.order_id, it.id, gross, stripFee(gross)]
+            );
+          }
+        } catch (e) {
+          console.error('Earnings insert failed for seller', seller_id, e.message);
+        }
+      }
+    }
+
+    return sendSuccess(res, 200, 'Delivery confirmed', { vendorOrderId, message: 'You now have 24 hours to report any issues' });
+  } catch (error) { return sendError(res, 500, 'Error confirming delivery', error); }
+};
 
 module.exports = {
   createOrder,
@@ -887,5 +975,8 @@ module.exports = {
   confirmDelivery,
   submitReport,
   getBuyerReports,
-  retryOrderPayment
+  retryOrderPayment,
+  getVendorOrderById,
+  cancelVendorOrder,
+  confirmVendorDelivery
 };
