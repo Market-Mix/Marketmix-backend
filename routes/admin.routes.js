@@ -429,6 +429,39 @@ router.get('/activity', protect, isAdmin, async (req, res) => {
   }
 });
 
+// GET /api/admin/marketplace-health
+router.get('/marketplace-health', protect, isAdmin, async (req, res) => {
+  try {
+    const checks = {
+      paymentSystem: `SELECT COUNT(*) AS total FROM payment_transactions LIMIT 1`,
+      shippingAPI: `SELECT COUNT(*) AS total FROM vendor_orders LIMIT 1`,
+      refundSystem: `SELECT COUNT(*) AS total FROM refund_cases LIMIT 1`,
+      notifications: `SELECT COUNT(*) AS total FROM notifications LIMIT 1`,
+      database: `SELECT 1 AS ok`
+    };
+
+    const health = {};
+
+    for (const [key, query] of Object.entries(checks)) {
+      try {
+        const result = await db.query(query);
+        const value = result?.rows?.[0];
+        health[key] = value && (value.total !== undefined ? Number(value.total) >= 0 : value.ok !== undefined ? 'ok' : 'operational') === 'ok'
+          ? 'operational'
+          : 'operational';
+      } catch (err) {
+        console.warn('[Connection 7B] health check failed:', key, err.message || err);
+        health[key] = 'offline';
+      }
+    }
+
+    return sendSuccess(res, 200, 'Marketplace health fetched', health);
+  } catch (err) {
+    console.error('[Connection 7B] marketplace-health error:', err);
+    return sendError(res, 500, 'Error fetching marketplace health', err.message);
+  }
+});
+
 // GET /api/admin/dashboard-activity
 router.get('/dashboard-activity', protect, isAdmin, async (req, res) => {
   try {
