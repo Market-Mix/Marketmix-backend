@@ -60,13 +60,24 @@ const register = async (req, res) => {
 
     // Check if user already exists (including soft-deleted)
     const existingUser = await db.query(
-      'SELECT id, is_deleted FROM users WHERE email = $1', 
+      'SELECT id, is_deleted, role FROM users WHERE email = $1', 
       [email]
     );
 
     if (existingUser.rows.length > 0) {
-      if (existingUser.rows[0].is_deleted) {
+      const existing = existingUser.rows[0];
+      if (existing.is_deleted) {
         return sendError(res, 400, 'This account has been deleted. Please contact support.');
+      }
+      // If this is a seller who never finished store setup, tell frontend to log in and resume
+      if (existing.role === 'seller') {
+        const storeCheck = await db.query(
+          `SELECT 1 FROM stores WHERE user_id = $1 AND is_deleted = false LIMIT 1`,
+          [existing.id]
+        );
+        if (!storeCheck.rows.length) {
+          return sendError(res, 409, 'An account with this email already exists but setup was not completed. Please log in to continue.', { resumeSetup: true });
+        }
       }
       return sendError(res, 400, 'User with this email already exists');
     }
