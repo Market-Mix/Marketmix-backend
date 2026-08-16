@@ -98,6 +98,36 @@ async function enrichRefundCases(refundCases) {
       return sendError(res, 500, 'Error fetching refund summary', err.message);
     }
   });
+
+    // GET /api/admin/debt-summary
+    router.get('/debt-summary', protect, isAdmin, async (req, res) => {
+      try {
+        const debtRes = await db.query(`
+          WITH active AS (
+            SELECT seller_id, SUM(COALESCE(remaining_debt,0))::numeric AS remaining
+            FROM seller_debts
+            WHERE status IN ('active','partial')
+            GROUP BY seller_id
+          )
+          SELECT
+            COALESCE((SELECT SUM(remaining) FROM active), 0)::numeric AS outstanding_debt,
+            COALESCE((SELECT COUNT(*) FROM active WHERE remaining > 0), 0) AS sellers_with_debt,
+            COALESCE((SELECT SUM(recovered_amount) FROM seller_debt_recoveries WHERE date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)), 0)::numeric AS recovered_this_month,
+            COALESCE((SELECT SUM(remaining) FROM active WHERE remaining > 0), 0)::numeric AS unrecovered_debt
+        `);
+
+        const row = debtRes.rows[0] || {};
+        return sendSuccess(res, 200, 'Debt summary fetched', {
+          outstandingDebt: parseFloat(row.outstanding_debt) || 0,
+          sellersWithDebt: parseInt(row.sellers_with_debt, 10) || 0,
+          recoveredThisMonth: parseFloat(row.recovered_this_month) || 0,
+          unrecoveredDebt: parseFloat(row.unrecovered_debt) || 0
+        });
+      } catch (err) {
+        console.error('[admin] debt-summary error:', err);
+        return sendError(res, 500, 'Error fetching debt summary', err.message);
+      }
+    });
   }
 
   const sellerNameMap = new Map();
