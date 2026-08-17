@@ -1,5 +1,6 @@
 const { verifyToken } = require('../utils/jwt');
 const { sendError } = require('../utils/response');
+const db = require('../config/db');
 
 /**
  * Protect routes - verify JWT token
