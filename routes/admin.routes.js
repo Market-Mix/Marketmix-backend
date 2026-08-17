@@ -1318,6 +1318,14 @@ router.post('/sellers/:sellerId/kyc/approve', protect, isAdmin, async (req, res)
       return sendError(res, 404, 'Seller profile not found');
     }
 
+    await db.query(
+      `UPDATE stores
+       SET is_verified = true,
+           updated_at = NOW()
+       WHERE user_id = $1 AND is_deleted = false`,
+      [sellerId]
+    );
+
     await createDedupedNotification({
       userId: sellerId,
       title: 'KYC Approved',
@@ -1350,6 +1358,14 @@ router.post('/sellers/:sellerId/kyc/reject', protect, isAdmin, async (req, res) 
     if (!result.rows.length) {
       return sendError(res, 404, 'Seller profile not found');
     }
+
+    await db.query(
+      `UPDATE stores
+       SET is_verified = false,
+           updated_at = NOW()
+       WHERE user_id = $1 AND is_deleted = false`,
+      [sellerId]
+    );
 
     await createDedupedNotification({
       userId: sellerId,
