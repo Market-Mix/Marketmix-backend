@@ -661,8 +661,11 @@ router.post('/kyc', protect, isSeller, async (req, res) => {
       email,
       phone,
       idType,
+      idNumber,
+      country,
       idDocumentUrl,
       selfiePhotoUrl,
+      proofOfAddressUrl,
     } = req.body;
 
     // Validation
@@ -713,8 +716,11 @@ router.post('/kyc', protect, isSeller, async (req, res) => {
       kyc_email:            email.trim(),
       kyc_phone:            phone || null,
       kyc_id_type:          idType,
+      kyc_id_number:        idNumber || null,
+      kyc_country:          country || null,
       kyc_id_document_url:  idDocumentUrl,
       kyc_selfie_url:       selfiePhotoUrl,
+      kyc_proof_of_address_url: proofOfAddressUrl || null,
     };
 
     await db.query(

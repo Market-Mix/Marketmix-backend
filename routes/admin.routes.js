@@ -1204,12 +1204,16 @@ router.get('/sellers/:id', protect, isAdmin, async (req, res) => {
     ]);
 
     const kyc = row.kyc_document_urls || {};
+    const totalSales = parseFloat(salesRes.rows[0].total_sales) || 0;
+    const availableBalance = parseFloat(row.available_balance) || 0;
+    const totalWithdrawn = parseFloat(withdrawRes.rows[0].withdrawn) || 0;
 
     return sendSuccess(res, 200, 'Seller detail fetched', {
       seller: {
         id: row.id,
         email: row.email,
-        fullName: `${row.first_name} ${row.last_name}`.trim(),
+        fullName: kyc.kyc_full_name || `${row.first_name} ${row.last_name}`.trim(),
+        sellerName: `${row.first_name} ${row.last_name}`.trim(),
         phone: row.phone,
         shopName: row.business_name,
         businessDescription: row.business_description,
@@ -1223,11 +1227,29 @@ router.get('/sellers/:id', protect, isAdmin, async (req, res) => {
         joinDate: row.created_at,
         productCount: parseInt(productCount.rows[0].count) || 0,
         totalOrders: parseInt(orderStats.rows[0].total_orders) || 0,
-        totalSales: parseFloat(salesRes.rows[0].total_sales) || 0,
-        availableBalance: parseFloat(row.available_balance) || 0,
+
+        // ── Fields viewAdminSeller() reads directly ──
+        dateOfBirth: kyc.kyc_dob || null,
+        country: kyc.kyc_country || null,
+        idType: kyc.kyc_id_type || null,
+        idNumber: kyc.kyc_id_number || null,
+        residentialAddress: kyc.kyc_business_address || row.business_address || null,
+        idDocumentUrl: kyc.kyc_id_document_url || null,
+        proofOfAddressUrl: kyc.kyc_proof_of_address_url || kyc.kyc_selfie_url || null,
+
+        // ── Financial summary (matches financialSummary[] lookups) ──
+        walletBalance: availableBalance,
+        pendingSettlements: parseFloat(debtRes.rows[0].debt) || 0,
+        totalSales,
+        totalPayouts: totalWithdrawn,
+        wallet: { balance: availableBalance, pending: parseFloat(debtRes.rows[0].debt) || 0 },
+        financial: { totalSales, totalPayouts: totalWithdrawn },
+
+        availableBalance,
         totalEarnings: parseFloat(row.total_earnings) || 0,
         outstandingDebt: parseFloat(debtRes.rows[0].debt) || 0,
-        totalWithdrawn: parseFloat(withdrawRes.rows[0].withdrawn) || 0,
+        totalWithdrawn,
+
         kycFullName: kyc.kyc_full_name || null,
         kycDob: kyc.kyc_dob || null,
         kycIdType: kyc.kyc_id_type || null,
