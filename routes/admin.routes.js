@@ -78,7 +78,7 @@ async function enrichRefundCases(refundCases) {
     });
   }
 
-  return refundCases.map((refundCase) => {
+  const enriched = refundCases.map((refundCase) => {
     const enrichedCase = { ...refundCase };
 
     if (enrichedCase.buyer_id) {
@@ -95,6 +95,8 @@ async function enrichRefundCases(refundCases) {
 
     return enrichedCase;
   });
+
+  return enrichRefundCasesWithSummary(enriched);
 }
 
 async function enrichRefundCaseWithSummary(refundCase) {
@@ -117,68 +119,70 @@ async function enrichRefundCasesWithSummary(refundCases) {
   return Promise.all(refundCases.map(enrichRefundCaseWithSummary));
 }
 
-async function enrichRefundCases(refundCases) {
-  if (!Array.isArray(refundCases) || refundCases.length === 0) {
-    return [];
-  }
-
-  const buyerIds = [...new Set(refundCases.map((refundCase) => refundCase?.buyer_id).filter(Boolean))];
-  const sellerIds = [...new Set(refundCases.map((refundCase) => refundCase?.seller_id).filter(Boolean))];
-
-  const buyerNameMap = new Map();
-  if (buyerIds.length) {
-    const buyerRes = await db.query(
-      `SELECT id, first_name, last_name FROM users WHERE id = ANY($1::uuid[])`,
-      [buyerIds]
+// GET /api/admin/refund-summary
+router.get('/refund-summary', protect, isAdmin, async (req, res) => {
+  try {
+    const openRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') NOT IN ('resolved','refund_rejected')`);
+    const awaitingSellerRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') = 'waiting_seller_return_decision'`);
+    const awaitingBuyerRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') IN ('waiting_buyer_confirmation','return_required')`);
+    const awaitingDecisionRes = await db.query(
+      `SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'') IN ('awaiting_admin','escalated') OR (escalated_to_marketmix = true AND (marketmix_decision IS NULL OR marketmix_decision = ''))`
     );
-    buyerRes.rows.forEach((row) => {
-      buyerNameMap.set(row.id, `${row.first_name || ''} ${row.last_name || ''}`.trim() || null);
-    });
-  }
-
-  const sellerNameMap = new Map();
-  const storeNameMap = new Map();
-  if (sellerIds.length) {
-    const sellerRes = await db.query(
-      `SELECT id, first_name, last_name FROM users WHERE id = ANY($1::uuid[])`,
-      [sellerIds]
+    const refundProcessingRes = await db.query(
+      `SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'') IN ('refund_processing','awaiting_refund_release') OR (refund_processing_started_at IS NOT NULL AND COALESCE(refund_payment_status,'') != 'paid' AND refund_paid_at IS NULL)`
     );
-    sellerRes.rows.forEach((row) => {
-      sellerNameMap.set(row.id, `${row.first_name || ''} ${row.last_name || ''}`.trim() || null);
-    });
-
-    const storeRes = await db.query(
-      `SELECT DISTINCT ON (user_id) user_id, business_name
-       FROM stores
-       WHERE user_id = ANY($1::uuid[]) AND is_deleted = false
-       ORDER BY user_id, store_number ASC, id ASC`,
-      [sellerIds]
+    const completedTodayRes = await db.query(
+      `SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'') = 'resolved' AND (
+         (refund_paid_at IS NOT NULL AND (refund_paid_at::date = CURRENT_DATE)) OR
+         (buyer_confirmed_at IS NOT NULL AND (buyer_confirmed_at::date = CURRENT_DATE)) OR
+         (marketmix_decided_at IS NOT NULL AND (marketmix_decided_at::date = CURRENT_DATE)) OR
+         (seller_resolved_at IS NOT NULL AND (seller_resolved_at::date = CURRENT_DATE))
+      )`
     );
-    storeRes.rows.forEach((row) => {
-      storeNameMap.set(row.user_id, row.business_name || null);
+
+    return sendSuccess(res, 200, 'Refund summary fetched', {
+      openCases: parseInt(openRes.rows[0]?.total || 0, 10),
+      awaitingSellerResponse: parseInt(awaitingSellerRes.rows[0]?.total || 0, 10),
+      awaitingBuyerResponse: parseInt(awaitingBuyerRes.rows[0]?.total || 0, 10),
+      awaitingDecision: parseInt(awaitingDecisionRes.rows[0]?.total || 0, 10),
+      refundProcessing: parseInt(refundProcessingRes.rows[0]?.total || 0, 10),
+      completedToday: parseInt(completedTodayRes.rows[0]?.total || 0, 10)
     });
+  } catch (err) {
+    console.error('[admin] refund-summary error:', err);
+    return sendError(res, 500, 'Error fetching refund summary', err.message);
   }
+});
 
-  const enriched = refundCases.map((refundCase) => {
-    const enrichedCase = { ...refundCase };
+// GET /api/admin/debt-summary
+router.get('/debt-summary', protect, isAdmin, async (req, res) => {
+  try {
+    const debtRes = await db.query(`
+      WITH active AS (
+        SELECT seller_id, SUM(COALESCE(remaining_debt,0))::numeric AS remaining
+        FROM seller_debts
+        WHERE status IN ('active','partial')
+        GROUP BY seller_id
+      )
+      SELECT
+        COALESCE((SELECT SUM(remaining) FROM active), 0)::numeric AS outstanding_debt,
+        COALESCE((SELECT COUNT(*) FROM active WHERE remaining > 0), 0) AS sellers_with_debt,
+        COALESCE((SELECT SUM(recovered_amount) FROM seller_debt_recoveries WHERE date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)), 0)::numeric AS recovered_this_month,
+        COALESCE((SELECT SUM(remaining) FROM active WHERE remaining > 0), 0)::numeric AS unrecovered_debt
+    `);
 
-    if (enrichedCase.buyer_id) {
-      enrichedCase.buyer_name = buyerNameMap.get(enrichedCase.buyer_id) || null;
-    }
-
-    if (enrichedCase.seller_id) {
-      enrichedCase.seller_name = sellerNameMap.get(enrichedCase.seller_id) || null;
-      enrichedCase.store_name = storeNameMap.get(enrichedCase.seller_id) || null;
-    }
-
-    enrichedCase.return_received = enrichedCase.return_received || false;
-    enrichedCase.return_received_at = enrichedCase.return_received_at || enrichedCase.returnReceivedAt || null;
-
-    return enrichedCase;
-  });
-
-  return enrichRefundCasesWithSummary(enriched);
-}
+    const row = debtRes.rows[0] || {};
+    return sendSuccess(res, 200, 'Debt summary fetched', {
+      outstandingDebt: parseFloat(row.outstanding_debt) || 0,
+      sellersWithDebt: parseInt(row.sellers_with_debt, 10) || 0,
+      recoveredThisMonth: parseFloat(row.recovered_this_month) || 0,
+      unrecoveredDebt: parseFloat(row.unrecovered_debt) || 0
+    });
+  } catch (err) {
+    console.error('[admin] debt-summary error:', err);
+    return sendError(res, 500, 'Error fetching debt summary', err.message);
+  }
+});
 
 // POST /api/admin/escrow/:escrowId/resolve
 // body: { action: 'release' | 'refund', notes: string }
@@ -366,6 +370,98 @@ router.get('/pending-actions', protect, isAdmin, async (req, res) => {
   }
 });
 
+// GET /api/admin/activity
+router.get('/activity', protect, isAdmin, async (req, res) => {
+  try {
+    const limit = Number.parseInt(req.query.limit || '5', 10);
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 20) : 5;
+
+    const activityRes = await db.query(
+      `SELECT a.id,
+              a.actor_id,
+              a.action,
+              a.object_type,
+              a.object_id,
+              a.metadata,
+              a.created_at,
+              u.first_name,
+              u.last_name,
+              u.email
+       FROM audit_logs a
+       LEFT JOIN users u ON u.id = a.actor_id
+       ORDER BY a.created_at DESC
+       LIMIT $1`,
+      [safeLimit]
+    );
+
+    const activities = activityRes.rows.map((row) => {
+      let metadata = null;
+      try {
+        metadata = row.metadata && typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata || null;
+      } catch (err) {
+        metadata = null;
+      }
+
+      const actorName = [row.first_name, row.last_name].filter(Boolean).join(' ') || row.email || 'System';
+      const description = metadata?.description || metadata?.message || row.action || 'Admin activity';
+
+      return {
+        id: row.id,
+        actor_id: row.actor_id,
+        actor_name: actorName,
+        action: row.action,
+        object_type: row.object_type,
+        object_id: row.object_id,
+        description,
+        metadata,
+        created_at: row.created_at
+      };
+    });
+
+    return sendSuccess(res, 200, 'Recent admin activity fetched', { activities });
+  } catch (err) {
+    if (String(err.message || '').includes('audit_logs') || String(err.message || '').includes('relation')) {
+      return sendSuccess(res, 200, 'No audit log table available', { activities: [] });
+    }
+
+    console.error('[admin] GET /activity error:', err);
+    return sendError(res, 500, 'Error fetching admin activity', err.message);
+  }
+});
+
+// GET /api/admin/marketplace-health
+router.get('/marketplace-health', protect, isAdmin, async (req, res) => {
+  try {
+    const checks = {
+      paymentSystem: `SELECT COUNT(*) AS total FROM payment_transactions LIMIT 1`,
+      shippingAPI: `SELECT COUNT(*) AS total FROM vendor_orders LIMIT 1`,
+      refundSystem: `SELECT COUNT(*) AS total FROM refund_cases LIMIT 1`,
+      notifications: `SELECT COUNT(*) AS total FROM notifications LIMIT 1`,
+      database: `SELECT 1 AS ok`
+    };
+
+    const health = {};
+
+    for (const [key, query] of Object.entries(checks)) {
+      try {
+        const result = await db.query(query);
+        const value = result?.rows?.[0];
+        health[key] = value && (value.total !== undefined ? Number(value.total) >= 0 : value.ok !== undefined ? 'ok' : 'operational') === 'ok'
+          ? 'operational'
+          : 'operational';
+      } catch (err) {
+        console.warn('[Connection 7B] health check failed:', key, err.message || err);
+        health[key] = 'offline';
+      }
+    }
+
+    return sendSuccess(res, 200, 'Marketplace health fetched', health);
+  } catch (err) {
+    console.error('[Connection 7B] marketplace-health error:', err);
+    return sendError(res, 500, 'Error fetching marketplace health', err.message);
+  }
+});
+
 // GET /api/admin/dashboard-activity
 router.get('/dashboard-activity', protect, isAdmin, async (req, res) => {
   try {
@@ -539,84 +635,6 @@ router.get('/marketplace-performance', protect, isAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error fetching marketplace performance:', err);
     return sendError(res, 500, 'Error fetching marketplace performance', err.message);
-  }
-});
-
-// GET /api/admin/refund-debt-summary
-router.get('/refund-debt-summary', protect, isAdmin, async (req, res) => {
-  try {
-    // Refunds summary (using local refund_cases table)
-    const openCasesRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') NOT IN ('resolved','refund_rejected')`);
-
-    const awaitingSellerRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') = 'waiting_seller_return_decision'`);
-    const awaitingBuyerRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') = 'waiting_buyer_confirmation'`);
-    const awaitingDecisionRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') IN ('awaiting_admin','escalated')`);
-    const refundProcessingRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') IN ('refund_processing','awaiting_refund_release')`);
-
-    // Completed today: prefer explicit timestamps (refund_paid_at, buyer_confirmed_at, marketmix_decided_at, seller_resolved_at)
-    const completedTodayRes = await db.query(
-      `SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'') = 'resolved' AND (
-         (refund_paid_at IS NOT NULL AND (refund_paid_at::date = CURRENT_DATE)) OR
-         (buyer_confirmed_at IS NOT NULL AND (buyer_confirmed_at::date = CURRENT_DATE)) OR
-         (marketmix_decided_at IS NOT NULL AND (marketmix_decided_at::date = CURRENT_DATE)) OR
-         (seller_resolved_at IS NOT NULL AND (seller_resolved_at::date = CURRENT_DATE))
-      )`
-    );
-
-    // Seller debt summary
-    // seller_debts schema uses `amount`; recoveries use `amount_recovered`.
-    // Calculate outstanding as sum(amount - sum(recovered for debt_id)).
-    const outstandingRes = await db.query(
-      `SELECT COALESCE(SUM(sd.amount - COALESCE(r.recovered,0)),0) AS total
-       FROM seller_debts sd
-       LEFT JOIN (
-         SELECT debt_id, SUM(amount_recovered) AS recovered FROM seller_debt_recoveries GROUP BY debt_id
-       ) r ON r.debt_id = sd.id
-       WHERE sd.status IN ('active','partial')`
-    );
-
-    const sellersWithDebtRes = await db.query(
-      `SELECT COUNT(DISTINCT sd.seller_id) AS total
-       FROM seller_debts sd
-       LEFT JOIN (
-         SELECT debt_id, SUM(amount_recovered) AS recovered FROM seller_debt_recoveries GROUP BY debt_id
-       ) r ON r.debt_id = sd.id
-       WHERE sd.status IN ('active','partial') AND (sd.amount - COALESCE(r.recovered,0)) > 0`
-    );
-
-    const recoveredThisMonthRes = await db.query(
-      `SELECT COALESCE(SUM(amount_recovered),0) AS total FROM seller_debt_recoveries WHERE created_at >= date_trunc('month', now()) AND created_at < (date_trunc('month', now()) + INTERVAL '1 month')`
-    );
-
-    // Unrecovered debt == outstanding
-    const unrecoveredRes = await db.query(
-      `SELECT COALESCE(SUM(sd.amount - COALESCE(r.recovered,0)),0) AS total
-       FROM seller_debts sd
-       LEFT JOIN (
-         SELECT debt_id, SUM(amount_recovered) AS recovered FROM seller_debt_recoveries GROUP BY debt_id
-       ) r ON r.debt_id = sd.id
-       WHERE sd.status IN ('active','partial')`
-    );
-
-    return sendSuccess(res, 200, 'Refund & debt summary fetched', {
-      refunds: {
-        openCases: parseInt(openCasesRes.rows[0]?.total || 0, 10),
-        awaitingSellerResponse: parseInt(awaitingSellerRes.rows[0]?.total || 0, 10),
-        awaitingBuyerResponse: parseInt(awaitingBuyerRes.rows[0]?.total || 0, 10),
-        awaitingDecision: parseInt(awaitingDecisionRes.rows[0]?.total || 0, 10),
-        refundProcessing: parseInt(refundProcessingRes.rows[0]?.total || 0, 10),
-        completedToday: parseInt(completedTodayRes.rows[0]?.total || 0, 10)
-      },
-      debt: {
-        outstandingDebt: parseFloat(outstandingRes.rows[0]?.total || 0),
-        sellersWithDebt: parseInt(sellersWithDebtRes.rows[0]?.total || 0, 10),
-        recoveredThisMonth: parseFloat(recoveredThisMonthRes.rows[0]?.total || 0),
-        unrecoveredDebt: parseFloat(unrecoveredRes.rows[0]?.total || 0)
-      }
-    });
-  } catch (err) {
-    console.error('[admin] refund-debt-summary error:', err);
-    return sendError(res, 500, 'Error fetching refund & debt summary', err.message);
   }
 });
 
