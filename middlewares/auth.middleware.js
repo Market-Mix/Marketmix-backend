@@ -25,12 +25,27 @@ const protect = async (req, res, next) => {
     // Verify and decode token
     try {
       const decoded = verifyToken(token);
-      
+
+      const userRes = await db.query(
+        `SELECT id, email, role, is_suspended FROM users WHERE id = $1 AND is_deleted = FALSE`,
+        [decoded.id]
+      );
+
+      if (userRes.rows.length === 0) {
+        return sendError(res, 401, 'Not authorized, user no longer exists');
+      }
+
+      const user = userRes.rows[0];
+      if (user.role === 'seller' && user.is_suspended) {
+        return sendError(res, 403, 'Your seller account has been suspended. Contact support.');
+      }
+
       // Attach user info to request
       req.user = {
         id: decoded.id,
         email: decoded.email,
-        role: decoded.role
+        role: decoded.role,
+        is_suspended: user.is_suspended
       };
 
       next();

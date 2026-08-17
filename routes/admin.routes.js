@@ -1090,6 +1090,176 @@ router.post('/withdrawals/:id/reject', protect, isAdmin, async (req, res) => {
   return sendSuccess(res, 200, 'Withdrawal rejected and balance restored');
 });
 
+// ─── GET /api/admin/sellers — paginated seller directory ─────────────────────
+router.get('/sellers', protect, isAdmin, async (req, res) => {
+  try {
+    const { search, status, page = 1, limit = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const params = [];
+    let where = `WHERE u.role = 'seller' AND u.is_deleted = false`;
+    let idx = 1;
+
+    if (search) {
+      where += ` AND (LOWER(u.email) LIKE $${idx} OR LOWER(u.first_name || ' ' || u.last_name) LIKE $${idx} OR LOWER(COALESCE(sp.business_name,'')) LIKE $${idx})`;
+      params.push(`%${search.toLowerCase()}%`);
+      idx++;
+    }
+
+    if (status && status !== 'all') {
+      where += ` AND COALESCE(sp.kyc_status, 'not_submitted') = $${idx}`;
+      params.push(String(status).toLowerCase());
+      idx++;
+    }
+
+    const result = await db.query(
+      `SELECT u.id, u.email, u.first_name, u.last_name, u.phone, u.created_at, u.is_suspended,
+              sp.business_name, sp.kyc_status, sp.is_verified, sp.rating,
+              (SELECT COUNT(*) FROM products p WHERE p.seller_id = u.id AND p.is_deleted = false) AS product_count
+       FROM users u
+       LEFT JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
+       ${where}
+       ORDER BY u.created_at DESC
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...params, parseInt(limit), offset]
+    );
+
+    const countRes = await db.query(
+      `SELECT COUNT(*) FROM users u LEFT JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false ${where}`,
+      params
+    );
+
+    const normStatus = (isVerified, kyc) => {
+      const s = String(kyc || 'not_submitted').toLowerCase();
+      if (isVerified === true) return 'approved';
+      if (isVerified === false && ['approved', 'failed'].includes(s)) return 'rejected';
+      return s;
+    };
+
+    return sendSuccess(res, 200, 'Sellers fetched', {
+      sellers: result.rows.map(r => ({
+        id: r.id,
+        shopName: r.business_name || `${r.first_name} ${r.last_name}`.trim(),
+        sellerName: `${r.first_name} ${r.last_name}`.trim(),
+        email: r.email,
+        phone: r.phone,
+        kycStatus: normStatus(r.is_verified, r.kyc_status),
+        accountStatus: r.is_suspended ? 'Suspended' : 'Active',
+        rating: parseFloat(r.rating) || 0,
+        joinDate: r.created_at,
+        productCount: parseInt(r.product_count) || 0,
+      })),
+      total: parseInt(countRes.rows[0].count),
+      page: parseInt(page),
+      limit: parseInt(limit),
+    });
+  } catch (err) {
+    console.error('GET /admin/sellers error:', err);
+    return sendError(res, 500, 'Error fetching sellers', err.message);
+  }
+});
+
+// ─── GET /api/admin/sellers/:id — full seller detail for the drawer/view page ─
+router.get('/sellers/:id', protect, isAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const userRes = await db.query(
+      `SELECT u.id, u.email, u.first_name, u.last_name, u.phone, u.created_at, u.is_suspended,
+              sp.business_name, sp.business_description, sp.business_address, sp.business_phone,
+              sp.business_email, sp.kyc_status, sp.is_verified, sp.kyc_document_urls,
+              sp.rating, sp.total_reviews, sp.available_balance, sp.total_earnings
+       FROM users u
+       LEFT JOIN seller_profiles sp ON sp.user_id = u.id AND sp.is_deleted = false
+       WHERE u.id = $1 AND u.role = 'seller' AND u.is_deleted = false`,
+      [id]
+    );
+
+    if (!userRes.rows.length) return sendError(res, 404, 'Seller not found');
+    const row = userRes.rows[0];
+
+    const [productCount, orderStats, salesRes, debtRes, withdrawRes] = await Promise.all([
+      db.query(`SELECT COUNT(*) FROM products WHERE seller_id=$1 AND is_deleted=false`, [id]),
+      db.query(`SELECT COUNT(DISTINCT o.id) AS total_orders FROM orders o JOIN order_items oi ON oi.order_id=o.id WHERE oi.seller_id=$1`, [id]),
+      db.query(`SELECT COALESCE(SUM(oi.quantity*oi.price_at_purchase),0) AS total_sales FROM order_items oi WHERE oi.seller_id=$1`, [id]),
+      db.query(`SELECT COALESCE(SUM(remaining_debt),0) AS debt FROM seller_debts WHERE seller_id=$1 AND status IN ('active','partial')`, [id]),
+      db.query(`SELECT COALESCE(SUM(amount),0) AS withdrawn FROM withdrawals WHERE seller_id=$1 AND status='success'`, [id]),
+    ]);
+
+    const kyc = row.kyc_document_urls || {};
+
+    return sendSuccess(res, 200, 'Seller detail fetched', {
+      seller: {
+        id: row.id,
+        email: row.email,
+        fullName: `${row.first_name} ${row.last_name}`.trim(),
+        phone: row.phone,
+        shopName: row.business_name,
+        businessDescription: row.business_description,
+        businessAddress: row.business_address,
+        businessPhone: row.business_phone,
+        businessEmail: row.business_email,
+        kycStatus: row.is_verified ? 'approved' : (row.kyc_status || 'not_submitted'),
+        isSuspended: !!row.is_suspended,
+        rating: parseFloat(row.rating) || 0,
+        totalReviews: row.total_reviews || 0,
+        joinDate: row.created_at,
+        productCount: parseInt(productCount.rows[0].count) || 0,
+        totalOrders: parseInt(orderStats.rows[0].total_orders) || 0,
+        totalSales: parseFloat(salesRes.rows[0].total_sales) || 0,
+        availableBalance: parseFloat(row.available_balance) || 0,
+        totalEarnings: parseFloat(row.total_earnings) || 0,
+        outstandingDebt: parseFloat(debtRes.rows[0].debt) || 0,
+        totalWithdrawn: parseFloat(withdrawRes.rows[0].withdrawn) || 0,
+        kycFullName: kyc.kyc_full_name || null,
+        kycDob: kyc.kyc_dob || null,
+        kycIdType: kyc.kyc_id_type || null,
+        kycIdDocumentUrl: kyc.kyc_id_document_url || null,
+        kycSelfieUrl: kyc.kyc_selfie_url || null,
+        kycSubmittedAt: kyc.kyc_submitted_at || null,
+      }
+    });
+  } catch (err) {
+    console.error('GET /admin/sellers/:id error:', err);
+    return sendError(res, 500, 'Error fetching seller', err.message);
+  }
+});
+
+// ─── POST /api/admin/sellers/:id/suspend & /activate ──────────────────────────
+router.post('/sellers/:id/suspend', protect, isAdmin, async (req, res) => {
+  try {
+    const result = await db.query(
+      `UPDATE users SET is_suspended = true, updated_at = NOW() WHERE id = $1 AND role='seller' RETURNING id`,
+      [req.params.id]
+    );
+    if (!result.rows.length) return sendError(res, 404, 'Seller not found');
+
+    await createDedupedNotification({
+      userId: req.params.id,
+      title: 'Account Suspended',
+      message: 'Your seller account has been suspended by MarketMix admin. Contact support for details.',
+      type: 'account',
+      link: '/sellers/sellers%20notification%20page.html'
+    });
+
+    return sendSuccess(res, 200, 'Seller suspended');
+  } catch (err) {
+    return sendError(res, 500, 'Error suspending seller', err.message);
+  }
+});
+
+router.post('/sellers/:id/activate', protect, isAdmin, async (req, res) => {
+  try {
+    const result = await db.query(
+      `UPDATE users SET is_suspended = false, updated_at = NOW() WHERE id = $1 AND role='seller' RETURNING id`,
+      [req.params.id]
+    );
+    if (!result.rows.length) return sendError(res, 404, 'Seller not found');
+    return sendSuccess(res, 200, 'Seller reactivated');
+  } catch (err) {
+    return sendError(res, 500, 'Error reactivating seller', err.message);
+  }
+});
+
 // POST /api/admin/sellers/:sellerId/kyc/approve
 router.post('/sellers/:sellerId/kyc/approve', protect, isAdmin, async (req, res) => {
   try {
