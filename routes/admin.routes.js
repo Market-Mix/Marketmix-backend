@@ -1108,6 +1108,33 @@ router.post('/withdrawals/:id/reject', protect, isAdmin, async (req, res) => {
   return sendSuccess(res, 200, 'Withdrawal rejected and balance restored');
 });
 
+// GET /api/admin/sellers/:sellerId/kyc/status
+router.get('/sellers/:sellerId/kyc/status', protect, isAdmin, async (req, res) => {
+  try {
+    const sellerId = req.params.sellerId;
+    const result = await db.query(
+      `SELECT user_id, is_verified, kyc_status
+       FROM seller_profiles
+       WHERE user_id = $1 AND is_deleted = false
+       LIMIT 1`,
+      [sellerId]
+    );
+
+    if (!result.rows.length) {
+      return sendError(res, 404, 'Seller profile not found');
+    }
+
+    const row = result.rows[0];
+    return sendSuccess(res, 200, 'Seller KYC status fetched', {
+      sellerId: row.user_id,
+      isVerified: row.is_verified,
+      kycStatus: row.kyc_status
+    });
+  } catch (err) {
+    return sendError(res, 500, err.message);
+  }
+});
+
 // POST /api/admin/sellers/:sellerId/kyc/approve
 router.post('/sellers/:sellerId/kyc/approve', protect, isAdmin, async (req, res) => {
   try {
