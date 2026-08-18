@@ -1267,36 +1267,96 @@ router.get('/sellers/:id', protect, isAdmin, async (req, res) => {
 // ─── POST /api/admin/sellers/:id/suspend & /activate ──────────────────────────
 router.post('/sellers/:id/suspend', protect, isAdmin, async (req, res) => {
   try {
+    const { duration, reason } = req.body;
+    const durationDays = { '1week': 7, '2weeks': 14, '1month': 30 };
+    const suspendedUntil = duration === 'indefinite'
+      ? null
+      : new Date(Date.now() + (durationDays[duration] || 7) * 86400000);
     const result = await db.query(
-      `UPDATE users SET is_suspended = true, updated_at = NOW() WHERE id = $1 AND role='seller' RETURNING id`,
-      [req.params.id]
+      `UPDATE users
+       SET is_suspended = true, suspended_until = $1, suspension_reason = $2,
+           suspended_by = $3, suspended_at = NOW(), updated_at = NOW()
+       WHERE id = $4 AND role = 'seller' RETURNING id`,
+      [suspendedUntil, reason || 'Policy violation', req.user.id, req.params.id]
     );
     if (!result.rows.length) return sendError(res, 404, 'Seller not found');
 
     await createDedupedNotification({
       userId: req.params.id,
       title: 'Account Suspended',
-      message: 'Your seller account has been suspended by MarketMix admin. Contact support for details.',
+      message: `Your account was suspended by MarketMix admin. Reason: ${reason || 'Policy violation'}. ${suspendedUntil ? `Until ${suspendedUntil.toLocaleDateString()}` : 'Indefinite - contact support.'}`,
       type: 'account',
       link: '/sellers/sellers%20notification%20page.html'
     });
 
-    return sendSuccess(res, 200, 'Seller suspended');
+    return sendSuccess(res, 200, 'Seller suspended', { suspendedUntil });
   } catch (err) {
     return sendError(res, 500, 'Error suspending seller', err.message);
+  }
+});
+
+router.post('/sellers/:id/unsuspend', protect, isAdmin, async (req, res) => {
+  try {
+    const result = await db.query(
+      `UPDATE users
+       SET is_suspended = false, suspended_until = NULL, suspension_reason = NULL,
+           suspended_by = NULL, suspended_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND role = 'seller' RETURNING id`,
+      [req.params.id]
+    );
+    if (!result.rows.length) return sendError(res, 404, 'Seller not found');
+
+    await db.query(
+      `UPDATE auto_moderation_actions
+       SET admin_reviewed = true, reviewed_by = $1, reviewed_at = NOW()
+       WHERE seller_id = $2 AND admin_reviewed = false`,
+      [req.user.id, req.params.id]
+    );
+    return sendSuccess(res, 200, 'Seller reinstated');
+  } catch (err) {
+    return sendError(res, 500, 'Error reinstating seller', err.message);
   }
 });
 
 router.post('/sellers/:id/activate', protect, isAdmin, async (req, res) => {
   try {
     const result = await db.query(
-      `UPDATE users SET is_suspended = false, updated_at = NOW() WHERE id = $1 AND role='seller' RETURNING id`,
+      `UPDATE users SET is_suspended = false, suspended_until = NULL, suspension_reason = NULL, updated_at = NOW() WHERE id = $1 AND role='seller' RETURNING id`,
       [req.params.id]
     );
     if (!result.rows.length) return sendError(res, 404, 'Seller not found');
     return sendSuccess(res, 200, 'Seller reactivated');
   } catch (err) {
     return sendError(res, 500, 'Error reactivating seller', err.message);
+  }
+});
+
+router.get('/reports', protect, isAdmin, async (req, res) => {
+  try {
+    const [products, stores, pendingReview] = await Promise.all([
+      db.query(
+        `SELECT pr.*, p.name AS product_name
+         FROM product_reports pr JOIN products p ON p.id = pr.product_id
+         ORDER BY pr.created_at DESC LIMIT 100`
+      ),
+      db.query(
+        `SELECT sr.*, s.business_name
+         FROM store_reports sr JOIN stores s ON s.id = sr.store_id
+         ORDER BY sr.created_at DESC LIMIT 100`
+      ),
+      db.query(
+        `SELECT ama.*, u.email, u.first_name, u.last_name
+         FROM auto_moderation_actions ama JOIN users u ON u.id = ama.seller_id
+         WHERE ama.admin_reviewed = false ORDER BY ama.created_at DESC`
+      )
+    ]);
+    return sendSuccess(res, 200, 'Reports fetched', {
+      productReports: products.rows,
+      storeReports: stores.rows,
+      pendingAutoActions: pendingReview.rows
+    });
+  } catch (err) {
+    return sendError(res, 500, 'Error fetching reports', err.message);
   }
 });
 

@@ -1,5 +1,6 @@
 
 const { sendError } = require('../utils/response');
+const db = require('../config/db');
 
 /**
  * Restrict access to specific roles
@@ -65,10 +66,44 @@ const isSellerOrAdmin = (req, res, next) => {
   next();
 };
 
+const checkSellerActive = async (req, res, next) => {
+  if (!req.user || req.user.role !== 'seller') return next();
+
+  try {
+    const result = await db.query(
+      `SELECT is_suspended, suspended_until, suspension_reason FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const user = result.rows[0];
+    const isActivelySuspended = user?.is_suspended &&
+      (!user.suspended_until || new Date(user.suspended_until) > new Date());
+
+    if (isActivelySuspended) {
+      return sendError(
+        res,
+        403,
+        `Account suspended: ${user.suspension_reason || 'Policy violation'}. ${user.suspended_until ? `Until ${new Date(user.suspended_until).toLocaleDateString()}` : 'Indefinite.'}`
+      );
+    }
+
+    if (user?.is_suspended && user.suspended_until && new Date(user.suspended_until) <= new Date()) {
+      await db.query(
+        `UPDATE users SET is_suspended = false, suspended_until = NULL, suspension_reason = NULL WHERE id = $1`,
+        [req.user.id]
+      );
+    }
+
+    next();
+  } catch (error) {
+    return sendError(res, 500, 'Unable to verify seller account status', error.message);
+  }
+};
+
 module.exports = {
   restrictTo,
   isBuyer,
   isSeller,
   isAdmin,
-  isSellerOrAdmin
+  isSellerOrAdmin,
+  checkSellerActive
 };

@@ -67,6 +67,11 @@ const getProductsByCategory = async (req, res) => {
     const countQuery = `
       SELECT COUNT(*) FROM products 
       WHERE category_id = $1 AND is_active = true AND is_deleted = false
+        AND NOT EXISTS (
+          SELECT 1 FROM users u
+          WHERE u.id = products.seller_id AND u.is_suspended = true
+            AND (u.suspended_until IS NULL OR u.suspended_until > NOW())
+        )
     `;
     
     const countResult = await db.query(countQuery, [id]);
@@ -76,6 +81,11 @@ const getProductsByCategory = async (req, res) => {
     const productsQuery = `
       SELECT * FROM products 
       WHERE category_id = $1 AND is_active = true AND is_deleted = false
+        AND NOT EXISTS (
+          SELECT 1 FROM users u
+          WHERE u.id = products.seller_id AND u.is_suspended = true
+            AND (u.suspended_until IS NULL OR u.suspended_until > NOW())
+        )
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
     `;

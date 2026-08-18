@@ -2,12 +2,12 @@ const express = require('express');
 const router = express.Router();
 const { getWithdrawals, requestWithdrawal, setWithdrawalPin, saveBankAccount, getBankAccount, getBanks, resolveAccountNumber, forgotPin, resetPin } = require('../controllers/withdrawal.controller');
 const { protect } = require('../middlewares/auth.middleware');
-const { isSeller } = require('../middlewares/role.middleware');
+const { isSeller, checkSellerActive } = require('../middlewares/role.middleware');
 const { sendSuccess } = require('../utils/response');
 
 // Apply protection to all withdrawal routes
 router.use(protect);
-router.use(isSeller);
+router.use(isSeller, checkSellerActive);
 
 /**
  * @route   GET /api/withdrawals

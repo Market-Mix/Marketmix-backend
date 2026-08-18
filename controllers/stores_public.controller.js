@@ -9,7 +9,15 @@ const getPublicProducts = async (req, res) => {
     const offset = (page - 1) * limit;
     const { store_id, seller_id } = req.query;
 
-    const filters = ['p.is_active = true', 'p.is_deleted = false'];
+    const filters = [
+      'p.is_active = true',
+      'p.is_deleted = false',
+      `NOT EXISTS (
+        SELECT 1 FROM users u
+        WHERE u.id = p.seller_id AND u.is_suspended = true
+          AND (u.suspended_until IS NULL OR u.suspended_until > NOW())
+      )`
+    ];
     const params = [];
 
     if (store_id) {

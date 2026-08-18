@@ -324,6 +324,16 @@ const getPublicStore = async (req, res) => {
   try {
     const { storeId } = req.params;
 
+    const sellerCheck = await db.query(
+      `SELECT u.is_suspended, u.suspended_until
+       FROM users u JOIN stores s ON s.user_id = u.id WHERE s.id = $1`,
+      [storeId]
+    );
+    const seller = sellerCheck.rows[0];
+    if (seller?.is_suspended && (!seller.suspended_until || new Date(seller.suspended_until) > new Date())) {
+      return sendError(res, 404, 'Store not found');
+    }
+
     const result = await db.query(
       `SELECT
          s.id, s.user_id AS seller_id, s.store_number,
@@ -359,6 +369,11 @@ const getPublicStore = async (req, res) => {
          (SELECT COUNT(*) FROM products p
           WHERE (p.store_id = s.id OR (p.store_id IS NULL AND p.seller_id = s.user_id))
             AND p.is_active = true AND p.is_deleted = false
+            AND NOT EXISTS (
+              SELECT 1 FROM users suspended_user
+              WHERE suspended_user.id = p.seller_id AND suspended_user.is_suspended = true
+               AND (suspended_user.suspended_until IS NULL OR suspended_user.suspended_until > NOW())
+            )
          ) AS product_count
        FROM stores s
        JOIN users u ON u.id = s.user_id
@@ -422,7 +437,12 @@ const getPublicStoreProducts = async (req, res) => {
     const { category, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    let where = `WHERE p.store_id = $1 AND p.is_active = true AND p.is_deleted = false`;
+    let where = `WHERE p.store_id = $1 AND p.is_active = true AND p.is_deleted = false
+      AND NOT EXISTS (
+        SELECT 1 FROM users u
+        WHERE u.id = p.seller_id AND u.is_suspended = true
+          AND (u.suspended_until IS NULL OR u.suspended_until > NOW())
+      )`;
     const params = [storeId];
     let idx = 2;
 
@@ -462,6 +482,11 @@ const getPublicStoreProducts = async (req, res) => {
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
        WHERE p.store_id = $1 AND p.is_active = true AND p.is_deleted = false
+         AND NOT EXISTS (
+           SELECT 1 FROM users u
+           WHERE u.id = p.seller_id AND u.is_suspended = true
+             AND (u.suspended_until IS NULL OR u.suspended_until > NOW())
+         )
        ORDER BY name`,
       [storeId]
     );
