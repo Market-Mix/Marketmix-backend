@@ -1,5 +1,6 @@
 const BASE = process.env.FRONTEND_URL || 'https://marketmix.vercel.app';
 const LOGO = `${BASE}/assets/logo.png`;
+const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || 'support@mail.marketmix.africa';
 
 const wrap = (content) => `
 <!DOCTYPE html><html><body style="font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:20px">
@@ -9,7 +10,7 @@ const wrap = (content) => `
   </div>
   <div style="padding:30px">${content}</div>
   <div style="background:#f8fafc;padding:15px;text-align:center;color:#94a3b8;font-size:12px">
-    &copy; 2025 MarketMix. All rights reserved.
+    &copy; 2025 MarketMix. All rights reserved. · Need help? <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a>
   </div>
 </div>
 </body></html>`;
