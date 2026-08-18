@@ -1502,4 +1502,214 @@ router.post('/withdrawals/:id/approve', protect, isAdmin, async (req, res) => {
   return sendSuccess(res, 200, 'Withdrawal approved and queued for immediate processing');
 });
 
+// GET /api/admin/orders - paginated, searchable order list
+router.get('/orders', protect, isAdmin, async (req, res) => {
+  try {
+    const { search, status, paymentStatus, page = 1, limit = 20, from, to } = req.query;
+    const pageNumber = Math.max(parseInt(page, 10) || 1, 1);
+    const pageLimit = Math.max(parseInt(limit, 10) || 20, 1);
+    const offset = (pageNumber - 1) * pageLimit;
+    const params = [];
+    let where = 'WHERE 1=1';
+    let index = 1;
+
+    if (search) {
+      where += ` AND (o.order_number ILIKE $${index} OR CAST(o.id AS TEXT) ILIKE $${index} OR u.email ILIKE $${index} OR (u.first_name || ' ' || u.last_name) ILIKE $${index})`;
+      params.push(`%${search}%`);
+      index++;
+    }
+    if (status && status !== 'all') {
+      where += ` AND o.status = $${index}`;
+      params.push(status);
+      index++;
+    }
+    if (paymentStatus && paymentStatus !== 'all') {
+      where += ` AND o.payment_status = $${index}`;
+      params.push(paymentStatus);
+      index++;
+    }
+    if (from) {
+      where += ` AND o.created_at >= $${index}`;
+      params.push(from);
+      index++;
+    }
+    if (to) {
+      where += ` AND o.created_at <= $${index}`;
+      params.push(to);
+      index++;
+    }
+
+    const result = await db.query(
+      `SELECT o.id, o.order_number, o.total_amount, o.status, o.payment_status,
+              o.payment_method, o.created_at,
+              u.first_name, u.last_name, u.email AS buyer_email,
+              (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS item_count,
+              (SELECT STRING_AGG(DISTINCT COALESCE(sp.business_name, su.first_name || ' ' || su.last_name), ', ')
+               FROM order_items oi2
+               JOIN users su ON su.id = oi2.seller_id
+               LEFT JOIN seller_profiles sp ON sp.user_id = su.id
+               WHERE oi2.order_id = o.id) AS seller_names
+       FROM orders o
+       JOIN users u ON u.id = o.buyer_id
+       ${where}
+       ORDER BY o.created_at DESC
+       LIMIT $${index} OFFSET $${index + 1}`,
+      [...params, pageLimit, offset]
+    );
+
+    const countResult = await db.query(
+      `SELECT COUNT(*) FROM orders o JOIN users u ON u.id = o.buyer_id ${where}`,
+      params
+    );
+
+    return sendSuccess(res, 200, 'Orders fetched', {
+      orders: result.rows.map(row => ({
+        id: row.id,
+        orderNumber: row.order_number || `#${String(row.id).slice(0, 8).toUpperCase()}`,
+        buyerName: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
+        buyerEmail: row.buyer_email,
+        totalAmount: parseFloat(row.total_amount) || 0,
+        status: row.status,
+        paymentStatus: row.payment_status,
+        paymentMethod: row.payment_method,
+        itemCount: parseInt(row.item_count, 10) || 0,
+        sellerNames: row.seller_names || '-',
+        createdAt: row.created_at,
+      })),
+      total: parseInt(countResult.rows[0].count, 10),
+      page: pageNumber,
+      limit: pageLimit,
+    });
+  } catch (err) {
+    console.error('GET /admin/orders error:', err);
+    return sendError(res, 500, 'Error fetching orders', err.message);
+  }
+});
+
+// GET /api/admin/orders/:id - full order detail
+router.get('/orders/:id', protect, isAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const orderResult = await db.query(
+      `SELECT o.*, u.first_name, u.last_name, u.email AS buyer_email, u.phone AS buyer_phone
+       FROM orders o JOIN users u ON u.id = o.buyer_id WHERE o.id = $1`,
+      [id]
+    );
+    if (!orderResult.rows.length) return sendError(res, 404, 'Order not found');
+    const order = orderResult.rows[0];
+
+    const [itemsResult, vendorOrdersResult, paymentsResult, escrowResult] = await Promise.all([
+      db.query(
+        `SELECT oi.*, p.name AS product_name, p.main_image_url,
+                COALESCE(sp.business_name, su.first_name || ' ' || su.last_name) AS seller_name
+         FROM order_items oi
+         LEFT JOIN products p ON p.id = oi.product_id
+         LEFT JOIN users su ON su.id = oi.seller_id
+         LEFT JOIN seller_profiles sp ON sp.user_id = su.id
+         WHERE oi.order_id = $1 ORDER BY oi.created_at`,
+        [id]
+      ),
+      db.query(
+        `SELECT vo.*, COALESCE(sp.business_name, su.first_name || ' ' || su.last_name) AS seller_name
+         FROM vendor_orders vo
+         LEFT JOIN users su ON su.id = vo.seller_id
+         LEFT JOIN seller_profiles sp ON sp.user_id = vo.seller_id
+         WHERE vo.order_id = $1 ORDER BY vo.created_at`,
+        [id]
+      ),
+      db.query(
+        `SELECT id, provider, provider_reference, amount, currency, status, paid_at, created_at
+         FROM payment_transactions WHERE order_id = $1 ORDER BY created_at DESC`,
+        [id]
+      ),
+      db.query(
+        `SELECT id, seller_id, amount, status, held_at, auto_release_at, released_at
+         FROM escrow_transactions WHERE order_id = $1`,
+        [id]
+      ),
+    ]);
+
+    return sendSuccess(res, 200, 'Order detail fetched', {
+      order: {
+        ...order,
+        buyerName: `${order.first_name || ''} ${order.last_name || ''}`.trim(),
+        totalAmount: parseFloat(order.total_amount) || 0,
+        subtotal: parseFloat(order.subtotal) || 0,
+        shippingFee: parseFloat(order.shipping_fee) || 0,
+        couponDiscount: parseFloat(order.coupon_discount) || 0,
+      },
+      items: itemsResult.rows,
+      vendorOrders: vendorOrdersResult.rows,
+      payments: paymentsResult.rows,
+      escrow: escrowResult.rows,
+    });
+  } catch (err) {
+    console.error('GET /admin/orders/:id error:', err);
+    return sendError(res, 500, 'Error fetching order detail', err.message);
+  }
+});
+
+// PUT /api/admin/orders/:id/status - admin override
+router.put('/orders/:id/status', protect, isAdmin, async (req, res) => {
+  const client = await db.pool.connect();
+  try {
+    const { id } = req.params;
+    const { status, reason } = req.body;
+    const validStatuses = ['pending', 'awaiting_payment', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'returned'];
+    if (!validStatuses.includes(status)) return sendError(res, 400, 'Invalid status');
+
+    await client.query('BEGIN');
+    const result = await client.query(
+      `UPDATE orders SET status = $1, updated_at = NOW()
+       WHERE id = $2 RETURNING id, status, buyer_id, order_number`,
+      [status, id]
+    );
+    if (!result.rows.length) {
+      await client.query('ROLLBACK');
+      return sendError(res, 404, 'Order not found');
+    }
+    const order = result.rows[0];
+
+    const vendorOrders = await client.query(
+      `UPDATE vendor_orders SET status = $1, updated_at = NOW()
+       WHERE order_id = $2 RETURNING seller_id`,
+      [status, id]
+    );
+    await client.query('COMMIT');
+
+    const { logAudit, AUDIT_ACTIONS } = require('../utils/audit');
+    await logAudit(req.user.id, AUDIT_ACTIONS.ORDER_UPDATED, 'order', id, {
+      status,
+      reason: reason || null,
+    });
+
+    const shortId = order.order_number || `#${String(id).slice(0, 8).toUpperCase()}`;
+    await createDedupedNotification({
+      userId: order.buyer_id,
+      title: 'Order Status Updated',
+      message: `Your order ${shortId} status was updated to "${status}" by MarketMix support.${reason ? ` Reason: ${reason}` : ''}`,
+      type: 'order',
+      referenceId: id,
+      link: '/buyers/buyers%20order%20&%20tracking.html',
+    });
+
+    await Promise.allSettled(vendorOrders.rows.map(vendorOrder => createDedupedNotification({
+      userId: vendorOrder.seller_id,
+      title: 'Order Status Updated by Admin',
+      message: `Order ${shortId} was updated to "${status}" by MarketMix support.`,
+      type: 'order',
+      referenceId: id,
+      link: '/sellers/sellers%20order.html',
+    })));
+
+    return sendSuccess(res, 200, 'Order status updated', { order });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('PUT /admin/orders/:id/status error:', err);
+    return sendError(res, 500, 'Error updating order status', err.message);
+  } finally {
+    client.release();
+  }
+});
+
 module.exports = router;
