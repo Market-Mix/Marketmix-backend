@@ -116,6 +116,7 @@ app.use('/api/seller', sellerRoutes);           // ← AFTER /api/seller/stores
 app.use('/api/shops/following', shopFollowsRoutes);
 app.use('/api/cron', cronRoutes);
 app.use('/api/coupons', couponsRoutes);
+app.use('/api/reports', require('./routes/reports.routes'));
 
 
 

@@ -1,5 +1,6 @@
 const { verifyToken } = require('../utils/jwt');
 const { sendError } = require('../utils/response');
+const db = require('../config/db');
 
 /**
  * Protect routes - verify JWT token
@@ -25,12 +26,37 @@ const protect = async (req, res, next) => {
     // Verify and decode token
     try {
       const decoded = verifyToken(token);
-      
+
+      const userRes = await db.query(
+        `SELECT id, email, role, is_suspended, suspended_until FROM users WHERE id = $1 AND is_deleted = FALSE`,
+        [decoded.id]
+      );
+
+      if (userRes.rows.length === 0) {
+        return sendError(res, 401, 'Not authorized, user no longer exists');
+      }
+
+      const user = userRes.rows[0];
+      const isActivelySuspended = user.role === 'seller' && user.is_suspended &&
+        (!user.suspended_until || new Date(user.suspended_until) > new Date());
+      if (isActivelySuspended) {
+        return sendError(res, 403, 'Your seller account has been suspended. Contact support.');
+      }
+
+      if (user.role === 'seller' && user.is_suspended && user.suspended_until && new Date(user.suspended_until) <= new Date()) {
+        await db.query(
+          `UPDATE users SET is_suspended = false, suspended_until = NULL, suspension_reason = NULL WHERE id = $1`,
+          [user.id]
+        );
+        user.is_suspended = false;
+      }
+
       // Attach user info to request
       req.user = {
         id: decoded.id,
         email: decoded.email,
-        role: decoded.role
+        role: decoded.role,
+        is_suspended: user.is_suspended
       };
 
       next();

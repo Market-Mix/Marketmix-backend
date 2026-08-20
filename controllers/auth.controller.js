@@ -288,6 +288,10 @@ const googleLogin = async (req, res) => {
 
     const user = result.rows[0];
 
+    if (user.role === 'seller' && user.is_suspended) {
+      return sendError(res, 403, 'Your seller account has been suspended. Contact support.');
+    }
+
     // If user doesn't have google_id yet, link it
     if (!user.google_id) {
       await db.query(
@@ -356,6 +360,10 @@ const login = async (req, res) => {
     }
 
     const user = result.rows[0];
+
+    if (user.role === 'seller' && user.is_suspended) {
+      return sendError(res, 403, 'Your seller account has been suspended. Contact support.');
+    }
 
     // Check if user signed up with Google (no password)
     if (!user.password_hash && user.google_id) {

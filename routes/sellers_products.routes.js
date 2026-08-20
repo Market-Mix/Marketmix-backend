@@ -8,10 +8,10 @@ const {
   deleteSellerProduct,
 } = require('../controllers/sellers_products.controller');
 const { protect } = require('../middlewares/auth.middleware');
-const { isSeller } = require('../middlewares/role.middleware');
+const { isSeller, checkSellerActive } = require('../middlewares/role.middleware');
 
 // All routes require auth + seller role
-router.use(protect, isSeller);
+router.use(protect, isSeller, checkSellerActive);
 
 router.get('/', getSellerProducts);
 router.post('/', upload.array('images', 5), createSellerProduct);

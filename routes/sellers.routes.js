@@ -61,6 +61,9 @@ router.get('/profile', protect, isSeller, async (req, res) => {
           u.phone,
           u.role,
           u.avatar_url,
+          u.is_suspended,
+          u.suspended_until,
+          u.suspension_reason,
           sp.id            AS profile_id,
           sp.business_name,
           sp.business_description,
@@ -111,6 +114,9 @@ router.get('/profile', protect, isSeller, async (req, res) => {
         phone: row.phone,
         role: row.role,
         avatarUrl: row.avatar_url,
+        isSuspended: row.is_suspended,
+        suspendedUntil: row.suspended_until,
+        suspensionReason: row.suspension_reason,
         profile: row.profile_id ? {
           id: row.profile_id,
           businessName: row.business_name,
@@ -661,8 +667,11 @@ router.post('/kyc', protect, isSeller, async (req, res) => {
       email,
       phone,
       idType,
+      idNumber,
+      country,
       idDocumentUrl,
       selfiePhotoUrl,
+      proofOfAddressUrl,
     } = req.body;
 
     // Validation
@@ -713,8 +722,11 @@ router.post('/kyc', protect, isSeller, async (req, res) => {
       kyc_email:            email.trim(),
       kyc_phone:            phone || null,
       kyc_id_type:          idType,
+      kyc_id_number:        idNumber || null,
+      kyc_country:          country || null,
       kyc_id_document_url:  idDocumentUrl,
       kyc_selfie_url:       selfiePhotoUrl,
+      kyc_proof_of_address_url: proofOfAddressUrl || null,
     };
 
     await db.query(

@@ -122,6 +122,26 @@ const createSellerProduct = async (req, res) => {
       return sendError(res, 400, 'No active store selected. Send X-Store-Id header.');
     }
 
+    const restrictionResult = await db.query(
+      `SELECT upload_restricted_until, upload_limit_per_week FROM seller_profiles WHERE user_id = $1`,
+      [sellerId]
+    );
+    const restriction = restrictionResult.rows[0];
+    if (restriction?.upload_restricted_until && new Date(restriction.upload_restricted_until) > new Date()) {
+      const weekCount = await db.query(
+        `SELECT COUNT(*) FROM products WHERE seller_id = $1 AND created_at >= NOW() - INTERVAL '7 days'`,
+        [sellerId]
+      );
+      const weeklyLimit = restriction.upload_limit_per_week || 3;
+      if (parseInt(weekCount.rows[0].count, 10) >= weeklyLimit) {
+        return sendError(
+          res,
+          403,
+          `Upload restricted due to product reports. Limit: ${weeklyLimit}/week until ${new Date(restriction.upload_restricted_until).toLocaleDateString()}`
+        );
+      }
+    }
+
     const { 
       name, description, price, stock_quantity, category_id,
       subcategory_id, is_active, sku, discount_price,

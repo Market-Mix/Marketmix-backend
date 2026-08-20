@@ -9,7 +9,13 @@ router.get('/share/:id', async (req, res, next) => {
   if (!CRAWLER_UA.test(req.headers['user-agent'] || '')) return next();
   try {
     const r = await pool.query(
-      `SELECT name, description, main_image_url, price FROM products WHERE id=$1 AND is_deleted=false`,
+			`SELECT name, description, main_image_url, price FROM products p
+			 WHERE p.id=$1 AND p.is_deleted=false
+				 AND NOT EXISTS (
+					 SELECT 1 FROM users u
+					 WHERE u.id = p.seller_id AND u.is_suspended = true
+						 AND (u.suspended_until IS NULL OR u.suspended_until > NOW())
+				 )`,
       [req.params.id]
     );
     if (!r.rows.length) return next();
@@ -51,6 +57,11 @@ router.get('/', async (req, res) => {
 				 FROM products p
 				 LEFT JOIN categories c ON p.category_id = c.id
 				 WHERE p.is_active = true AND p.is_deleted = false
+				   AND NOT EXISTS (
+				     SELECT 1 FROM users u
+				     WHERE u.id = p.seller_id AND u.is_suspended = true
+				       AND (u.suspended_until IS NULL OR u.suspended_until > NOW())
+				   )
 				 ORDER BY p.created_at DESC
 				 LIMIT $1 OFFSET $2`,
 				[limit, offset]
@@ -68,7 +79,12 @@ router.get('/', async (req, res) => {
 						COALESCE(c.name, 'uncategorized') as category_name
 				 FROM products p
 				 LEFT JOIN categories c ON p.category_id = c.id
-				 WHERE p.is_active = true AND p.is_deleted = false
+					 WHERE p.is_active = true AND p.is_deleted = false
+					   AND NOT EXISTS (
+					     SELECT 1 FROM users u
+					     WHERE u.id = p.seller_id AND u.is_suspended = true
+					       AND (u.suspended_until IS NULL OR u.suspended_until > NOW())
+					   )
 				 ORDER BY p.created_at DESC
 				 LIMIT $1 OFFSET $2`,
 				[limit, offset]
@@ -76,7 +92,13 @@ router.get('/', async (req, res) => {
 		}
 
 		const countResult = await pool.query(
-			`SELECT COUNT(*) as total FROM products WHERE is_active = true AND is_deleted = false`
+			`SELECT COUNT(*) as total FROM products p
+			 WHERE p.is_active = true AND p.is_deleted = false
+			   AND NOT EXISTS (
+				 SELECT 1 FROM users u
+				 WHERE u.id = p.seller_id AND u.is_suspended = true
+				   AND (u.suspended_until IS NULL OR u.suspended_until > NOW())
+			   )`
 		);
 
 		// Add flash sale and default fields to response
@@ -133,15 +155,27 @@ router.get('/:id', async (req, res) => {
 							is_active, category_id, color, size, views,
 							"flash start" as flash_start, "flash end" as flash_end,
 							created_at, updated_at
-				 FROM products 
-				 WHERE id = $1 AND is_active = true AND is_deleted = false`,
+					 FROM products p
+					 WHERE p.id = $1 AND p.is_active = true AND p.is_deleted = false
+				   AND NOT EXISTS (
+				     SELECT 1 FROM users u
+					     WHERE u.id = p.seller_id AND u.is_suspended = true
+				       AND (u.suspended_until IS NULL OR u.suspended_until > NOW())
+				   )`,
 				[id]
 			);
 		} catch (queryError) {
 			console.error('Product query error:', queryError.message);
 			// Fallback to minimal query
 			productResult = await pool.query(
-				`SELECT id, seller_id, name, price, main_image_url FROM products WHERE id = $1 LIMIT 1`,
+					 `SELECT p.id, p.seller_id, p.name, p.price, p.main_image_url
+					  FROM products p
+					  WHERE p.id = $1
+					    AND NOT EXISTS (
+					      SELECT 1 FROM users u
+					      WHERE u.id = p.seller_id AND u.is_suspended = true
+					        AND (u.suspended_until IS NULL OR u.suspended_until > NOW())
+					    )`,
 				[id]
 			);
 		}
