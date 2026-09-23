@@ -1108,7 +1108,6 @@ router.post('/withdrawals/:id/reject', protect, isAdmin, async (req, res) => {
   return sendSuccess(res, 200, 'Withdrawal rejected and balance restored');
 });
 
-<<<<<<< HEAD
 // GET /api/admin/sellers/:sellerId/kyc/status
 router.get('/sellers/:sellerId/kyc/status', protect, isAdmin, async (req, res) => {
   try {
@@ -1133,7 +1132,9 @@ router.get('/sellers/:sellerId/kyc/status', protect, isAdmin, async (req, res) =
     });
   } catch (err) {
     return sendError(res, 500, err.message);
-=======
+  }
+});
+
 // ─── GET /api/admin/sellers — paginated seller directory ─────────────────────
 router.get('/sellers', protect, isAdmin, async (req, res) => {
   try {
@@ -1383,7 +1384,7 @@ router.get('/reports', protect, isAdmin, async (req, res) => {
     });
   } catch (err) {
     return sendError(res, 500, 'Error fetching reports', err.message);
->>>>>>> 917ea76d18088ebc4be01ea527ff20fe5ae5039e
+
   }
 });
 
@@ -1737,6 +1738,173 @@ router.put('/orders/:id/status', protect, isAdmin, async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+// ─── BUYERS ───────────────────────────────────────────────────────────────
+const EFFECTIVELY_SUSPENDED = `(u.is_suspended = true AND (u.suspended_until IS NULL OR u.suspended_until > NOW()))`;
+
+// GET /api/admin/buyers?search=&status=all|active|suspended&page=&limit=
+router.get('/buyers', protect, isAdmin, async (req, res) => {
+  try {
+    const { search, status = 'all' } = req.query;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const offset = (page - 1) * limit;
+
+    const params = [];
+    let where = `WHERE u.role = 'buyer' AND u.is_deleted = false`;
+    if (search) {
+      params.push(`%${search.toLowerCase()}%`);
+      where += ` AND (LOWER(u.email) LIKE $${params.length}
+                 OR LOWER(u.first_name || ' ' || u.last_name) LIKE $${params.length}
+                 OR COALESCE(u.phone,'') LIKE $${params.length})`;
+    }
+    if (status === 'suspended') where += ` AND ${EFFECTIVELY_SUSPENDED}`;
+    if (status === 'active') where += ` AND NOT ${EFFECTIVELY_SUSPENDED}`;
+
+    const [rows, count, stats] = await Promise.all([
+      db.query(
+        `SELECT u.id, u.email, u.first_name, u.last_name, u.phone, u.created_at,
+                ${EFFECTIVELY_SUSPENDED} AS suspended,
+                (SELECT COUNT(*) FROM orders o WHERE o.buyer_id = u.id
+                   AND o.status NOT IN ('awaiting_payment','payment_failed')) AS order_count,
+                (SELECT COALESCE(SUM(total_amount),0) FROM orders o
+                   WHERE o.buyer_id = u.id AND o.payment_status = 'paid') AS total_spent
+         FROM users u ${where}
+         ORDER BY u.created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset]
+      ),
+      db.query(`SELECT COUNT(*) FROM users u ${where}`, params),
+      db.query(
+        `SELECT COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE ${EFFECTIVELY_SUSPENDED}) AS suspended,
+                COUNT(*) FILTER (WHERE u.created_at >= NOW() - INTERVAL '30 days') AS new_30d
+         FROM users u WHERE u.role='buyer' AND u.is_deleted=false`
+      ),
+    ]);
+
+    return sendSuccess(res, 200, 'Buyers fetched', {
+      buyers: rows.rows.map(r => ({
+        id: r.id,
+        name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
+        email: r.email,
+        phone: r.phone || '—',
+        status: r.suspended ? 'Suspended' : 'Active',
+        joinDate: r.created_at,
+        orders: parseInt(r.order_count) || 0,
+        totalSpent: parseFloat(r.total_spent) || 0,
+      })),
+      stats: {
+        total: +stats.rows[0].total, suspended: +stats.rows[0].suspended, new30d: +stats.rows[0].new_30d,
+      },
+      total: parseInt(count.rows[0].count), page, limit,
+    });
+  } catch (err) {
+    console.error('GET /admin/buyers error:', err);
+    return sendError(res, 500, 'Error fetching buyers', err.message);
+  }
+});
+
+// GET /api/admin/buyers/:id
+router.get('/buyers/:id', protect, isAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const u = await db.query(
+      `SELECT u.id, u.email, u.first_name, u.last_name, u.phone, u.created_at, u.avatar_url,
+              u.suspended_until, u.suspension_reason, u.suspended_at,
+              ${EFFECTIVELY_SUSPENDED} AS suspended
+       FROM users u WHERE u.id = $1 AND u.role='buyer' AND u.is_deleted=false`, [id]);
+    if (!u.rows.length) return sendError(res, 404, 'Buyer not found');
+
+    const [orders, agg, refunds, addr] = await Promise.all([
+      db.query(`SELECT id, order_number, total_amount, status, payment_status, created_at
+                FROM orders WHERE buyer_id=$1 ORDER BY created_at DESC LIMIT 5`, [id]),
+      db.query(`SELECT COUNT(*) AS orders,
+                       COALESCE(SUM(total_amount) FILTER (WHERE payment_status='paid'),0) AS spent
+                FROM orders WHERE buyer_id=$1`, [id]),
+      db.query(`SELECT COUNT(*) FROM refund_cases WHERE buyer_id=$1`, [id]),
+      db.query(`SELECT address_line1, city, state, country FROM addresses
+                WHERE user_id=$1 AND is_deleted=false ORDER BY is_default DESC LIMIT 1`, [id]),
+    ]);
+
+    const r = u.rows[0];
+    return sendSuccess(res, 200, 'Buyer fetched', { buyer: {
+      id: r.id, name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
+      email: r.email, phone: r.phone, avatarUrl: r.avatar_url, joinDate: r.created_at,
+      suspended: r.suspended, suspendedUntil: r.suspended_until,
+      suspensionReason: r.suspension_reason, suspendedAt: r.suspended_at,
+      totalOrders: +agg.rows[0].orders, totalSpent: parseFloat(agg.rows[0].spent),
+      refundCases: +refunds.rows[0].count,
+      address: addr.rows[0] || null,
+      recentOrders: orders.rows.map(o => ({
+        id: o.id, orderNumber: o.order_number || `#${String(o.id).slice(0,8).toUpperCase()}`,
+        amount: parseFloat(o.total_amount), status: o.status,
+        paymentStatus: o.payment_status, createdAt: o.created_at })),
+    }});
+  } catch (err) {
+    return sendError(res, 500, 'Error fetching buyer', err.message);
+  }
+});
+
+// POST /api/admin/buyers/:id/suspend { duration, reason }
+router.post('/buyers/:id/suspend', protect, isAdmin, async (req, res) => {
+  try {
+    const { duration = '1week', reason } = req.body;
+    const days = { '1week': 7, '2weeks': 14, '1month': 30 };
+    if (duration !== 'indefinite' && !days[duration]) return sendError(res, 400, 'Invalid duration');
+    const until = duration === 'indefinite' ? null : new Date(Date.now() + days[duration] * 86400000);
+
+    const r = await db.query(
+      `UPDATE users SET is_suspended=true, suspended_until=$1, suspension_reason=$2,
+              suspended_by=$3, suspended_at=NOW(), updated_at=NOW()
+       WHERE id=$4 AND role='buyer' AND is_deleted=false RETURNING id`,
+      [until, reason || 'Policy violation', req.user.id, req.params.id]);
+    if (!r.rows.length) return sendError(res, 404, 'Buyer not found');
+
+    const { logAudit } = require('../utils/audit');
+    await logAudit(req.user.id, 'BUYER_SUSPENDED', 'user', req.params.id, { duration, reason });
+    await createDedupedNotification({
+      userId: req.params.id, title: 'Account Suspended',
+      message: `Your account was suspended. Reason: ${reason || 'Policy violation'}. ${until ? `Until ${until.toLocaleDateString()}` : 'Contact support.'}`,
+      type: 'account', link: '/buyers/help%20center.html' });
+    return sendSuccess(res, 200, 'Buyer suspended', { suspendedUntil: until });
+  } catch (err) { return sendError(res, 500, 'Error suspending buyer', err.message); }
+});
+
+// POST /api/admin/buyers/:id/unsuspend
+router.post('/buyers/:id/unsuspend', protect, isAdmin, async (req, res) => {
+  try {
+    const r = await db.query(
+      `UPDATE users SET is_suspended=false, suspended_until=NULL, suspension_reason=NULL,
+              suspended_by=NULL, suspended_at=NULL, updated_at=NOW()
+       WHERE id=$1 AND role='buyer' RETURNING id`, [req.params.id]);
+    if (!r.rows.length) return sendError(res, 404, 'Buyer not found');
+    const { logAudit } = require('../utils/audit');
+    await logAudit(req.user.id, 'BUYER_UNSUSPENDED', 'user', req.params.id);
+    await createDedupedNotification({ userId: req.params.id, title: 'Account Reinstated',
+      message: 'Your account has been reactivated. Welcome back!', type: 'account' });
+    return sendSuccess(res, 200, 'Buyer reactivated');
+  } catch (err) { return sendError(res, 500, 'Error reactivating buyer', err.message); }
+});
+
+// DELETE /api/admin/buyers/:id (soft delete, blocked if orders in flight)
+router.delete('/buyers/:id', protect, isAdmin, async (req, res) => {
+  try {
+    const live = await db.query(
+      `SELECT 1 FROM orders WHERE buyer_id=$1 AND status IN ('confirmed','processing','shipped') LIMIT 1`,
+      [req.params.id]);
+    if (live.rows.length) return sendError(res, 409, 'Buyer has orders in progress. Suspend instead.');
+
+    const r = await db.query(
+      `UPDATE users SET is_deleted=true,
+              email = CONCAT(email,'--deleted-',EXTRACT(EPOCH FROM NOW())::text), updated_at=NOW()
+       WHERE id=$1 AND role='buyer' AND is_deleted=false RETURNING id`, [req.params.id]);
+    if (!r.rows.length) return sendError(res, 404, 'Buyer not found');
+    const { logAudit } = require('../utils/audit');
+    await logAudit(req.user.id, 'USER_DELETED', 'user', req.params.id);
+    return sendSuccess(res, 200, 'Buyer deleted');
+  } catch (err) { return sendError(res, 500, 'Error deleting buyer', err.message); }
 });
 
 module.exports = router;

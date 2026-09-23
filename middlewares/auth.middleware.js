@@ -37,13 +37,13 @@ const protect = async (req, res, next) => {
       }
 
       const user = userRes.rows[0];
-      const isActivelySuspended = user.role === 'seller' && user.is_suspended &&
+      const isActivelySuspended = user.role !== 'admin' && user.is_suspended &&
         (!user.suspended_until || new Date(user.suspended_until) > new Date());
       if (isActivelySuspended) {
-        return sendError(res, 403, 'Your seller account has been suspended. Contact support.');
+        return sendError(res, 403, 'Your account has been suspended. Contact support.');
       }
 
-      if (user.role === 'seller' && user.is_suspended && user.suspended_until && new Date(user.suspended_until) <= new Date()) {
+      if (user.role !== 'admin' && user.is_suspended && user.suspended_until && new Date(user.suspended_until) <= new Date()) {
         await db.query(
           `UPDATE users SET is_suspended = false, suspended_until = NULL, suspension_reason = NULL WHERE id = $1`,
           [user.id]
