@@ -1,7 +1,7 @@
 const bcrypt = require('bcrypt');
 const db = require('../config/db');
 const { generateToken } = require('../utils/jwt');
-const { sendSuccess, sendError } = require('../utils/response');
+const { sendSuccess, sendError, suspendedPayload } = require('../utils/response');
 const { notifySeller } = require('../utils/sellerEmailService');
 const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
@@ -290,7 +290,7 @@ const googleLogin = async (req, res) => {
 
     if (user.role !== 'admin' && user.is_suspended &&
         (!user.suspended_until || new Date(user.suspended_until) > new Date())) {
-      return sendError(res, 403, 'Your account has been suspended. Contact support.');
+      return sendError(res, 403, 'Your account has been suspended.', suspendedPayload(user));
     }
 
     // If user doesn't have google_id yet, link it
@@ -364,7 +364,7 @@ const login = async (req, res) => {
 
     if (user.role !== 'admin' && user.is_suspended &&
         (!user.suspended_until || new Date(user.suspended_until) > new Date())) {
-      return sendError(res, 403, 'Your account has been suspended. Contact support.');
+      return sendError(res, 403, 'Your account has been suspended.', suspendedPayload(user));
     }
 
     // Check if user signed up with Google (no password)

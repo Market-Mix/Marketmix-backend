@@ -1,5 +1,5 @@
 const { verifyToken } = require('../utils/jwt');
-const { sendError } = require('../utils/response');
+const { sendError, suspendedPayload } = require('../utils/response');
 const db = require('../config/db');
 
 /**
@@ -28,7 +28,7 @@ const protect = async (req, res, next) => {
       const decoded = verifyToken(token);
 
       const userRes = await db.query(
-        `SELECT id, email, role, is_suspended, suspended_until FROM users WHERE id = $1 AND is_deleted = FALSE`,
+        `SELECT id, email, role, is_suspended, suspended_until, suspension_reason FROM users WHERE id = $1 AND is_deleted = FALSE`,
         [decoded.id]
       );
 
@@ -40,7 +40,7 @@ const protect = async (req, res, next) => {
       const isActivelySuspended = user.role !== 'admin' && user.is_suspended &&
         (!user.suspended_until || new Date(user.suspended_until) > new Date());
       if (isActivelySuspended) {
-        return sendError(res, 403, 'Your account has been suspended. Contact support.');
+        return sendError(res, 403, 'Your account has been suspended.', suspendedPayload(user));
       }
 
       if (user.role !== 'admin' && user.is_suspended && user.suspended_until && new Date(user.suspended_until) <= new Date()) {

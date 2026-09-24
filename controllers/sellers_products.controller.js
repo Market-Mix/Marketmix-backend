@@ -256,7 +256,7 @@ const updateSellerProduct = async (req, res) => {
     }
 
     const ownership = await db.query(
-      `SELECT id, name, main_image_url, images, product_video_url FROM products
+      `SELECT id, name, main_image_url, images, product_video_url, admin_disabled FROM products
        WHERE id = $1 AND seller_id = $2 AND store_id = $3 AND is_deleted = false`,
       [productId, sellerId, storeId]
     );
@@ -296,6 +296,10 @@ const updateSellerProduct = async (req, res) => {
       } catch (e) { return sendError(res, 500, `Image upload failed: ${e.message}`); }
     }
 
+        if (existing.admin_disabled && req.body.is_active !== undefined &&
+            req.body.is_active !== 'false' && req.body.is_active !== false) {
+          return sendError(res, 403, 'This product was disabled by MarketMix. Contact support to appeal.');
+        }
     if (videoFile) {
       try {
         videoUrl = await uploadToCloudinary(videoFile.buffer, videoFile.mimetype, 'product-videos');

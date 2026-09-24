@@ -33,6 +33,12 @@ const sendError = (res, statusCode = 500, message = 'Internal server error', err
   return res.status(statusCode).json(response);
 };
 
+const suspendedPayload = (u) => ({
+  code: 'ACCOUNT_SUSPENDED',
+  reason: u.suspension_reason || 'Policy violation',
+  until: u.suspended_until || null,
+});
+
 /**
  * Send validation error response
  * @param {Object} res - Express response object
@@ -72,6 +78,7 @@ const sendPaginatedResponse = (res, data, page, limit, total) => {
 module.exports = {
   sendSuccess,
   sendError,
+  suspendedPayload,
   sendValidationError,
   sendPaginatedResponse
 };
