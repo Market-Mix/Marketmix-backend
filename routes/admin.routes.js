@@ -2174,4 +2174,116 @@ router.delete('/categories/:id', protect, isAdmin, async (req, res) => {
   } catch (err) { return sendError(res, 500, 'Error deleting category', err.message); }
 });
 
+// ─── SUBCATEGORIES ────────────────────────────────────────────────────────
+const FIELD_TYPES = ['text', 'select', 'multiselect', 'tags', 'date'];
+
+function validateFields(fields) {
+  if (!Array.isArray(fields)) return 'fields must be an array';
+  if (fields.length > 25) return 'Maximum 25 fields per subcategory';
+  const seen = new Set();
+  for (const f of fields) {
+    if (!f || !/^[a-z][a-z0-9_]{0,39}$/.test(f.key || '')) return `Invalid key "${f?.key}" (lowercase letters, numbers, underscores)`;
+    if (seen.has(f.key)) return `Duplicate key "${f.key}"`;
+    seen.add(f.key);
+    if (!(f.label || '').trim()) return `Field "${f.key}" needs a label`;
+    if (!FIELD_TYPES.includes(f.type)) return `Field "${f.key}" has invalid type`;
+    if (['select', 'multiselect'].includes(f.type) &&
+        (!Array.isArray(f.options) || f.options.length < 1 || f.options.some(o => !String(o).trim())))
+      return `Field "${f.key}" needs at least one option`;
+  }
+  return null;
+}
+
+const cleanFields = (fields) => fields.map(f => ({
+  key: f.key, label: f.label.trim(), type: f.type, required: !!f.required,
+  ...(['select', 'multiselect'].includes(f.type) ? { options: f.options.map(o => String(o).trim()) } : {}),
+}));
+
+// GET /api/admin/categories/:id/subcategories
+router.get('/categories/:id/subcategories', protect, isAdmin, async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT s.id, s.name, s.fields, s.is_active,
+              (SELECT COUNT(*) FROM products p WHERE p.subcategory_id = s.id AND p.is_deleted = false) AS product_count
+       FROM subcategories s WHERE s.category_id = $1 ORDER BY s.name`, [req.params.id]);
+    return sendSuccess(res, 200, 'Subcategories fetched', {
+      subcategories: r.rows.map(s => ({
+        id: s.id, name: s.name, isActive: s.is_active, productCount: +s.product_count,
+        fields: typeof s.fields === 'string' ? JSON.parse(s.fields) : (s.fields || []),
+      })),
+    });
+  } catch (err) { return sendError(res, 500, 'Error fetching subcategories', err.message); }
+});
+
+// POST /api/admin/categories/:id/subcategories { name, fields }
+router.post('/categories/:id/subcategories', protect, isAdmin, async (req, res) => {
+  try {
+    const name = (req.body.name || '').trim();
+    if (name.length < 2 || name.length > 100) return sendError(res, 400, 'Name must be 2–100 characters');
+    const fields = req.body.fields || [];
+    const bad = validateFields(fields);
+    if (bad) return sendError(res, 400, bad);
+
+    const cat = await db.query(`SELECT 1 FROM categories WHERE id=$1 AND is_deleted=false`, [req.params.id]);
+    if (!cat.rows.length) return sendError(res, 404, 'Category not found');
+    const dup = await db.query(
+      `SELECT 1 FROM subcategories WHERE category_id=$1 AND LOWER(name)=LOWER($2)`, [req.params.id, name]);
+    if (dup.rows.length) return sendError(res, 409, 'Subcategory name already exists in this category');
+
+    const r = await db.query(
+      `INSERT INTO subcategories (category_id, name, fields, is_active) VALUES ($1,$2,$3,true) RETURNING id`,
+      [req.params.id, name, JSON.stringify(cleanFields(fields))]);
+    await catAudit(req.user.id, 'SUBCATEGORY_CREATED', 'subcategory', r.rows[0].id, { name });
+    return sendSuccess(res, 201, 'Subcategory created', { id: r.rows[0].id });
+  } catch (err) { return sendError(res, 500, 'Error creating subcategory', err.message); }
+});
+
+// PUT /api/admin/subcategories/:subId { name, fields }
+router.put('/subcategories/:subId', protect, isAdmin, async (req, res) => {
+  try {
+    const name = (req.body.name || '').trim();
+    if (name.length < 2 || name.length > 100) return sendError(res, 400, 'Name must be 2–100 characters');
+    const fields = req.body.fields || [];
+    const bad = validateFields(fields);
+    if (bad) return sendError(res, 400, bad);
+
+    const dup = await db.query(
+      `SELECT 1 FROM subcategories WHERE LOWER(name)=LOWER($1) AND id<>$2
+         AND category_id=(SELECT category_id FROM subcategories WHERE id=$2)`, [name, req.params.subId]);
+    if (dup.rows.length) return sendError(res, 409, 'Subcategory name already exists in this category');
+
+    const r = await db.query(
+      `UPDATE subcategories SET name=$1, fields=$2 WHERE id=$3 RETURNING id`,
+      [name, JSON.stringify(cleanFields(fields)), req.params.subId]);
+    if (!r.rows.length) return sendError(res, 404, 'Subcategory not found');
+    await catAudit(req.user.id, 'SUBCATEGORY_UPDATED', 'subcategory', req.params.subId, { name });
+    return sendSuccess(res, 200, 'Subcategory updated');
+  } catch (err) { return sendError(res, 500, 'Error updating subcategory', err.message); }
+});
+
+// POST /api/admin/subcategories/:subId/toggle
+router.post('/subcategories/:subId/toggle', protect, isAdmin, async (req, res) => {
+  try {
+    const r = await db.query(
+      `UPDATE subcategories SET is_active = NOT is_active WHERE id=$1 RETURNING is_active`, [req.params.subId]);
+    if (!r.rows.length) return sendError(res, 404, 'Subcategory not found');
+    await catAudit(req.user.id, 'SUBCATEGORY_UPDATED', 'subcategory', req.params.subId, { isActive: r.rows[0].is_active });
+    return sendSuccess(res, 200, r.rows[0].is_active ? 'Subcategory activated' : 'Subcategory deactivated');
+  } catch (err) { return sendError(res, 500, 'Error toggling subcategory', err.message); }
+});
+
+// DELETE /api/admin/subcategories/:subId (blocked if products use it)
+router.delete('/subcategories/:subId', protect, isAdmin, async (req, res) => {
+  try {
+    const used = await db.query(
+      `SELECT COUNT(*) FROM products WHERE subcategory_id=$1 AND is_deleted=false`, [req.params.subId]);
+    if (+used.rows[0].count > 0)
+      return sendError(res, 409, `${used.rows[0].count} product(s) use this subcategory. Deactivate it instead.`);
+    const r = await db.query(`DELETE FROM subcategories WHERE id=$1 RETURNING id`, [req.params.subId]);
+    if (!r.rows.length) return sendError(res, 404, 'Subcategory not found');
+    await catAudit(req.user.id, 'SUBCATEGORY_DELETED', 'subcategory', req.params.subId);
+    return sendSuccess(res, 200, 'Subcategory deleted');
+  } catch (err) { return sendError(res, 500, 'Error deleting subcategory', err.message); }
+});
+
 module.exports = router;
