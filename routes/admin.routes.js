@@ -2076,4 +2076,102 @@ router.delete('/products/:id', protect, isAdmin, async (req, res) => {
   } catch (err) { return sendError(res, 500, 'Error deleting product', err.message); }
 });
 
+// ─── CATEGORIES ───────────────────────────────────────────────────────────
+const catAudit = (...a) => require('../utils/audit').logAudit(...a);
+
+// GET /api/admin/categories?search=&status=all|active|inactive
+router.get('/categories', protect, isAdmin, async (req, res) => {
+  try {
+    const { search, status = 'all' } = req.query;
+    const params = [];
+    let where = `WHERE c.is_deleted = false`;
+    if (search) { params.push(`%${search.toLowerCase()}%`); where += ` AND LOWER(c.name) LIKE $${params.length}`; }
+    if (status === 'active') where += ` AND c.is_active = true`;
+    if (status === 'inactive') where += ` AND c.is_active = false`;
+
+    const r = await db.query(
+      `SELECT c.id, c.name, c.description, c.is_active, c.created_at,
+              (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.is_deleted = false) AS product_count,
+              (SELECT COUNT(*) FROM subcategories s WHERE s.category_id = c.id AND s.is_active = true) AS subcategory_count
+       FROM categories c ${where} ORDER BY c.name ASC`, params);
+
+    return sendSuccess(res, 200, 'Categories fetched', {
+      categories: r.rows.map(c => ({
+        id: c.id, name: c.name, description: c.description || '',
+        isActive: c.is_active, createdAt: c.created_at,
+        productCount: +c.product_count, subcategoryCount: +c.subcategory_count,
+      })),
+    });
+  } catch (err) { return sendError(res, 500, 'Error fetching categories', err.message); }
+});
+
+// POST /api/admin/categories { name, description }
+router.post('/categories', protect, isAdmin, async (req, res) => {
+  try {
+    const name = (req.body.name || '').trim();
+    const description = (req.body.description || '').trim() || null;
+    if (name.length < 2 || name.length > 100) return sendError(res, 400, 'Name must be 2–100 characters');
+
+    const dup = await db.query(
+      `SELECT 1 FROM categories WHERE LOWER(name)=LOWER($1) AND is_deleted=false`, [name]);
+    if (dup.rows.length) return sendError(res, 409, 'A category with this name already exists');
+
+    const r = await db.query(
+      `INSERT INTO categories (name, description, is_active, is_deleted, created_at, updated_at)
+       VALUES ($1,$2,true,false,NOW(),NOW()) RETURNING id, name`, [name, description]);
+    await catAudit(req.user.id, 'CATEGORY_CREATED', 'category', r.rows[0].id, { name });
+    return sendSuccess(res, 201, 'Category created', { category: r.rows[0] });
+  } catch (err) { return sendError(res, 500, 'Error creating category', err.message); }
+});
+
+// PUT /api/admin/categories/:id { name, description }
+router.put('/categories/:id', protect, isAdmin, async (req, res) => {
+  try {
+    const name = (req.body.name || '').trim();
+    const description = (req.body.description || '').trim() || null;
+    if (name.length < 2 || name.length > 100) return sendError(res, 400, 'Name must be 2–100 characters');
+
+    const dup = await db.query(
+      `SELECT 1 FROM categories WHERE LOWER(name)=LOWER($1) AND id<>$2 AND is_deleted=false`, [name, req.params.id]);
+    if (dup.rows.length) return sendError(res, 409, 'A category with this name already exists');
+
+    const r = await db.query(
+      `UPDATE categories SET name=$1, description=$2, updated_at=NOW()
+       WHERE id=$3 AND is_deleted=false RETURNING id, name`, [name, description, req.params.id]);
+    if (!r.rows.length) return sendError(res, 404, 'Category not found');
+    await catAudit(req.user.id, 'CATEGORY_UPDATED', 'category', req.params.id, { name });
+    return sendSuccess(res, 200, 'Category updated', { category: r.rows[0] });
+  } catch (err) { return sendError(res, 500, 'Error updating category', err.message); }
+});
+
+// POST /api/admin/categories/:id/toggle
+router.post('/categories/:id/toggle', protect, isAdmin, async (req, res) => {
+  try {
+    const r = await db.query(
+      `UPDATE categories SET is_active = NOT is_active, updated_at=NOW()
+       WHERE id=$1 AND is_deleted=false RETURNING id, is_active`, [req.params.id]);
+    if (!r.rows.length) return sendError(res, 404, 'Category not found');
+    await catAudit(req.user.id, 'CATEGORY_UPDATED', 'category', req.params.id, { isActive: r.rows[0].is_active });
+    return sendSuccess(res, 200, r.rows[0].is_active ? 'Category activated' : 'Category deactivated', { isActive: r.rows[0].is_active });
+  } catch (err) { return sendError(res, 500, 'Error toggling category', err.message); }
+});
+
+// DELETE /api/admin/categories/:id  (soft delete, blocked if products exist)
+router.delete('/categories/:id', protect, isAdmin, async (req, res) => {
+  try {
+    const used = await db.query(
+      `SELECT COUNT(*) FROM products WHERE category_id=$1 AND is_deleted=false`, [req.params.id]);
+    if (+used.rows[0].count > 0)
+      return sendError(res, 409, `Category has ${used.rows[0].count} product(s). Deactivate it instead, or move the products first.`);
+
+    const r = await db.query(
+      `UPDATE categories SET is_deleted=true, is_active=false, updated_at=NOW()
+       WHERE id=$1 AND is_deleted=false RETURNING id`, [req.params.id]);
+    if (!r.rows.length) return sendError(res, 404, 'Category not found');
+    await db.query(`UPDATE subcategories SET is_active=false WHERE category_id=$1`, [req.params.id]);
+    await catAudit(req.user.id, 'CATEGORY_DELETED', 'category', req.params.id);
+    return sendSuccess(res, 200, 'Category deleted');
+  } catch (err) { return sendError(res, 500, 'Error deleting category', err.message); }
+});
+
 module.exports = router;
