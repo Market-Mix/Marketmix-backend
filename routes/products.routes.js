@@ -139,6 +139,71 @@ router.get('/', async (req, res) => {
 	}
 });
 
+// Search products by name or description
+router.get('/search/query', async (req, res) => {
+	try {
+		const { q } = req.query;
+
+		if (!q || q.trim().length === 0) {
+			return res.json({
+				status: 'success',
+				data: [],
+				message: 'No search query provided'
+			});
+		}
+
+		const searchQuery = `%${q.toLowerCase()}%`;
+
+		let result;
+		try {
+			result = await pool.query(
+				`SELECT id, seller_id, name, description, price, stock_quantity, main_image_url, 
+						is_active, created_at, category_id
+					 FROM products 
+					 WHERE is_active = true AND is_deleted = false 
+					 AND (LOWER(name) LIKE $1 OR LOWER(description) LIKE $1)
+					 ORDER BY name ASC
+					 LIMIT 50`,
+				[searchQuery]
+			);
+		} catch (columnError) {
+			console.error('Full query failed, trying minimal columns:', columnError.message);
+			result = await pool.query(
+				`SELECT id, name, price, main_image_url, category_id
+					 FROM products 
+					 WHERE is_active = true AND is_deleted = false 
+					 AND (LOWER(name) LIKE $1 OR LOWER(description) LIKE $1)
+					 ORDER BY name ASC
+					 LIMIT 50`,
+				[searchQuery]
+			);
+		}
+
+		const productsWithDefaults = result.rows.map(p => ({
+			...p,
+			seller_id: p.seller_id || null,
+			description: p.description || '',
+			main_image_url: p.main_image_url || 'https://via.placeholder.com/500',
+			price: p.price || 0,
+			stock_quantity: p.stock_quantity || 0,
+			rating: 4.5,
+			review_count: 0,
+			is_active: p.is_active !== false,
+			created_at: p.created_at || new Date().toISOString()
+		}));
+
+		res.json({
+			status: 'success',
+			data: productsWithDefaults,
+			count: productsWithDefaults.length
+		});
+	} catch (error) {
+		console.error('Error searching products:', error.message);
+		console.error('Error details:', error);
+		res.status(500).json({ status: 'error', message: error.message });
+	}
+});
+
 // Get single product by ID
 router.get('/:id', async (req, res) => {
 	try {

@@ -1907,4 +1907,173 @@ router.delete('/buyers/:id', protect, isAdmin, async (req, res) => {
   } catch (err) { return sendError(res, 500, 'Error deleting buyer', err.message); }
 });
 
+// ─── PRODUCTS ─────────────────────────────────────────────────────────────
+// GET /api/admin/products?search=&status=all|active|inactive|out-of-stock|reported&limit=
+router.get('/products', protect, isAdmin, async (req, res) => {
+  try {
+    const { search, status = 'all' } = req.query;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const offset = (page - 1) * limit;
+
+    const params = [];
+    let where = `WHERE p.is_deleted = false`;
+    if (search) {
+      params.push(`%${search.toLowerCase()}%`);
+      where += ` AND (LOWER(p.name) LIKE $${params.length}
+                  OR LOWER(COALESCE(p.sku,'')) LIKE $${params.length}
+                  OR LOWER(COALESCE(sp.business_name, u.first_name || ' ' || u.last_name)) LIKE $${params.length})`;
+    }
+    if (status === 'active') where += ` AND p.is_active = true`;
+    else if (status === 'inactive') where += ` AND p.is_active = false`;
+    else if (status === 'out-of-stock') where += ` AND p.stock_quantity = 0`;
+    else if (status === 'reported') where += ` AND EXISTS (SELECT 1 FROM product_reports pr WHERE pr.product_id = p.id)`;
+
+    const [rows, count, stats] = await Promise.all([
+      db.query(
+        `SELECT p.id, p.name, p.price, p.stock_quantity, p.is_active, p.admin_disabled,
+                COALESCE(c.name,'Uncategorized') AS category,
+                COALESCE(sp.business_name, u.first_name || ' ' || u.last_name) AS seller,
+                (SELECT COUNT(*) FROM product_reports pr WHERE pr.product_id = p.id) AS reports
+         FROM products p
+         LEFT JOIN categories c ON c.id = p.category_id
+         LEFT JOIN users u ON u.id = p.seller_id
+         LEFT JOIN seller_profiles sp ON sp.user_id = p.seller_id
+         ${where}
+         ORDER BY p.created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset]
+      ),
+      db.query(
+        `SELECT COUNT(*) FROM products p
+         LEFT JOIN users u ON u.id = p.seller_id
+         LEFT JOIN seller_profiles sp ON sp.user_id = p.seller_id
+         ${where}`, params),
+      db.query(
+        `SELECT COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE is_active) AS active,
+                COUNT(*) FILTER (WHERE NOT is_active) AS inactive,
+                COUNT(*) FILTER (WHERE stock_quantity = 0) AS out_of_stock,
+                (SELECT COUNT(DISTINCT product_id) FROM product_reports) AS reported
+         FROM products WHERE is_deleted = false`)
+    ]);
+
+    const s = stats.rows[0];
+    return sendSuccess(res, 200, 'Products fetched', {
+      products: rows.rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        category: r.category,
+        seller: r.seller,
+        price: parseFloat(r.price) || 0,
+        stock: parseInt(r.stock_quantity) || 0,
+        reports: parseInt(r.reports) || 0,
+        status: r.admin_disabled ? 'Disabled' : r.is_active
+          ? (r.stock_quantity === 0 ? 'Out of Stock' : 'Active') : 'Inactive',
+      })),
+      stats: {
+        total: +s.total, active: +s.active, inactive: +s.inactive,
+        out_of_stock: +s.out_of_stock, reported: +s.reported
+      },
+      total: parseInt(count.rows[0].count), page, limit
+    });
+  } catch (err) {
+    console.error('GET /admin/products error:', err);
+    return sendError(res, 500, 'Error fetching products', err.message);
+  }
+});
+
+// GET /api/admin/products/:id
+router.get('/products/:id', protect, isAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const r = await db.query(
+      `SELECT p.*, COALESCE(c.name,'Uncategorized') AS category_name,
+              COALESCE(sp.business_name, u.first_name || ' ' || u.last_name) AS seller_name,
+              u.email AS seller_email,
+              COALESCE((SELECT SUM(oi.quantity) FROM order_items oi WHERE oi.product_id = p.id),0) AS units_sold
+       FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN users u ON u.id = p.seller_id
+       LEFT JOIN seller_profiles sp ON sp.user_id = p.seller_id
+       WHERE p.id = $1 AND p.is_deleted = false`, [id]);
+    if (!r.rows.length) return sendError(res, 404, 'Product not found');
+
+    const reports = await db.query(
+      `SELECT reason, details, created_at FROM product_reports
+       WHERE product_id = $1 ORDER BY created_at DESC LIMIT 50`, [id]);
+
+    const p = r.rows[0];
+    return sendSuccess(res, 200, 'Product fetched', { product: {
+      id: p.id, name: p.name, description: p.description,
+      image: p.main_image_url, sku: p.sku,
+      seller: p.seller_name, sellerEmail: p.seller_email,
+      category: p.category_name,
+      price: parseFloat(p.price) || 0,
+      sellerPrice: p.seller_price ? parseFloat(p.seller_price) : null,
+      stock: p.stock_quantity, unitsSold: parseInt(p.units_sold) || 0,
+      views: p.views || 0,
+      isActive: p.is_active, adminDisabled: !!p.admin_disabled,
+      disabledReason: p.disabled_reason,
+      reports: reports.rows
+    }});
+  } catch (err) {
+    return sendError(res, 500, 'Error fetching product', err.message);
+  }
+});
+
+// POST /api/admin/products/:id/deactivate { reason }
+router.post('/products/:id/deactivate', protect, isAdmin, async (req, res) => {
+  try {
+    const reason = (req.body.reason || '').trim();
+    if (reason.length < 10) return sendError(res, 400, 'Reason must be at least 10 characters');
+    const r = await db.query(
+      `UPDATE products SET is_active=false, admin_disabled=true, disabled_reason=$1,
+              disabled_by=$2, disabled_at=NOW(), updated_at=NOW()
+       WHERE id=$3 AND is_deleted=false RETURNING id, name, seller_id`,
+      [reason, req.user.id, req.params.id]);
+    if (!r.rows.length) return sendError(res, 404, 'Product not found');
+
+    const { logAudit } = require('../utils/audit');
+    await logAudit(req.user.id, 'PRODUCT_UPDATED', 'product', req.params.id, { action: 'disabled', reason });
+    await createDedupedNotification({
+      userId: r.rows[0].seller_id, title: 'Product Disabled',
+      message: `"${r.rows[0].name}" was disabled by MarketMix. Reason: ${reason}`,
+      type: 'account', referenceId: req.params.id, link: '/sellers/sellers%20product.html' });
+    return sendSuccess(res, 200, 'Product disabled');
+  } catch (err) { return sendError(res, 500, 'Error disabling product', err.message); }
+});
+
+// POST /api/admin/products/:id/activate
+router.post('/products/:id/activate', protect, isAdmin, async (req, res) => {
+  try {
+    const r = await db.query(
+      `UPDATE products SET is_active=true, admin_disabled=false, disabled_reason=NULL,
+              disabled_by=NULL, disabled_at=NULL, updated_at=NOW()
+       WHERE id=$1 AND is_deleted=false RETURNING id, name, seller_id`, [req.params.id]);
+    if (!r.rows.length) return sendError(res, 404, 'Product not found');
+
+    const { logAudit } = require('../utils/audit');
+    await logAudit(req.user.id, 'PRODUCT_UPDATED', 'product', req.params.id, { action: 'activated' });
+    await createDedupedNotification({
+      userId: r.rows[0].seller_id, title: 'Product Approved',
+      message: `"${r.rows[0].name}" is now live.`, type: 'account',
+      referenceId: req.params.id, link: '/sellers/sellers%20product.html' });
+    return sendSuccess(res, 200, 'Product activated');
+  } catch (err) { return sendError(res, 500, 'Error activating product', err.message); }
+});
+
+// DELETE /api/admin/products/:id (soft delete)
+router.delete('/products/:id', protect, isAdmin, async (req, res) => {
+  try {
+    const r = await db.query(
+      `UPDATE products SET is_deleted=true, is_active=false, updated_at=NOW()
+       WHERE id=$1 AND is_deleted=false RETURNING id`, [req.params.id]);
+    if (!r.rows.length) return sendError(res, 404, 'Product not found');
+    const { logAudit } = require('../utils/audit');
+    await logAudit(req.user.id, 'PRODUCT_DELETED', 'product', req.params.id);
+    return sendSuccess(res, 200, 'Product deleted');
+  } catch (err) { return sendError(res, 500, 'Error deleting product', err.message); }
+});
+
 module.exports = router;
