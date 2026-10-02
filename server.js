@@ -89,6 +89,7 @@ const couponsRoutes = require('./routes/coupons.routes');
 // Mount routes — ORDER MATTERS
 app.use('/api/auth', authRoutes);
 app.use('/api/buyer', buyerRoutes);
+app.use('/api/admin/notifications', require('./routes/admin_notifications.routes'));
 app.use('/api/admin', adminRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -124,6 +125,10 @@ const { execFile } = require('child_process');
 const backgroundCronsEnabled = process.env.ENABLE_BACKGROUND_CRONS === 'true';
  
 if (backgroundCronsEnabled) {
+  const { processDue } = require('./services/adminBroadcast.service');
+
+  setInterval(() => processDue().catch(e => console.error('Broadcast cron:', e.message)), 60 * 1000);
+
   setInterval(() => {
     execFile('node', ['scripts/escrow_auto_release.js'], (err, stdout) => {
       if (err) console.error('Escrow cron error:', err.message);

@@ -45,6 +45,12 @@ router.get('/release-escrow', async (req, res) => {
 });
 
 // Simple keepalive ping
+router.get('/process-broadcasts', async (req, res) => {
+  if (req.query.secret !== process.env.CRON_SECRET) return res.status(401).json({ error: 'Unauthorized' });
+  const processed = await require('../services/adminBroadcast.service').processDue();
+  res.json({ success: true, processed });
+});
+
 router.get('/ping', (req, res) => {
   res.json({ status: 'alive', timestamp: new Date() });
 });
