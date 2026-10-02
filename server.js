@@ -29,6 +29,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// cache for public CMS reads
+app.use('/api/cms', (req, res, next) => { if (req.method === 'GET') res.setHeader('Cache-Control', 'public, max-age=60'); next(); });
+
 // Logging middleware
 app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'));
 
@@ -90,6 +93,8 @@ const couponsRoutes = require('./routes/coupons.routes');
 app.use('/api/auth', authRoutes);
 app.use('/api/buyer', buyerRoutes);
 app.use('/api/admin/notifications', require('./routes/admin_notifications.routes'));
+app.use('/api/admin/cms', require('./routes/admin_cms.routes'));
+app.use('/api/cms', require('./routes/cms_public.routes'));
 app.use('/api/admin', adminRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/categories', categoryRoutes);
