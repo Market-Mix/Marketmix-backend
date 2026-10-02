@@ -1542,7 +1542,7 @@ router.get('/orders', protect, isAdmin, async (req, res) => {
     let index = 1;
 
     if (search) {
-      where += ` AND (o.order_number ILIKE $${index} OR CAST(o.id AS TEXT) ILIKE $${index} OR u.email ILIKE $${index} OR (u.first_name || ' ' || u.last_name) ILIKE $${index})`;
+      where += ` AND (CAST(o.order_number AS TEXT) ILIKE $${index} OR CAST(o.id AS TEXT) ILIKE $${index} OR u.email ILIKE $${index} OR (u.first_name || ' ' || u.last_name) ILIKE $${index})`;
       params.push(`%${search}%`);
       index++;
     }
@@ -1593,7 +1593,7 @@ router.get('/orders', protect, isAdmin, async (req, res) => {
     return sendSuccess(res, 200, 'Orders fetched', {
       orders: result.rows.map(row => ({
         id: row.id,
-        orderNumber: row.order_number || `#${String(row.id).slice(0, 8).toUpperCase()}`,
+        orderNumber: row.order_number ? `MMX-${row.order_number}` : `#${String(row.id).slice(0, 8).toUpperCase()}`,
         buyerName: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
         buyerEmail: row.buyer_email,
         totalAmount: parseFloat(row.total_amount) || 0,
@@ -1711,7 +1711,7 @@ router.put('/orders/:id/status', protect, isAdmin, async (req, res) => {
       reason: reason || null,
     });
 
-    const shortId = order.order_number || `#${String(id).slice(0, 8).toUpperCase()}`;
+    const shortId = order.order_number ? `MMX-${order.order_number}` : `#${String(id).slice(0, 8).toUpperCase()}`;
     await createDedupedNotification({
       userId: order.buyer_id,
       title: 'Order Status Updated',
@@ -1838,7 +1838,7 @@ router.get('/buyers/:id', protect, isAdmin, async (req, res) => {
       refundCases: +refunds.rows[0].count,
       address: addr.rows[0] || null,
       recentOrders: orders.rows.map(o => ({
-        id: o.id, orderNumber: o.order_number || `#${String(o.id).slice(0,8).toUpperCase()}`,
+        id: o.id, orderNumber: o.order_number ? `MMX-${o.order_number}` : `#${String(o.id).slice(0,8).toUpperCase()}`,
         amount: parseFloat(o.total_amount), status: o.status,
         paymentStatus: o.payment_status, createdAt: o.created_at })),
     }});
@@ -2295,7 +2295,7 @@ const PAY_BASE = `WITH base AS (
        WHEN o.status='cancelled' THEN 'Cancelled'
        WHEN pt.status='failed'   THEN 'Failed'
        ELSE 'Pending' END AS status,
-  o.id AS order_uuid, COALESCE(o.order_number,'#'||UPPER(LEFT(o.id::text,8))) AS order_no,
+  o.id AS order_uuid, COALESCE('MMX-'||o.order_number::text,'#'||UPPER(LEFT(o.id::text,8))) AS order_no,
   u.first_name||' '||u.last_name AS buyer, u.email AS buyer_email, u.phone AS buyer_phone,
   (SELECT STRING_AGG(DISTINCT COALESCE(sp.business_name,su.first_name||' '||su.last_name),', ')
    FROM order_items oi JOIN users su ON su.id=oi.seller_id
