@@ -480,12 +480,11 @@ async function _fulfillOrder(reference, payResult) {
     // Update transaction
     await db.query(
       `UPDATE payment_transactions
-       SET status = 'success',
-           provider_transaction_id = COALESCE($1, provider_transaction_id),
-           paid_at = NOW(),
-           updated_at = NOW()
-       WHERE id = $2`,
-      [payResult.transactionId || null, tx.id]
+       SET status='success', channel=COALESCE($3,channel),
+           provider_transaction_id=COALESCE($1,provider_transaction_id),
+           paid_at=NOW(), updated_at=NOW()
+       WHERE id=$2`,
+      [payResult.transactionId || null, tx.id, payResult.channel || null]
     );
 
     // Update order

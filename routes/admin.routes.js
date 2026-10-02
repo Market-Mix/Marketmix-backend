@@ -2286,4 +2286,117 @@ router.delete('/subcategories/:subId', protect, isAdmin, async (req, res) => {
   } catch (err) { return sendError(res, 500, 'Error deleting subcategory', err.message); }
 });
 
+// ─── PAYMENTS ─────────────────────────────────────────────
+const PAY_BASE = `WITH base AS (
+ SELECT pt.id, pt.provider_reference AS reference, INITCAP(pt.provider) AS gateway, pt.channel,
+  pt.amount::numeric AS amount, pt.created_at, pt.paid_at,
+  CASE WHEN pt.status='refunded' THEN 'Refunded'
+       WHEN pt.status='success'  THEN 'Paid'
+       WHEN o.status='cancelled' THEN 'Cancelled'
+       WHEN pt.status='failed'   THEN 'Failed'
+       ELSE 'Pending' END AS status,
+  o.id AS order_uuid, COALESCE(o.order_number,'#'||UPPER(LEFT(o.id::text,8))) AS order_no,
+  u.first_name||' '||u.last_name AS buyer, u.email AS buyer_email, u.phone AS buyer_phone,
+  (SELECT STRING_AGG(DISTINCT COALESCE(sp.business_name,su.first_name||' '||su.last_name),', ')
+   FROM order_items oi JOIN users su ON su.id=oi.seller_id
+   LEFT JOIN seller_profiles sp ON sp.user_id=su.id WHERE oi.order_id=o.id) AS seller
+ FROM payment_transactions pt
+ JOIN orders o ON o.id=pt.order_id JOIN users u ON u.id=pt.user_id)`;
+
+const METHOD = { card:'Card', bank:'Bank Transfer', bank_transfer:'Bank Transfer', ussd:'USSD', mobile_money:'Mobile Money' };
+const shape = r => ({
+  id: r.id, displayId: r.reference, reference: r.reference, buyer: r.buyer, seller: r.seller || '—',
+  orderId: r.order_no, amount: parseFloat(r.amount), gateway: r.gateway,
+  method: METHOD[r.channel] || r.channel || '—', status: r.status, date: r.created_at,
+});
+
+router.get('/payments', protect, isAdmin, async (req, res) => {
+  try {
+    const { search, status='all', method='all', gateway='all', date } = req.query;
+    const page = Math.max(+req.query.page || 1, 1), limit = Math.min(+req.query.limit || 20, 100);
+    const p = []; let w = 'WHERE 1=1';
+    if (search) { p.push(`%${search}%`); w += ` AND (reference ILIKE $${p.length} OR order_no ILIKE $${p.length} OR buyer ILIKE $${p.length} OR buyer_email ILIKE $${p.length} OR seller ILIKE $${p.length})`; }
+    if (status  !== 'all') { p.push(status);  w += ` AND status=$${p.length}`; }
+    if (method  !== 'all') { p.push(method);  w += ` AND channel=$${p.length}`; }
+    if (gateway !== 'all') { p.push(gateway.toLowerCase()); w += ` AND LOWER(gateway)=$${p.length}`; }
+    if (date) { p.push(date); w += ` AND created_at::date=$${p.length}`; }
+
+    const [rows, count, st] = await Promise.all([
+      db.query(`${PAY_BASE} SELECT * FROM base ${w} ORDER BY created_at DESC LIMIT $${p.length+1} OFFSET $${p.length+2}`, [...p, limit, (page-1)*limit]),
+      db.query(`${PAY_BASE} SELECT COUNT(*) FROM base ${w}`, p),
+      db.query(`${PAY_BASE} SELECT
+         COALESCE(SUM(amount) FILTER (WHERE status='Paid'),0) total,
+         COALESCE(SUM(amount) FILTER (WHERE status='Paid' AND created_at::date=CURRENT_DATE),0) today,
+         COUNT(*) FILTER (WHERE status='Pending') pending,
+         COUNT(*) FILTER (WHERE status='Failed') failed,
+         COALESCE(SUM(amount) FILTER (WHERE status='Refunded'),0) refunded FROM base`)
+    ]);
+    const s = st.rows[0];
+    return sendSuccess(res, 200, 'Payments fetched', {
+      payments: rows.rows.map(shape), total: +count.rows[0].count, page, limit,
+      stats: { total:+s.total, today:+s.today, pending:+s.pending, failed:+s.failed, refunded:+s.refunded }
+    });
+  } catch (e) { return sendError(res, 500, 'Error fetching payments', e.message); }
+});
+
+router.get('/payments/overview', protect, isAdmin, async (req, res) => {
+  try {
+    const [gw, paid, esc, wd, act] = await Promise.all([
+      db.query(`${PAY_BASE} SELECT gateway, COUNT(*) total, COUNT(*) FILTER (WHERE status='Paid') ok,
+        COUNT(*) FILTER (WHERE created_at::date=CURRENT_DATE) today,
+        AVG(EXTRACT(EPOCH FROM paid_at-created_at)) secs FROM base GROUP BY gateway`),
+      db.query(`${PAY_BASE} SELECT COALESCE(SUM(amount) FILTER (WHERE status='Paid'),0) paid,
+        COALESCE(SUM(amount) FILTER (WHERE status='Refunded'),0) refunded FROM base`),
+      db.query(`SELECT COALESCE(SUM(amount),0) v FROM escrow_transactions WHERE status='held'`),
+      db.query(`SELECT COALESCE(SUM(amount),0) v FROM withdrawals WHERE status='success'`),
+      db.query(`${PAY_BASE} SELECT status, buyer, order_no, reference, created_at FROM base ORDER BY created_at DESC LIMIT 6`)
+    ]);
+    const paidT = +paid.rows[0].paid, refunded = +paid.rows[0].refunded;
+    const ICON = { Paid:'fa-money-bill-wave', Failed:'fa-exclamation-triangle', Refunded:'fa-undo', Pending:'fa-hourglass-half', Cancelled:'fa-ban' };
+    return sendSuccess(res, 200, 'Overview', {
+      gateways: gw.rows.map(g => {
+        const rate = g.total > 0 ? (g.ok / g.total) * 100 : 0;
+        return { name: g.gateway, successRate: rate.toFixed(1)+'%', transactions: String(g.today),
+          processingTime: g.secs ? Math.round(g.secs)+'s' : '—',
+          status: rate >= 95 ? 'Healthy' : rate >= 85 ? 'Monitoring' : 'Degraded',
+          health: rate >= 95 ? 'good' : rate >= 85 ? 'medium' : 'poor' };
+      }),
+      finance: {
+        revenue: paidT - stripFee(paidT), pendingSettlements: stripFee(+esc.rows[0].v),
+        withdrawals: +wd.rows[0].v, refundRatio: paidT ? +(refunded/paidT*100).toFixed(1) : 0
+      },
+      activity: act.rows.map(a => ({ icon: ICON[a.status], title: `Payment ${a.status.toLowerCase()}`,
+        description: `${a.buyer} · ${a.order_no}`, time: a.created_at }))
+    });
+  } catch (e) { return sendError(res, 500, 'Error fetching overview', e.message); }
+});
+
+router.get('/payments/:id', protect, isAdmin, async (req, res) => {
+  try {
+    const r = (await db.query(`${PAY_BASE} SELECT * FROM base WHERE id=$1`, [req.params.id])).rows[0];
+    if (!r) return sendError(res, 404, 'Payment not found');
+    const [esc, sl] = await Promise.all([
+      db.query(`SELECT status FROM escrow_transactions WHERE order_id=$1`, [r.order_uuid]),
+      db.query(`SELECT su.email, su.phone FROM order_items oi JOIN users su ON su.id=oi.seller_id WHERE oi.order_id=$1 LIMIT 1`, [r.order_uuid])
+    ]);
+    const amount = +r.amount, paid = ['Paid','Refunded'].includes(r.status);
+    const released = esc.rows.length && esc.rows.every(e => e.status === 'released');
+    const T = {
+      Paid:      ['complete','complete','complete','complete', released?'complete':'active', released?'complete':'pending'],
+      Refunded:  ['complete','complete','complete','complete','complete','refunded'],
+      Failed:    ['complete','complete','failed','pending','pending','pending'],
+      Cancelled: ['complete','cancelled','pending','pending','pending','pending'],
+      Pending:   ['complete','active','pending','pending','pending','pending'],
+    }[r.status];
+    const NOTES = { Paid:'Payment captured; funds held in escrow until delivery is confirmed.',
+      Pending:'Awaiting payment confirmation from the gateway.', Failed:'Gateway reported a failed or declined charge.',
+      Refunded:'Payment was refunded to the buyer.', Cancelled:'Order was cancelled before payment was captured.' };
+    return sendSuccess(res, 200, 'Payment fetched', { ...shape(r),
+      fee: paid ? amount - stripFee(amount) : 0, earnings: paid ? stripFee(amount) : 0,
+      notes: NOTES[r.status], timeline: T,
+      buyerInfo:  { name: r.buyer, email: r.buyer_email, phone: r.buyer_phone || '—' },
+      sellerInfo: { name: r.seller || '—', email: sl.rows[0]?.email || '—', phone: sl.rows[0]?.phone || '—' } });
+  } catch (e) { return sendError(res, 500, 'Error fetching payment', e.message); }
+});
+
 module.exports = router;

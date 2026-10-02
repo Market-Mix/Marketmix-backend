@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middlewares/auth.middleware');
+const { isAdmin } = require('../middlewares/role.middleware');
 const {
   getPaymentMethods,
   initiatePayment,
@@ -24,6 +25,6 @@ router.post('/paystack/webhook', paystackWebhook);
 // Protected
 router.post('/initiate', protect, initiatePayment);
 router.post('/verify', protect, verifyPayment);
-router.post('/refund', protect, processRefund); // add isAdmin when ready
+router.post('/refund', protect, isAdmin, processRefund);
 
 module.exports = router;
