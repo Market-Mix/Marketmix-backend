@@ -213,10 +213,11 @@ router.get('/blog', wrap(async (req, res) => {
 router.post('/blog', upload.single('cover'), wrap(async (req, res) => {
   const f = postFields(req.body);
   const cover = req.file ? await uploadImg(req.file, 'blog') : null;
+  const pubAt = f.status === 'published' ? new Date() : f.status === 'scheduled' ? f.publishedAt : null;
   const r = await db.query(
     `INSERT INTO blog_posts (title,slug,excerpt,content,cover_image_url,author_name,status,published_at,created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,CASE WHEN $7='published' THEN NOW() ELSE $8 END,$9) RETURNING id`,
-    [f.title, await uniqueSlug('blog_posts', f.title), f.excerpt, f.content, cover, f.authorName, f.status, f.publishedAt, req.user.id]);
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+    [f.title, await uniqueSlug('blog_posts', f.title), f.excerpt, f.content, cover, f.authorName, f.status, pubAt, req.user.id]);
   await audit(req, 'CMS_BLOG_CREATED', 'blog_post', r.rows[0].id, { title: f.title, status: f.status });
   return sendSuccess(res, 201, 'Post created', { id: r.rows[0].id });
 }));
@@ -224,11 +225,11 @@ router.post('/blog', upload.single('cover'), wrap(async (req, res) => {
 router.put('/blog/:id', upload.single('cover'), wrap(async (req, res) => {
   const f = postFields(req.body);
   const cover = req.file ? await uploadImg(req.file, 'blog') : null;
+  const pubAt = f.status === 'published' ? new Date() : f.status === 'scheduled' ? f.publishedAt : null;
   const r = await db.query(
     `UPDATE blog_posts SET title=$1,excerpt=$2,content=$3,cover_image_url=COALESCE($4,cover_image_url),author_name=$5,status=$6,
-       published_at=CASE WHEN $6='published' THEN COALESCE(published_at,NOW()) WHEN $6='scheduled' THEN $7 ELSE NULL END,
-       updated_at=NOW() WHERE id=$8 AND NOT is_deleted RETURNING id`,
-    [f.title, f.excerpt, f.content, cover, f.authorName, f.status, f.publishedAt, req.params.id]);
+       published_at=$7, updated_at=NOW() WHERE id=$8 AND NOT is_deleted RETURNING id`,
+    [f.title, f.excerpt, f.content, cover, f.authorName, f.status, pubAt, req.params.id]);
   if (!r.rows.length) throw httpErr(404, 'Post not found');
   await audit(req, 'CMS_BLOG_UPDATED', 'blog_post', req.params.id, { title: f.title, status: f.status });
   return sendSuccess(res, 200, 'Post saved');
