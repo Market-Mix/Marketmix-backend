@@ -39,7 +39,10 @@ router.get('/blog/:slug', async (req, res) => {
   try {
     const r = await db.query(`SELECT * FROM blog_posts WHERE slug=$1 AND ${LIVE_POST}`, [req.params.slug]);
     if (!r.rows.length) return sendError(res, 404, 'Post not found');
-    return sendSuccess(res, 200, 'Post', { post: postPub(r.rows[0]) });
+    const rel = await db.query(
+      `SELECT title,slug,excerpt,cover_image_url,author_name,published_at,created_at FROM blog_posts
+       WHERE ${LIVE_POST} AND slug<>$1 ORDER BY COALESCE(published_at,created_at) DESC LIMIT 3`, [req.params.slug]);
+    return sendSuccess(res, 200, 'Post', { post: postPub(r.rows[0]), relatedPosts: rel.rows.map(postPub) });
   } catch (e) { return sendError(res, 500, 'Error', e.message); }
 });
 
