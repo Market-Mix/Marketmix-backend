@@ -2316,7 +2316,7 @@ router.get('/payments', protect, isAdmin, async (req, res) => {
     const page = Math.max(+req.query.page || 1, 1), limit = Math.min(+req.query.limit || 20, 100);
     const p = []; let w = 'WHERE 1=1';
     if (search) { p.push(`%${search}%`); w += ` AND (reference ILIKE $${p.length} OR order_no ILIKE $${p.length} OR buyer ILIKE $${p.length} OR buyer_email ILIKE $${p.length} OR seller ILIKE $${p.length})`; }
-    if (status  !== 'all') { p.push(status);  w += ` AND status=$${p.length}`; }
+    if (status  !== 'all') { p.push(status.toLowerCase());  w += ` AND LOWER(status)=$${p.length}`; }
     if (method  !== 'all') { p.push(method);  w += ` AND channel=$${p.length}`; }
     if (gateway !== 'all') { p.push(gateway.toLowerCase()); w += ` AND LOWER(gateway)=$${p.length}`; }
     if (date) { p.push(date); w += ` AND created_at::date=$${p.length}`; }
@@ -2336,7 +2336,10 @@ router.get('/payments', protect, isAdmin, async (req, res) => {
       payments: rows.rows.map(shape), total: +count.rows[0].count, page, limit,
       stats: { total:+s.total, today:+s.today, pending:+s.pending, failed:+s.failed, refunded:+s.refunded }
     });
-  } catch (e) { return sendError(res, 500, 'Error fetching payments', e.message); }
+  } catch (e) {
+    console.error('payments route error:', e.message, e.position || '');
+    return sendError(res, 500, 'Error fetching payments', e.message);
+  }
 });
 
 router.get('/payments/overview', protect, isAdmin, async (req, res) => {
@@ -2368,7 +2371,10 @@ router.get('/payments/overview', protect, isAdmin, async (req, res) => {
       activity: act.rows.map(a => ({ icon: ICON[a.status], title: `Payment ${a.status.toLowerCase()}`,
         description: `${a.buyer} · ${a.order_no}`, time: a.created_at }))
     });
-  } catch (e) { return sendError(res, 500, 'Error fetching overview', e.message); }
+  } catch (e) {
+    console.error('payments overview route error:', e.message, e.position || '');
+    return sendError(res, 500, 'Error fetching overview', e.message);
+  }
 });
 
 router.get('/payments/:id', protect, isAdmin, async (req, res) => {
