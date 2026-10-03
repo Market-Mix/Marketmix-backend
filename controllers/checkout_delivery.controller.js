@@ -110,16 +110,23 @@ async function _getSessionItems(sessionId, session) {
 }
 
 function _sanitizeSession(s) {
+  const discount = parseFloat(s.coupon_discount || 0);
+  const total = parseFloat(s.total || s.total_amount || 0);
   return {
     id:               s.id,
     status:           s.status,
-    subtotal:         parseFloat(s.subtotal || s.total_amount || 0),
+    subtotal:         parseFloat(s.subtotal || 0),
     shippingFee:      parseFloat(s.shipping_fee || 0),
-    discountAmount:   parseFloat(s.coupon_discount || s.discount_amount || 0),
-    totalAmount:      parseFloat(s.total || s.total_amount || 0),
+    couponCode:       s.coupon_code || null,
+    couponDiscount:   discount,
+    discountAmount:   discount,
+    total,
+    totalAmount:      total,
     deliveryMethod:   s.delivery_method,
     deliveryProvider: s.delivery_provider,
     estimatedDelivery: s.estimated_delivery,
+    expiresAt:        s.expires_at,
+    addressId:        s.address_id || null,
   };
 }
 
