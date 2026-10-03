@@ -24,7 +24,7 @@ const audit = (req, action, type, id, metadata) => logAudit(req.user.id, action,
 
 const cStatus = alias => `CASE WHEN ${alias}.admin_status='draft' THEN 'Draft' WHEN ${alias}.admin_status='disabled' THEN 'Disabled'
   WHEN ${alias}.expiry_date IS NOT NULL AND ${alias}.expiry_date < NOW() THEN 'Expired'
-  WHEN ${alias}.usage_limit > 0 AND ${alias}.used_count >= ${alias}.usage_limit THEN 'Expired'
+  WHEN ${alias}.usage_limit > 0 AND COALESCE(${alias}.used_count,0) >= ${alias}.usage_limit THEN 'Expired'
   WHEN ${alias}.start_date IS NOT NULL AND ${alias}.start_date > NOW() THEN 'Scheduled' ELSE 'Active' END`;
 const pStatus = alias => `CASE WHEN ${alias}.admin_status='draft' THEN 'Draft' WHEN ${alias}.admin_status='disabled' THEN 'Disabled'
   WHEN ${alias}.end_date IS NOT NULL AND ${alias}.end_date < NOW() THEN 'Expired'

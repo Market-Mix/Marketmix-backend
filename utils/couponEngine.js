@@ -20,7 +20,7 @@ async function validateCoupon(code, session, userId) {
 
   if (coupon.start_date && time(coupon.start_date) > now) throw err(400, 'This coupon is not active yet');
   if (coupon.expiry_date && time(coupon.expiry_date) < now) throw err(400, 'This coupon has expired');
-  if (coupon.usage_limit > 0 && coupon.used_count >= coupon.usage_limit) {
+  if (coupon.usage_limit > 0 && (coupon.used_count || 0) >= coupon.usage_limit) {
     throw err(400, 'This coupon has reached its usage limit');
   }
 
