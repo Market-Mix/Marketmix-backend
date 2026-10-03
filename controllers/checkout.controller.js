@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
+const { validateCoupon, calcDiscount } = require('../utils/couponEngine');
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -248,50 +249,26 @@ const applyCoupon = async (req, res) => {
       return sendError(res, 404, 'Session not found or expired');
     }
 
-    // Look up coupon
-    const couponRes = await db.query(
-      `SELECT * FROM coupons
-       WHERE UPPER(code) = UPPER($1)
-         AND is_active = true
-       LIMIT 1`,
-      [code.trim()]
-    );
-
-    console.log('Coupon found:', couponRes.rows[0]);
-    console.log('Session subtotal:', session.subtotal);
-
-    if (!couponRes.rows.length) {
-      return sendError(res, 404, 'Invalid coupon code');
+    let result;
+    try {
+      result = await validateCoupon(code, session, userId);
+    } catch (error) {
+      if (error.status) return sendError(res, error.status, error.message);
+      throw error;
     }
 
-    const coupon = couponRes.rows[0];
-
-    if (coupon.expiry_date && new Date() > new Date(coupon.expiry_date)) {
-      return sendError(res, 400, 'This coupon has expired');
-    }
-    if (coupon.usage_limit > 0 && coupon.used_count >= coupon.usage_limit) {
-      return sendError(res, 400, 'This coupon has reached its usage limit');
-    }
-
-    const subtotal       = parseFloat(session.subtotal);
-    const discountPct    = parseFloat(coupon.discount_percent || 0);
-    const couponDiscount = parseFloat(
-      ((subtotal * discountPct) / 100).toFixed(2)
-    );
-    const shippingFee    = parseFloat(session.shipping_fee || 0);
-    const newTotal       = Math.max(
-      0,
-      subtotal - couponDiscount + shippingFee
-    );
-
-    console.log('discount%:', discountPct, 'discount amount:', couponDiscount, 'newTotal:', newTotal);
+    const { coupon, eligibleSubtotal } = result;
+    const subtotal = parseFloat(session.subtotal);
+    const shippingFee = parseFloat(session.shipping_fee || 0);
+    const couponDiscount = calcDiscount(coupon, eligibleSubtotal, shippingFee);
+    const newTotal = Math.max(0, subtotal - couponDiscount + shippingFee);
+    const discountPct = coupon.discount_type === 'percentage'
+      ? parseFloat(coupon.discount_value ?? coupon.discount_percent)
+      : 0;
 
     await db.query(
       `UPDATE checkout_sessions
-       SET coupon_code     = $1,
-           coupon_discount = $2,
-           total           = $3,
-           updated_at      = NOW()
+       SET coupon_code=$1, coupon_discount=$2, total=$3, updated_at=NOW()
        WHERE id = $4`,
       [code.trim().toUpperCase(), couponDiscount, newTotal, sessionId]
     );
@@ -299,6 +276,7 @@ const applyCoupon = async (req, res) => {
     return sendSuccess(res, 200, 'Coupon applied', {
       couponCode:      code.trim().toUpperCase(),
       discountPercent: discountPct,
+      discountType:    coupon.discount_type,
       couponDiscount,
       subtotal,
       shippingFee,

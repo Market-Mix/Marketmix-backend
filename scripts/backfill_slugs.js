@@ -30,7 +30,7 @@ const { slugify, uniqueAccountSlug } = require('../utils/slugify');
       i++; candidate = `${base}-${i}`;
     }
     await db.query('UPDATE stores SET slug=$1 WHERE id=$2', [candidate, s.id]);
-    console.log(`store ${s.id} → ${candidate}`);
+    console.log(`store ${s.id} → ${candidate}`);mnm
   }
 
   console.log('✅ backfill complete');

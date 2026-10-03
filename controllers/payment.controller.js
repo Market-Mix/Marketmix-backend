@@ -17,6 +17,7 @@ const db         = require('../config/db');
 const marketpay  = require('../services/marketpay.service');
 const { sendSuccess, sendError } = require('../utils/response');
 const { notifySeller, notifyBuyer } = require('../utils/sellerEmailService');
+const { recordRedemption } = require('../utils/couponEngine');
 
 // ── GET /api/payments/methods ─────────────────────────────────────────────────
 const getPaymentMethods = (req, res) => {
@@ -497,6 +498,8 @@ async function _fulfillOrder(reference, payResult) {
        WHERE id = $1 AND payment_status != 'paid'`,
       [tx.order_id]
     );
+
+    await recordRedemption(tx.order_id);
 
     // Create escrow record
     const orderData = await db.query(

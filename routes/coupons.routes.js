@@ -9,11 +9,13 @@ router.post('/', protect, isSeller, async (req, res) => {
   try {
     const { code, discount_percent, product_id, expiry_date, usage_limit } = req.body;
     if (!code || !discount_percent) return sendError(res, 400, 'code and discount_percent required');
-    
+    const pct = parseFloat(discount_percent);
+    if (!(pct > 0 && pct <= 100)) return sendError(res, 400, 'discount_percent must be between 1 and 100');
+
     const result = await db.query(
-      `INSERT INTO coupons (code, discount_percent, product_id, seller_id, expiry_date, usage_limit)
-       VALUES (UPPER($1), $2, $3, $4, $5, $6) RETURNING *`,
-      [code, discount_percent, product_id || null, req.user.id, expiry_date || null, usage_limit || 0]
+      `INSERT INTO coupons (code, discount_percent, discount_type, discount_value, product_id, seller_id, expiry_date, usage_limit)
+       VALUES (UPPER($1), $2, 'percentage', $2, $3, $4, $5, $6) RETURNING *`,
+      [code, pct, product_id || null, req.user.id, expiry_date || null, usage_limit || 0]
     );
     return sendSuccess(res, 201, 'Coupon created', { coupon: result.rows[0] });
   } catch (err) {

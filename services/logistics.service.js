@@ -2,6 +2,7 @@ const db = require('../config/db');
 const sellerAdapter = require('../adapter/seller.adapter');
 const marketmixAdapter = require('../adapter/marketmix.adapter');
 const shipbubbleAdapter = require('../adapter/shipbubble.adapter');
+const { recalcDiscount } = require('../utils/couponEngine');
 
 async function getDeliveryOptions(sessionId, items, address) {
   const quotes = [];
@@ -57,12 +58,13 @@ async function applyDeliveryForSeller(session, sellerId, method, providerId, fee
 
   const sum = await db.query(`SELECT COALESCE(SUM(fee),0) t FROM checkout_session_deliveries WHERE checkout_session_id=$1`, [session.id]);
   const shippingFee = parseFloat(sum.rows[0].t);
-  const newTotal = parseFloat(session.subtotal||0) - parseFloat(session.coupon_discount||0) + shippingFee;
+  const couponDiscount = await recalcDiscount(session, shippingFee);
+  const newTotal = Math.max(0, parseFloat(session.subtotal || 0) - couponDiscount + shippingFee);
 
   const updated = await db.query(
-    `UPDATE checkout_sessions SET shipping_fee=$1, total=$2, status='delivery_set', updated_at=NOW()
-     WHERE id=$3 RETURNING *`,
-    [shippingFee, newTotal, session.id]
+    `UPDATE checkout_sessions SET shipping_fee=$1, coupon_discount=$2, total=$3, status='delivery_set', updated_at=NOW()
+     WHERE id=$4 RETURNING *`,
+    [shippingFee, couponDiscount, newTotal, session.id]
   );
   return { session: updated.rows[0] };
 }

@@ -95,6 +95,7 @@ app.use('/api/buyer', buyerRoutes);
 app.use('/api/admin/notifications', require('./routes/admin_notifications.routes'));
 app.use('/api/admin/cms', require('./routes/admin_cms.routes'));
 app.use('/api/admin/analytics', require('./routes/admin_analytics.routes'));
+app.use('/api/admin/coupons', require('./routes/admin_coupons.routes'));
 app.use('/api/cms', require('./routes/cms_public.routes'));
 app.use('/api/admin', adminRoutes);
 app.use('/api/products', productsRoutes);
