@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../config/db');
 const { protect } = require('../middlewares/auth.middleware');
 const { isAdmin } = require('../middlewares/role.middleware');
+const { requirePermission } = require('../middlewares/rbac.middleware');
 const { sendSuccess, sendError } = require('../utils/response');
 const { stripFee } = require('../utils/pricing');
 const { logAudit } = require('../utils/audit');
@@ -147,7 +148,7 @@ async function build(key) {
 }
 function net(v) { return stripFee(v); }
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('Analytics', 'View'), async (req, res) => {
   try {
     const key = RANGES[req.query.range] ? req.query.range : '30d';
     const hit = cache.get(key);
@@ -176,7 +177,7 @@ const REPORTS = {
   products: `SELECT name, price, stock_quantity, is_active, created_at FROM products WHERE is_deleted=false ORDER BY created_at DESC LIMIT 5000`,
 };
 
-router.get('/reports/:type', async (req, res) => {
+router.get('/reports/:type', requirePermission('Analytics', 'View'), async (req, res) => {
   try {
     const sql = REPORTS[req.params.type];
     if (!sql) return sendError(res, 404, 'Unknown report');

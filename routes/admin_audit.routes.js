@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../config/db');
 const { protect } = require('../middlewares/auth.middleware');
 const { isAdmin } = require('../middlewares/role.middleware');
+const { requirePermission } = require('../middlewares/rbac.middleware');
 const { sendSuccess, sendError } = require('../utils/response');
 const { logAudit } = require('../utils/audit');
 
@@ -47,7 +48,7 @@ function filters(qs) {
 }
 const wrap = fn => async (req, res) => { try { return await fn(req, res); } catch (e) { console.error('audit route:', e.message); return sendError(res, e.status || 500, e.message); } };
 
-router.get('/', wrap(async (req, res) => {
+router.get('/', requirePermission('Audit Logs', 'View'), wrap(async (req, res) => {
   const page = Math.max(parseInt(req.query.page) || 1, 1);
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
   const { w, p } = filters(req.query);
@@ -59,7 +60,7 @@ router.get('/', wrap(async (req, res) => {
   return sendSuccess(res, 200, 'Audit logs', { logs: rows.rows.map(shape), total: +count.rows[0].count, page, limit });
 }));
 
-router.get('/stats', wrap(async (req, res) => {
+router.get('/stats', requirePermission('Audit Logs', 'View'), wrap(async (req, res) => {
   const [s, top] = await Promise.all([
     db.query(`${BASE} SELECT COUNT(*) total,
       COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) today,
@@ -75,7 +76,7 @@ router.get('/stats', wrap(async (req, res) => {
   });
 }));
 
-router.get('/filters', wrap(async (req, res) => {
+router.get('/filters', requirePermission('Audit Logs', 'View'), wrap(async (req, res) => {
   const [a, t, u] = await Promise.all([
     db.query(`SELECT DISTINCT action FROM audit_logs ORDER BY 1`),
     db.query(`SELECT DISTINCT object_type FROM audit_logs WHERE object_type IS NOT NULL ORDER BY 1`),
@@ -89,7 +90,7 @@ router.get('/filters', wrap(async (req, res) => {
 }));
 
 const cell = c => { c = String(c ?? ''); if (/^[=+\-@]/.test(c)) c = "'" + c; return `"${c.replace(/"/g, '""')}"`; };
-router.get('/export', wrap(async (req, res) => {
+router.get('/export', requirePermission('Audit Logs', 'Export'), wrap(async (req, res) => {
   const { w, p } = filters(req.query);
   const r = await db.query(`${BASE} SELECT * FROM base ${w} ORDER BY created_at DESC LIMIT 10000`, p);
   const head = ['Time', 'Severity', 'Action', 'Object Type', 'Object ID', 'Actor', 'Actor Email', 'Role', 'IP', 'User Agent', 'Metadata'];
@@ -102,7 +103,7 @@ router.get('/export', wrap(async (req, res) => {
   return res.send(lines.join('\n'));
 }));
 
-router.get('/:id', wrap(async (req, res) => {
+router.get('/:id', requirePermission('Audit Logs', 'View'), wrap(async (req, res) => {
   const r = await db.query(`${BASE} SELECT * FROM base WHERE id = $1`, [req.params.id]);
   if (!r.rows.length) return sendError(res, 404, 'Log entry not found');
   return sendSuccess(res, 200, 'Log', { log: shape(r.rows[0]) });

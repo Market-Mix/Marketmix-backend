@@ -4,6 +4,7 @@ const multer = require('multer');
 const db = require('../config/db');
 const { protect } = require('../middlewares/auth.middleware');
 const { isAdmin } = require('../middlewares/role.middleware');
+const { requirePermission } = require('../middlewares/rbac.middleware');
 const { sendSuccess, sendError } = require('../utils/response');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const { logAudit } = require('../utils/audit');
@@ -97,13 +98,13 @@ const wrap = fn => async (req, res) => {
   catch (e) { return sendError(res, e.status || 500, e.message); }
 };
 
-router.post('/banner-upload', upload.single('file'), wrap(async (req, res) => {
+router.post('/banner-upload', requirePermission('Notifications', 'Create'), upload.single('file'), wrap(async (req, res) => {
   if (!req.file) throw httpErr(400, 'No file provided');
   const url = await uploadToCloudinary(req.file.buffer, req.file.mimetype, 'notification-banners');
   return sendSuccess(res, 200, 'Uploaded', { url });
 }));
 
-router.get('/stats', wrap(async (req, res) => {
+router.get('/stats', requirePermission('Notifications', 'View'), wrap(async (req, res) => {
   const [a, o, un] = await Promise.all([
     db.query(`SELECT COUNT(*) total,
         COUNT(*) FILTER (WHERE type='system') sys, COUNT(*) FILTER (WHERE type='user') usr,
@@ -124,7 +125,7 @@ router.get('/stats', wrap(async (req, res) => {
   });
 }));
 
-router.get('/', wrap(async (req, res) => {
+router.get('/', requirePermission('Notifications', 'View'), wrap(async (req, res) => {
   const { search, id, status, type, audience, date } = req.query;
   const page = Math.max(parseInt(req.query.page) || 1, 1);
   const limit = Math.min(parseInt(req.query.limit) || 10, 100);
@@ -144,19 +145,19 @@ router.get('/', wrap(async (req, res) => {
     notifications: rows.rows.map(shape), total: +count.rows[0].count, page, limit });
 }));
 
-router.get('/:id', wrap(async (req, res) => {
+router.get('/:id', requirePermission('Notifications', 'View'), wrap(async (req, res) => {
   const r = await db.query(`${SELECT} WHERE n.id=$1 AND n.is_deleted=false`, [req.params.id]);
   if (!r.rows.length) throw httpErr(404, 'Notification not found');
   return sendSuccess(res, 200, 'Notification fetched', { notification: shape(r.rows[0]) });
 }));
 
-router.post('/', wrap(async (req, res) =>
+router.post('/', requirePermission('Notifications', 'Create'), wrap(async (req, res) =>
   sendSuccess(res, 201, 'Saved', { notification: await save(req, res) })));
 
-router.put('/:id', wrap(async (req, res) =>
+router.put('/:id', requirePermission('Notifications', 'Edit'), wrap(async (req, res) =>
   sendSuccess(res, 200, 'Updated', { notification: await save(req, res, req.params.id) })));
 
-router.post('/:id/send', wrap(async (req, res) => {
+router.post('/:id/send', requirePermission('Notifications', 'Manage'), wrap(async (req, res) => {
   const r = await db.query(`SELECT channel FROM admin_notifications WHERE id=$1 AND is_deleted=false`, [req.params.id]);
   if (!r.rows.length) throw httpErr(404, 'Notification not found');
   const p = dispatch(req.params.id);
@@ -165,7 +166,7 @@ router.post('/:id/send', wrap(async (req, res) => {
   return sendSuccess(res, 200, 'Sending');
 }));
 
-router.delete('/:id', wrap(async (req, res) => {
+router.delete('/:id', requirePermission('Notifications', 'Delete'), wrap(async (req, res) => {
   const r = await db.query(
     `UPDATE admin_notifications SET is_deleted=true, updated_at=NOW()
      WHERE id=$1 AND is_deleted=false AND status<>'sending' RETURNING id`, [req.params.id]);

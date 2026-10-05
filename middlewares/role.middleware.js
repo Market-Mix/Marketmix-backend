@@ -49,11 +49,19 @@ const isSeller = (req, res, next) => {
 /**
  * Check if user is admin
  */
-const isAdmin = (req, res, next) => {
-  if (!req.user || req.user.role !== 'admin') {
-    return sendError(res, 403, 'Access denied. Admin role required');
+const isAdmin = async (req, res, next) => {
+  try {
+    if (!req.user) return sendError(res, 403, 'Access denied. Admin role required');
+    const r = await db.query(
+      `SELECT u.role, m.status FROM users u LEFT JOIN admin_members m ON m.user_id = u.id
+       WHERE u.id = $1 AND u.is_deleted = false`, [req.user.id]);
+    const x = r.rows[0];
+    if (!x || x.role !== 'admin') return sendError(res, 403, 'Access denied. Admin role required');
+    if (x.status && x.status !== 'active') return sendError(res, 403, `Admin account is ${x.status}`);
+    return next();
+  } catch (e) {
+    return sendError(res, 500, 'Unable to verify admin', e.message);
   }
-  next();
 };
 
 /**

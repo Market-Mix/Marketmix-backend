@@ -3,6 +3,7 @@ const multer = require('multer');
 const db = require('../config/db');
 const { protect } = require('../middlewares/auth.middleware');
 const { isAdmin } = require('../middlewares/role.middleware');
+const { requirePermission } = require('../middlewares/rbac.middleware');
 const { sendSuccess, sendError } = require('../utils/response');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const { logAudit } = require('../utils/audit');
@@ -27,12 +28,12 @@ async function uniqueSlug(table, base, excludeId = null) {
 }
 const uploadImg = (file, folder) => uploadToCloudinary(file.buffer, file.mimetype, folder);
 
-router.post('/upload', upload.single('file'), wrap(async (req, res) => {
+router.post('/upload', requirePermission('Website CMS', 'Create'), upload.single('file'), wrap(async (req, res) => {
   if (!req.file) throw httpErr(400, 'No file provided');
   return sendSuccess(res, 200, 'Uploaded', { url: await uploadImg(req.file, 'cms') });
 }));
 
-router.get('/summary', wrap(async (req, res) => {
+router.get('/summary', requirePermission('Website CMS', 'View'), wrap(async (req, res) => {
   const r = (await db.query(`SELECT
     (SELECT COUNT(*) FROM cms_pages WHERE NOT is_deleted) total_pages,
     (SELECT COUNT(*) FROM cms_pages WHERE NOT is_deleted AND status='published') published,
@@ -49,7 +50,7 @@ router.get('/summary', wrap(async (req, res) => {
     activeBanners: n('active_banners'), posts: n('posts'), lastUpdated: r.last_updated });
 }));
 
-router.get('/activity', wrap(async (req, res) => {
+router.get('/activity', requirePermission('Website CMS', 'View'), wrap(async (req, res) => {
   const r = await db.query(
     `SELECT a.action, a.metadata, a.created_at, COALESCE(u.first_name||' '||u.last_name,u.email,'Admin') actor
      FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
@@ -78,12 +79,12 @@ function pageFields(b) {
     keywords: (b.keywords || '').trim() || null, featuredImageUrl: b.featuredImageUrl || null };
 }
 
-router.get('/pages', wrap(async (req, res) => {
+router.get('/pages', requirePermission('Website CMS', 'View'), wrap(async (req, res) => {
   const r = await db.query(`${PAGE_SEL} WHERE NOT p.is_deleted ORDER BY p.updated_at DESC`);
   return sendSuccess(res, 200, 'Pages', { pages: r.rows.map(pageShape) });
 }));
 
-router.post('/pages', wrap(async (req, res) => {
+router.post('/pages', requirePermission('Website CMS', 'Create'), wrap(async (req, res) => {
   const f = pageFields(req.body);
   const slug = await uniqueSlug('cms_pages', req.body.slug || f.title);
   const r = await db.query(
@@ -94,7 +95,7 @@ router.post('/pages', wrap(async (req, res) => {
   return sendSuccess(res, 201, 'Page created', { id: r.rows[0].id });
 }));
 
-router.put('/pages/:id', wrap(async (req, res) => {
+router.put('/pages/:id', requirePermission('Website CMS', 'Edit'), wrap(async (req, res) => {
   const f = pageFields(req.body);
   const slug = await uniqueSlug('cms_pages', req.body.slug || f.title, req.params.id);
   const r = await db.query(
@@ -107,7 +108,7 @@ router.put('/pages/:id', wrap(async (req, res) => {
   return sendSuccess(res, 200, 'Page saved');
 }));
 
-router.post('/pages/:id/duplicate', wrap(async (req, res) => {
+router.post('/pages/:id/duplicate', requirePermission('Website CMS', 'Create'), wrap(async (req, res) => {
   const src = (await db.query(`SELECT * FROM cms_pages WHERE id=$1 AND NOT is_deleted`, [req.params.id])).rows[0];
   if (!src) throw httpErr(404, 'Page not found');
   const title = `${src.title} (Copy)`;
@@ -119,18 +120,18 @@ router.post('/pages/:id/duplicate', wrap(async (req, res) => {
   return sendSuccess(res, 201, 'Duplicated', { id: r.rows[0].id });
 }));
 
-router.delete('/pages/:id', wrap(async (req, res) => {
+router.delete('/pages/:id', requirePermission('Website CMS', 'Delete'), wrap(async (req, res) => {
   const r = await db.query(`UPDATE cms_pages SET is_deleted=true,updated_at=NOW() WHERE id=$1 AND NOT is_deleted RETURNING title`, [req.params.id]);
   if (!r.rows.length) throw httpErr(404, 'Page not found');
   await audit(req, 'CMS_PAGE_DELETED', 'cms_page', req.params.id, { title: r.rows[0].title });
   return sendSuccess(res, 200, 'Page deleted');
 }));
 
-router.get('/sections', wrap(async (req, res) => {
+router.get('/sections', requirePermission('Website CMS', 'View'), wrap(async (req, res) => {
   const r = await db.query(`SELECT key,label,is_enabled FROM cms_sections ORDER BY sort_order`);
   return sendSuccess(res, 200, 'Sections', { sections: r.rows.map(s => ({ key: s.key, label: s.label, isEnabled: s.is_enabled })) });
 }));
-router.put('/sections/:key', wrap(async (req, res) => {
+router.put('/sections/:key', requirePermission('Website CMS', 'Edit'), wrap(async (req, res) => {
   const r = await db.query(`UPDATE cms_sections SET is_enabled=$1 WHERE key=$2 RETURNING label`, [!!req.body.isEnabled, req.params.key]);
   if (!r.rows.length) throw httpErr(404, 'Section not found');
   await audit(req, 'CMS_SECTION_TOGGLED', 'cms_section', null, { title: `${r.rows[0].label} ${req.body.isEnabled ? 'on' : 'off'}` });
@@ -155,12 +156,12 @@ function bannerFields(b) {
     isActive: b.isActive !== 'false' && b.isActive !== false, sortOrder: parseInt(b.sortOrder) || 0 };
 }
 
-router.get('/banners', wrap(async (req, res) => {
+router.get('/banners', requirePermission('Website CMS', 'View'), wrap(async (req, res) => {
   const r = await db.query(`SELECT * FROM cms_banners WHERE NOT is_deleted ORDER BY location, sort_order, created_at DESC`);
   return sendSuccess(res, 200, 'Banners', { banners: r.rows.map(bannerShape) });
 }));
 
-router.post('/banners', upload.single('image'), wrap(async (req, res) => {
+router.post('/banners', requirePermission('Website CMS', 'Create'), upload.single('image'), wrap(async (req, res) => {
   const f = bannerFields(req.body);
   if (!req.file) throw httpErr(400, 'Banner image is required');
   const url = await uploadImg(req.file, 'cms-banners');
@@ -172,7 +173,7 @@ router.post('/banners', upload.single('image'), wrap(async (req, res) => {
   return sendSuccess(res, 201, 'Banner created', { id: r.rows[0].id });
 }));
 
-router.put('/banners/:id', upload.single('image'), wrap(async (req, res) => {
+router.put('/banners/:id', requirePermission('Website CMS', 'Edit'), upload.single('image'), wrap(async (req, res) => {
   const f = bannerFields(req.body);
   const url = req.file ? await uploadImg(req.file, 'cms-banners') : null;
   const r = await db.query(
@@ -184,7 +185,7 @@ router.put('/banners/:id', upload.single('image'), wrap(async (req, res) => {
   return sendSuccess(res, 200, 'Banner saved');
 }));
 
-router.delete('/banners/:id', wrap(async (req, res) => {
+router.delete('/banners/:id', requirePermission('Website CMS', 'Delete'), wrap(async (req, res) => {
   const r = await db.query(`UPDATE cms_banners SET is_deleted=true,updated_at=NOW() WHERE id=$1 AND NOT is_deleted RETURNING title`, [req.params.id]);
   if (!r.rows.length) throw httpErr(404, 'Banner not found');
   await audit(req, 'CMS_BANNER_DELETED', 'cms_banner', req.params.id, { title: r.rows[0].title });
@@ -205,12 +206,12 @@ function postFields(b) {
     authorName: (b.authorName || 'MarketMix Team').trim().slice(0, 80) };
 }
 
-router.get('/blog', wrap(async (req, res) => {
+router.get('/blog', requirePermission('Website CMS', 'View'), wrap(async (req, res) => {
   const r = await db.query(`SELECT * FROM blog_posts WHERE NOT is_deleted ORDER BY COALESCE(published_at,created_at) DESC`);
   return sendSuccess(res, 200, 'Posts', { posts: r.rows.map(postShape) });
 }));
 
-router.post('/blog', upload.single('cover'), wrap(async (req, res) => {
+router.post('/blog', requirePermission('Website CMS', 'Create'), upload.single('cover'), wrap(async (req, res) => {
   const f = postFields(req.body);
   const cover = req.file ? await uploadImg(req.file, 'blog') : null;
   const pubAt = f.status === 'published' ? new Date() : f.status === 'scheduled' ? f.publishedAt : null;
@@ -222,7 +223,7 @@ router.post('/blog', upload.single('cover'), wrap(async (req, res) => {
   return sendSuccess(res, 201, 'Post created', { id: r.rows[0].id });
 }));
 
-router.put('/blog/:id', upload.single('cover'), wrap(async (req, res) => {
+router.put('/blog/:id', requirePermission('Website CMS', 'Edit'), upload.single('cover'), wrap(async (req, res) => {
   const f = postFields(req.body);
   const cover = req.file ? await uploadImg(req.file, 'blog') : null;
   const pubAt = f.status === 'published' ? new Date() : f.status === 'scheduled' ? f.publishedAt : null;
@@ -235,7 +236,7 @@ router.put('/blog/:id', upload.single('cover'), wrap(async (req, res) => {
   return sendSuccess(res, 200, 'Post saved');
 }));
 
-router.delete('/blog/:id', wrap(async (req, res) => {
+router.delete('/blog/:id', requirePermission('Website CMS', 'Delete'), wrap(async (req, res) => {
   const r = await db.query(`UPDATE blog_posts SET is_deleted=true,updated_at=NOW() WHERE id=$1 AND NOT is_deleted RETURNING title`, [req.params.id]);
   if (!r.rows.length) throw httpErr(404, 'Post not found');
   await audit(req, 'CMS_BLOG_DELETED', 'blog_post', req.params.id, { title: r.rows[0].title });

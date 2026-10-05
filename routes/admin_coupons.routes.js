@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../config/db');
 const { protect } = require('../middlewares/auth.middleware');
 const { isAdmin } = require('../middlewares/role.middleware');
+const { requirePermission } = require('../middlewares/rbac.middleware');
 const { sendSuccess, sendError } = require('../utils/response');
 const { logAudit } = require('../utils/audit');
 
@@ -143,7 +144,7 @@ const LIST_BASE = `WITH base AS (
   LEFT JOIN LATERAL (SELECT business_name FROM stores WHERE user_id=c.seller_id AND is_deleted=false ORDER BY store_number LIMIT 1) s ON true
   WHERE c.is_deleted = false)`;
 
-router.get('/meta', wrap(async (req, res) => {
+router.get('/meta', requirePermission('Coupons & Promotions', 'View'), wrap(async (req, res) => {
   const [campaigns, sellers] = await Promise.all([
     q(`SELECT id, name FROM promotions WHERE NOT is_deleted ORDER BY created_at DESC`),
     q(`SELECT DISTINCT c.seller_id id, COALESCE(s.business_name,u.first_name||' '||u.last_name) name
@@ -154,7 +155,7 @@ router.get('/meta', wrap(async (req, res) => {
   return sendSuccess(res, 200, 'Meta', { campaigns, sellers });
 }));
 
-router.get('/summary', wrap(async (req, res) => {
+router.get('/summary', requirePermission('Coupons & Promotions', 'View'), wrap(async (req, res) => {
   const [couponStatuses, promotions, redemptionData, redemptionRate, topCampaign] = await Promise.all([
     q(`SELECT status, COUNT(*) c FROM (SELECT ${cStatus('c')} status FROM coupons c WHERE NOT c.is_deleted) t GROUP BY 1`),
     q(`SELECT COUNT(*) c FROM promotions p WHERE NOT p.is_deleted AND ${pStatus('p')}='Scheduled'`),
@@ -179,7 +180,7 @@ router.get('/summary', wrap(async (req, res) => {
   });
 }));
 
-router.get('/sidebar', wrap(async (req, res) => {
+router.get('/sidebar', requirePermission('Coupons & Promotions', 'View'), wrap(async (req, res) => {
   const [active, ending, best, most, savings, upcoming] = await Promise.all([
     q(`SELECT p.name, p.audience, (SELECT COUNT(*) FROM coupons c WHERE c.campaign_id=p.id AND NOT c.is_deleted) coupons
        FROM promotions p WHERE NOT p.is_deleted AND ${pStatus('p')}='Active' ORDER BY p.created_at DESC LIMIT 5`),
@@ -215,11 +216,11 @@ const PROMO_SQL = `SELECT p.*, ${pStatus('p')} AS status,
   FROM promotions p LEFT JOIN (SELECT campaign_id, SUM(discount_amount) spent, SUM(order_total) revenue, COUNT(*) cnt
                                FROM coupon_redemptions GROUP BY 1) r ON r.campaign_id=p.id`;
 
-router.get('/promotions', wrap(async (req, res) => sendSuccess(res, 200, 'Promotions', {
+router.get('/promotions', requirePermission('Coupons & Promotions', 'View'), wrap(async (req, res) => sendSuccess(res, 200, 'Promotions', {
   promotions: (await q(`${PROMO_SQL} WHERE NOT p.is_deleted ORDER BY p.created_at DESC`)).map(promoShape),
 })));
 
-router.post('/promotions', wrap(async (req, res) => {
+router.post('/promotions', requirePermission('Coupons & Promotions', 'Create'), wrap(async (req, res) => {
   const fields = promoFields(req.body);
   const rows = await q(`INSERT INTO promotions (name,description,audience,budget,start_date,end_date,admin_status,created_by)
                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
@@ -228,7 +229,7 @@ router.post('/promotions', wrap(async (req, res) => {
   return sendSuccess(res, 201, 'Campaign created', { id: rows[0].id });
 }));
 
-router.put('/promotions/:id', wrap(async (req, res) => {
+router.put('/promotions/:id', requirePermission('Coupons & Promotions', 'Edit'), wrap(async (req, res) => {
   const fields = promoFields(req.body);
   const rows = await q(`UPDATE promotions SET name=$1,description=$2,audience=$3,budget=$4,start_date=$5,end_date=$6,admin_status=$7,updated_at=NOW()
                         WHERE id=$8 AND NOT is_deleted RETURNING id`,
@@ -238,7 +239,7 @@ router.put('/promotions/:id', wrap(async (req, res) => {
   return sendSuccess(res, 200, 'Campaign saved');
 }));
 
-router.post('/promotions/:id/toggle', wrap(async (req, res) => {
+router.post('/promotions/:id/toggle', requirePermission('Coupons & Promotions', 'Edit'), wrap(async (req, res) => {
   const rows = await q(`UPDATE promotions SET admin_status = CASE WHEN admin_status='active' THEN 'disabled' ELSE 'active' END, updated_at=NOW()
                         WHERE id=$1 AND NOT is_deleted RETURNING admin_status`, [req.params.id]);
   if (!rows.length) throw httpErr(404, 'Campaign not found');
@@ -246,7 +247,7 @@ router.post('/promotions/:id/toggle', wrap(async (req, res) => {
   return sendSuccess(res, 200, rows[0].admin_status === 'active' ? 'Campaign enabled' : 'Campaign disabled');
 }));
 
-router.delete('/promotions/:id', wrap(async (req, res) => {
+router.delete('/promotions/:id', requirePermission('Coupons & Promotions', 'Delete'), wrap(async (req, res) => {
   const rows = await q(`UPDATE promotions SET is_deleted=true, updated_at=NOW() WHERE id=$1 AND NOT is_deleted RETURNING name`, [req.params.id]);
   if (!rows.length) throw httpErr(404, 'Campaign not found');
   await db.query(`UPDATE coupons SET campaign_id=NULL, updated_at=NOW() WHERE campaign_id=$1`, [req.params.id]);
@@ -254,7 +255,7 @@ router.delete('/promotions/:id', wrap(async (req, res) => {
   return sendSuccess(res, 200, 'Campaign deleted');
 }));
 
-router.get('/', wrap(async (req, res) => {
+router.get('/', requirePermission('Coupons & Promotions', 'View'), wrap(async (req, res) => {
   const { search, code, campaign, type, status, seller, from, to } = req.query;
   const exporting = req.query.export === '1';
   const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
@@ -288,7 +289,7 @@ router.get('/', wrap(async (req, res) => {
   });
 }));
 
-router.post('/', wrap(async (req, res) => {
+router.post('/', requirePermission('Coupons & Promotions', 'Create'), wrap(async (req, res) => {
   const fields = couponFields(req.body);
   await assertCampaign(fields.campaignId);
   const rows = await q(
@@ -303,7 +304,7 @@ router.post('/', wrap(async (req, res) => {
   return sendSuccess(res, 201, 'Coupon created', { id: rows[0].id });
 }));
 
-router.get('/:id', wrap(async (req, res) => {
+router.get('/:id', requirePermission('Coupons & Promotions', 'View'), wrap(async (req, res) => {
   const coupon = (await q(`${LIST_BASE} SELECT * FROM base WHERE id=$1`, [req.params.id]))[0];
   if (!coupon) throw httpErr(404, 'Coupon not found');
   const [history, totals] = await Promise.all([
@@ -327,7 +328,7 @@ router.get('/:id', wrap(async (req, res) => {
   });
 }));
 
-router.put('/:id', wrap(async (req, res) => {
+router.put('/:id', requirePermission('Coupons & Promotions', 'Edit'), wrap(async (req, res) => {
   const fields = couponFields(req.body);
   await assertCampaign(fields.campaignId);
   const rows = await q(
@@ -345,7 +346,7 @@ router.put('/:id', wrap(async (req, res) => {
   return sendSuccess(res, 200, 'Coupon saved');
 }));
 
-router.post('/:id/toggle', wrap(async (req, res) => {
+router.post('/:id/toggle', requirePermission('Coupons & Promotions', 'Edit'), wrap(async (req, res) => {
   const rows = await q(
     `UPDATE coupons SET admin_status = CASE WHEN admin_status='active' THEN 'disabled' ELSE 'active' END,
        is_active = (admin_status <> 'active'), updated_at=NOW()
@@ -357,7 +358,7 @@ router.post('/:id/toggle', wrap(async (req, res) => {
   return sendSuccess(res, 200, rows[0].admin_status === 'active' ? 'Coupon enabled' : 'Coupon disabled');
 }));
 
-router.post('/:id/duplicate', wrap(async (req, res) => {
+router.post('/:id/duplicate', requirePermission('Coupons & Promotions', 'Create'), wrap(async (req, res) => {
   const source = (await q(`SELECT * FROM coupons WHERE id=$1 AND is_deleted=false`, [req.params.id]))[0];
   if (!source) throw httpErr(404, 'Coupon not found');
   let code = `${source.code}-COPY`.slice(0, 30);
@@ -377,7 +378,7 @@ router.post('/:id/duplicate', wrap(async (req, res) => {
   return sendSuccess(res, 201, 'Coupon duplicated as draft', { id: rows[0].id, code });
 }));
 
-router.delete('/:id', wrap(async (req, res) => {
+router.delete('/:id', requirePermission('Coupons & Promotions', 'Delete'), wrap(async (req, res) => {
   const rows = await q(
     `UPDATE coupons SET is_deleted=true, is_active=false,
        code = code || '--deleted-' || EXTRACT(EPOCH FROM NOW())::bigint::text, updated_at=NOW()

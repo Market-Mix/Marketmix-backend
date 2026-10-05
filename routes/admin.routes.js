@@ -3,6 +3,7 @@ const router = express.Router();
 
 const { protect } = require('../middlewares/auth.middleware');
 const { isAdmin } = require('../middlewares/role.middleware');
+const { requirePermission } = require('../middlewares/rbac.middleware');
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { stripFee } = require('../utils/pricing');
@@ -121,7 +122,7 @@ async function enrichRefundCasesWithSummary(refundCases) {
 }
 
 // GET /api/admin/refund-summary
-router.get('/refund-summary', protect, isAdmin, async (req, res) => {
+router.get('/refund-summary', protect, isAdmin, requirePermission('Refunds', 'View'), async (req, res) => {
   try {
     const openRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') NOT IN ('resolved','refund_rejected')`);
     const awaitingSellerRes = await db.query(`SELECT COUNT(*) AS total FROM refund_cases WHERE COALESCE(resolution_status,'pending') = 'waiting_seller_return_decision'`);
@@ -156,7 +157,7 @@ router.get('/refund-summary', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/debt-summary
-router.get('/debt-summary', protect, isAdmin, async (req, res) => {
+router.get('/debt-summary', protect, isAdmin, requirePermission('Sellers', 'View'), async (req, res) => {
   try {
     const debtRes = await db.query(`
       WITH active AS (
@@ -187,7 +188,7 @@ router.get('/debt-summary', protect, isAdmin, async (req, res) => {
 
 // POST /api/admin/escrow/:escrowId/resolve
 // body: { action: 'release' | 'refund', notes: string }
-router.post('/escrow/:escrowId/resolve', protect, isAdmin, async (req, res) => {
+router.post('/escrow/:escrowId/resolve', protect, isAdmin, requirePermission('Refunds', 'Manage'), async (req, res) => {
   const { escrowId } = req.params;
   const { action, notes } = req.body;
 
@@ -277,7 +278,7 @@ router.post('/escrow/:escrowId/resolve', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/dashboard-stats
-router.get('/dashboard-stats', protect, isAdmin, async (req, res) => {
+router.get('/dashboard-stats', protect, isAdmin, requirePermission('Dashboard', 'View'), async (req, res) => {
   try {
     const statsRes = await db.query(`
       SELECT
@@ -318,7 +319,7 @@ router.get('/dashboard-stats', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/pending-actions
-router.get('/pending-actions', protect, isAdmin, async (req, res) => {
+router.get('/pending-actions', protect, isAdmin, requirePermission('Dashboard', 'View'), async (req, res) => {
   try {
     const sellersRes = await db.query(
       `SELECT COUNT(*) AS total FROM seller_profiles WHERE kyc_status = 'pending' AND is_deleted = false`
@@ -373,7 +374,7 @@ router.get('/pending-actions', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/activity
-router.get('/activity', protect, isAdmin, async (req, res) => {
+router.get('/activity', protect, isAdmin, requirePermission('Dashboard', 'View'), async (req, res) => {
   try {
     const limit = Number.parseInt(req.query.limit || '5', 10);
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 20) : 5;
@@ -432,7 +433,7 @@ router.get('/activity', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/marketplace-health
-router.get('/marketplace-health', protect, isAdmin, async (req, res) => {
+router.get('/marketplace-health', protect, isAdmin, requirePermission('Dashboard', 'View'), async (req, res) => {
   try {
     const checks = {
       paymentSystem: `SELECT COUNT(*) AS total FROM payment_transactions LIMIT 1`,
@@ -465,7 +466,7 @@ router.get('/marketplace-health', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/dashboard-activity
-router.get('/dashboard-activity', protect, isAdmin, async (req, res) => {
+router.get('/dashboard-activity', protect, isAdmin, requirePermission('Dashboard', 'View'), async (req, res) => {
   try {
     const recentOrdersRes = await db.query(
       `SELECT o.id AS order_id,
@@ -533,7 +534,7 @@ router.get('/dashboard-activity', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/marketplace-performance?period=today|7d|30d|6m|1y
-router.get('/marketplace-performance', protect, isAdmin, async (req, res) => {
+router.get('/marketplace-performance', protect, isAdmin, requirePermission('Analytics', 'View'), async (req, res) => {
   try {
     const period = String(req.query.period || 'today').toLowerCase();
     
@@ -641,7 +642,7 @@ router.get('/marketplace-performance', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/marketplace-performance/chart?period=today|7d|30d|6m|1y
-router.get('/marketplace-performance/chart', protect, isAdmin, async (req, res) => {
+router.get('/marketplace-performance/chart', protect, isAdmin, requirePermission('Analytics', 'View'), async (req, res) => {
   try {
     const period = String(req.query.period || 'today').toLowerCase();
     const now = new Date();
@@ -767,7 +768,7 @@ router.get('/marketplace-performance/chart', protect, isAdmin, async (req, res) 
 
 // GET /api/admin/refunds/pending
 // Development-only route for admin refund testing page
-router.get('/refunds/pending', protect, isAdmin, async (req, res) => {
+router.get('/refunds/pending', protect, isAdmin, requirePermission('Refunds', 'View'), async (req, res) => {
   try {
     if (!SUPABASE_SERVICE_KEY) {
       return sendError(res, 500, 'SUPABASE_SERVICE_KEY not configured');
@@ -794,7 +795,7 @@ router.get('/refunds/pending', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/refunds
-router.get('/refunds', protect, isAdmin, async (req, res) => {
+router.get('/refunds', protect, isAdmin, requirePermission('Refunds', 'View'), async (req, res) => {
   try {
     if (!SUPABASE_SERVICE_KEY) {
       return sendError(res, 500, 'SUPABASE_SERVICE_KEY not configured');
@@ -873,7 +874,7 @@ router.get('/refunds', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/seller-adjustments
-router.get(['/seller-adjustments', '/seller-adjustments/'], protect, isAdmin, async (req, res) => {
+router.get(['/seller-adjustments', '/seller-adjustments/'], protect, isAdmin, requirePermission('Refunds', 'View'), async (req, res) => {
   try {
     const refundCaseId = typeof req.query.refundCaseId === 'string' ? req.query.refundCaseId.trim() : '';
     const normalizedRefundCaseId = refundCaseId ? refundCaseId : null;
@@ -950,7 +951,7 @@ router.get(['/seller-adjustments', '/seller-adjustments/'], protect, isAdmin, as
 });
 
 // POST /api/admin/refunds/:refundId/approve
-router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => {
+router.post('/refunds/:refundId/approve', protect, isAdmin, requirePermission('Refunds', 'Approve'), async (req, res) => {
   try {
     const { refundId } = req.params;
     const { reason } = req.body;
@@ -1017,7 +1018,7 @@ router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => 
 });
 
 // POST /api/admin/refunds/:refundId/reject
-router.post('/refunds/:refundId/reject', protect, isAdmin, async (req, res) => {
+router.post('/refunds/:refundId/reject', protect, isAdmin, requirePermission('Refunds', 'Reject'), async (req, res) => {
   try {
     const { refundId } = req.params;
     const { reason } = req.body;
@@ -1084,7 +1085,7 @@ router.post('/refunds/:refundId/reject', protect, isAdmin, async (req, res) => {
 });
 
 // POST /api/admin/withdrawals/:id/process
-router.post('/withdrawals/:id/process', protect, isAdmin, async (req, res) => {
+router.post('/withdrawals/:id/process', protect, isAdmin, requirePermission('Withdrawals', 'Manage'), async (req, res) => {
   try {
     // Admin can force-process regardless of scheduled time
     await db.query(`UPDATE withdrawals SET scheduled_for=NOW() WHERE id=$1`, [req.params.id]);
@@ -1097,7 +1098,7 @@ router.post('/withdrawals/:id/process', protect, isAdmin, async (req, res) => {
 });
 
 // POST /api/admin/withdrawals/:id/reject  
-router.post('/withdrawals/:id/reject', protect, isAdmin, async (req, res) => {
+router.post('/withdrawals/:id/reject', protect, isAdmin, requirePermission('Withdrawals', 'Reject'), async (req, res) => {
   const { reason } = req.body;
   const wd = await db.query(
     `UPDATE withdrawals SET status='failed', failure_reason=$1, processed_at=NOW()
@@ -1115,7 +1116,7 @@ router.post('/withdrawals/:id/reject', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/sellers/:sellerId/kyc/status
-router.get('/sellers/:sellerId/kyc/status', protect, isAdmin, async (req, res) => {
+router.get('/sellers/:sellerId/kyc/status', protect, isAdmin, requirePermission('Seller KYC', 'View'), async (req, res) => {
   try {
     const sellerId = req.params.sellerId;
     const result = await db.query(
@@ -1142,7 +1143,7 @@ router.get('/sellers/:sellerId/kyc/status', protect, isAdmin, async (req, res) =
 });
 
 // ─── GET /api/admin/sellers — paginated seller directory ─────────────────────
-router.get('/sellers', protect, isAdmin, async (req, res) => {
+router.get('/sellers', protect, isAdmin, requirePermission('Sellers', 'View'), requirePermission('Seller KYC', 'View'), async (req, res) => {
   try {
     const { search, status, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -1210,7 +1211,7 @@ router.get('/sellers', protect, isAdmin, async (req, res) => {
 });
 
 // ─── GET /api/admin/sellers/:id — full seller detail for the drawer/view page ─
-router.get('/sellers/:id', protect, isAdmin, async (req, res) => {
+router.get('/sellers/:id', protect, isAdmin, requirePermission('Sellers', 'View'), requirePermission('Seller KYC', 'View'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -1298,7 +1299,7 @@ router.get('/sellers/:id', protect, isAdmin, async (req, res) => {
 });
 
 // ─── POST /api/admin/sellers/:id/suspend & /activate ──────────────────────────
-router.post('/sellers/:id/suspend', protect, isAdmin, async (req, res) => {
+router.post('/sellers/:id/suspend', protect, isAdmin, requirePermission('Sellers', 'Edit'), async (req, res) => {
   try {
     const { duration, reason } = req.body;
     const durationDays = { '1week': 7, '2weeks': 14, '1month': 30 };
@@ -1329,7 +1330,7 @@ router.post('/sellers/:id/suspend', protect, isAdmin, async (req, res) => {
   }
 });
 
-router.post('/sellers/:id/unsuspend', protect, isAdmin, async (req, res) => {
+router.post('/sellers/:id/unsuspend', protect, isAdmin, requirePermission('Sellers', 'Edit'), async (req, res) => {
   try {
     const result = await db.query(
       `UPDATE users
@@ -1353,7 +1354,7 @@ router.post('/sellers/:id/unsuspend', protect, isAdmin, async (req, res) => {
   }
 });
 
-router.post('/sellers/:id/activate', protect, isAdmin, async (req, res) => {
+router.post('/sellers/:id/activate', protect, isAdmin, requirePermission('Sellers', 'Edit'), async (req, res) => {
   try {
     const result = await db.query(
       `UPDATE users SET is_suspended = false, suspended_until = NULL, suspension_reason = NULL, updated_at = NOW() WHERE id = $1 AND role='seller' RETURNING id`,
@@ -1367,7 +1368,7 @@ router.post('/sellers/:id/activate', protect, isAdmin, async (req, res) => {
   }
 });
 
-router.get('/reports', protect, isAdmin, async (req, res) => {
+router.get('/reports', protect, isAdmin, requirePermission('Support Center', 'View'), async (req, res) => {
   try {
     const [products, stores, pendingReview] = await Promise.all([
       db.query(
@@ -1398,7 +1399,7 @@ router.get('/reports', protect, isAdmin, async (req, res) => {
 });
 
 // POST /api/admin/sellers/:sellerId/kyc/approve
-router.post('/sellers/:sellerId/kyc/approve', protect, isAdmin, async (req, res) => {
+router.post('/sellers/:sellerId/kyc/approve', protect, isAdmin, requirePermission('Seller KYC', 'Approve'), async (req, res) => {
   try {
     const sellerId = req.params.sellerId;
     const result = await db.query(
@@ -1440,7 +1441,7 @@ router.post('/sellers/:sellerId/kyc/approve', protect, isAdmin, async (req, res)
 });
 
 // POST /api/admin/sellers/:sellerId/kyc/reject
-router.post('/sellers/:sellerId/kyc/reject', protect, isAdmin, async (req, res) => {
+router.post('/sellers/:sellerId/kyc/reject', protect, isAdmin, requirePermission('Seller KYC', 'Reject'), async (req, res) => {
   try {
     const sellerId = req.params.sellerId;
     const result = await db.query(
@@ -1482,7 +1483,7 @@ router.post('/sellers/:sellerId/kyc/reject', protect, isAdmin, async (req, res) 
 });
 
 // GET /api/admin/withdrawals - list all withdrawals
-router.get('/withdrawals', protect, isAdmin, async (req, res) => {
+router.get('/withdrawals', protect, isAdmin, requirePermission('Withdrawals', 'View'), async (req, res) => {
   const { status, page = 1, limit = 20 } = req.query;
   const offset = (parseInt(page) - 1) * parseInt(limit);
   
@@ -1507,7 +1508,7 @@ router.get('/withdrawals', protect, isAdmin, async (req, res) => {
 });
 
 // POST /api/admin/withdrawals/:id/force-process - bypass schedule
-router.post('/withdrawals/:id/force-process', protect, isAdmin, async (req, res) => {
+router.post('/withdrawals/:id/force-process', protect, isAdmin, requirePermission('Withdrawals', 'Manage'), async (req, res) => {
   try {
     await db.query(
       `UPDATE withdrawals SET scheduled_for=NOW(), updated_at=NOW() WHERE id=$1`,
@@ -1523,7 +1524,7 @@ router.post('/withdrawals/:id/force-process', protect, isAdmin, async (req, res)
 });
 
 // POST /api/admin/withdrawals/:id/approve - override anti-fraud hold
-router.post('/withdrawals/:id/approve', protect, isAdmin, async (req, res) => {
+router.post('/withdrawals/:id/approve', protect, isAdmin, requirePermission('Withdrawals', 'Approve'), async (req, res) => {
   const { notes } = req.body;
   const wd = await db.query(
     `UPDATE withdrawals 
@@ -1544,7 +1545,7 @@ router.post('/withdrawals/:id/approve', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/orders - paginated, searchable order list
-router.get('/orders', protect, isAdmin, async (req, res) => {
+router.get('/orders', protect, isAdmin, requirePermission('Orders', 'View'), async (req, res) => {
   try {
     const { search, status, paymentStatus, page = 1, limit = 20, from, to } = req.query;
     const pageNumber = Math.max(parseInt(page, 10) || 1, 1);
@@ -1628,7 +1629,7 @@ router.get('/orders', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/orders/:id - full order detail
-router.get('/orders/:id', protect, isAdmin, async (req, res) => {
+router.get('/orders/:id', protect, isAdmin, requirePermission('Orders', 'View'), async (req, res) => {
   try {
     const { id } = req.params;
     const orderResult = await db.query(
@@ -1691,7 +1692,7 @@ router.get('/orders/:id', protect, isAdmin, async (req, res) => {
 });
 
 // PUT /api/admin/orders/:id/status - admin override
-router.put('/orders/:id/status', protect, isAdmin, async (req, res) => {
+router.put('/orders/:id/status', protect, isAdmin, requirePermission('Orders', 'Edit'), async (req, res) => {
   const client = await db.pool.connect();
   try {
     const { id } = req.params;
@@ -1757,7 +1758,7 @@ router.put('/orders/:id/status', protect, isAdmin, async (req, res) => {
 const EFFECTIVELY_SUSPENDED = `(u.is_suspended = true AND (u.suspended_until IS NULL OR u.suspended_until > NOW()))`;
 
 // GET /api/admin/buyers?search=&status=all|active|suspended&page=&limit=
-router.get('/buyers', protect, isAdmin, async (req, res) => {
+router.get('/buyers', protect, isAdmin, requirePermission('Buyers', 'View'), async (req, res) => {
   try {
     const { search, status = 'all' } = req.query;
     const page = Math.max(parseInt(req.query.page) || 1, 1);
@@ -1820,7 +1821,7 @@ router.get('/buyers', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/buyers/:id
-router.get('/buyers/:id', protect, isAdmin, async (req, res) => {
+router.get('/buyers/:id', protect, isAdmin, requirePermission('Buyers', 'View'), async (req, res) => {
   try {
     const { id } = req.params;
     const u = await db.query(
@@ -1861,7 +1862,7 @@ router.get('/buyers/:id', protect, isAdmin, async (req, res) => {
 });
 
 // POST /api/admin/buyers/:id/suspend { duration, reason }
-router.post('/buyers/:id/suspend', protect, isAdmin, async (req, res) => {
+router.post('/buyers/:id/suspend', protect, isAdmin, requirePermission('Buyers', 'Edit'), async (req, res) => {
   try {
     const { duration = '1week', reason } = req.body;
     const days = { '1week': 7, '2weeks': 14, '1month': 30 };
@@ -1886,7 +1887,7 @@ router.post('/buyers/:id/suspend', protect, isAdmin, async (req, res) => {
 });
 
 // POST /api/admin/buyers/:id/unsuspend
-router.post('/buyers/:id/unsuspend', protect, isAdmin, async (req, res) => {
+router.post('/buyers/:id/unsuspend', protect, isAdmin, requirePermission('Buyers', 'Edit'), async (req, res) => {
   try {
     const r = await db.query(
       `UPDATE users SET is_suspended=false, suspended_until=NULL, suspension_reason=NULL,
@@ -1902,7 +1903,7 @@ router.post('/buyers/:id/unsuspend', protect, isAdmin, async (req, res) => {
 });
 
 // DELETE /api/admin/buyers/:id (soft delete, blocked if orders in flight)
-router.delete('/buyers/:id', protect, isAdmin, async (req, res) => {
+router.delete('/buyers/:id', protect, isAdmin, requirePermission('Users', 'Delete'), async (req, res) => {
   try {
     const live = await db.query(
       `SELECT 1 FROM orders WHERE buyer_id=$1 AND status IN ('confirmed','processing','shipped') LIMIT 1`,
@@ -1922,7 +1923,7 @@ router.delete('/buyers/:id', protect, isAdmin, async (req, res) => {
 
 // ─── PRODUCTS ─────────────────────────────────────────────────────────────
 // GET /api/admin/products?search=&status=all|active|inactive|out-of-stock|reported&limit=
-router.get('/products', protect, isAdmin, async (req, res) => {
+router.get('/products', protect, isAdmin, requirePermission('Products', 'View'), async (req, res) => {
   try {
     const { search, status = 'all' } = req.query;
     const page = Math.max(parseInt(req.query.page) || 1, 1);
@@ -1997,7 +1998,7 @@ router.get('/products', protect, isAdmin, async (req, res) => {
 });
 
 // GET /api/admin/products/:id
-router.get('/products/:id', protect, isAdmin, async (req, res) => {
+router.get('/products/:id', protect, isAdmin, requirePermission('Products', 'View'), async (req, res) => {
   try {
     const { id } = req.params;
     const r = await db.query(
@@ -2036,7 +2037,7 @@ router.get('/products/:id', protect, isAdmin, async (req, res) => {
 });
 
 // POST /api/admin/products/:id/deactivate { reason }
-router.post('/products/:id/deactivate', protect, isAdmin, async (req, res) => {
+router.post('/products/:id/deactivate', protect, isAdmin, requirePermission('Products', 'Edit'), async (req, res) => {
   try {
     const reason = (req.body.reason || '').trim();
     if (reason.length < 10) return sendError(res, 400, 'Reason must be at least 10 characters');
@@ -2058,7 +2059,7 @@ router.post('/products/:id/deactivate', protect, isAdmin, async (req, res) => {
 });
 
 // POST /api/admin/products/:id/activate
-router.post('/products/:id/activate', protect, isAdmin, async (req, res) => {
+router.post('/products/:id/activate', protect, isAdmin, requirePermission('Products', 'Edit'), async (req, res) => {
   try {
     const r = await db.query(
       `UPDATE products SET is_active=true, admin_disabled=false, disabled_reason=NULL,
@@ -2077,7 +2078,7 @@ router.post('/products/:id/activate', protect, isAdmin, async (req, res) => {
 });
 
 // DELETE /api/admin/products/:id (soft delete)
-router.delete('/products/:id', protect, isAdmin, async (req, res) => {
+router.delete('/products/:id', protect, isAdmin, requirePermission('Products', 'Delete'), async (req, res) => {
   try {
     const r = await db.query(
       `UPDATE products SET is_deleted=true, is_active=false, updated_at=NOW()
@@ -2093,7 +2094,7 @@ router.delete('/products/:id', protect, isAdmin, async (req, res) => {
 const catAudit = (...a) => require('../utils/audit').logAudit(...a);
 
 // GET /api/admin/categories?search=&status=all|active|inactive
-router.get('/categories', protect, isAdmin, async (req, res) => {
+router.get('/categories', protect, isAdmin, requirePermission('Products', 'View'), async (req, res) => {
   try {
     const { search, status = 'all' } = req.query;
     const params = [];
@@ -2119,7 +2120,7 @@ router.get('/categories', protect, isAdmin, async (req, res) => {
 });
 
 // POST /api/admin/categories { name, description }
-router.post('/categories', protect, isAdmin, async (req, res) => {
+router.post('/categories', protect, isAdmin, requirePermission('Products', 'Create'), async (req, res) => {
   try {
     const name = (req.body.name || '').trim();
     const description = (req.body.description || '').trim() || null;
@@ -2138,7 +2139,7 @@ router.post('/categories', protect, isAdmin, async (req, res) => {
 });
 
 // PUT /api/admin/categories/:id { name, description }
-router.put('/categories/:id', protect, isAdmin, async (req, res) => {
+router.put('/categories/:id', protect, isAdmin, requirePermission('Products', 'Edit'), async (req, res) => {
   try {
     const name = (req.body.name || '').trim();
     const description = (req.body.description || '').trim() || null;
@@ -2158,7 +2159,7 @@ router.put('/categories/:id', protect, isAdmin, async (req, res) => {
 });
 
 // POST /api/admin/categories/:id/toggle
-router.post('/categories/:id/toggle', protect, isAdmin, async (req, res) => {
+router.post('/categories/:id/toggle', protect, isAdmin, requirePermission('Products', 'Edit'), async (req, res) => {
   try {
     const r = await db.query(
       `UPDATE categories SET is_active = NOT is_active, updated_at=NOW()
@@ -2170,7 +2171,7 @@ router.post('/categories/:id/toggle', protect, isAdmin, async (req, res) => {
 });
 
 // DELETE /api/admin/categories/:id  (soft delete, blocked if products exist)
-router.delete('/categories/:id', protect, isAdmin, async (req, res) => {
+router.delete('/categories/:id', protect, isAdmin, requirePermission('Products', 'Delete'), async (req, res) => {
   try {
     const used = await db.query(
       `SELECT COUNT(*) FROM products WHERE category_id=$1 AND is_deleted=false`, [req.params.id]);
@@ -2213,7 +2214,7 @@ const cleanFields = (fields) => fields.map(f => ({
 }));
 
 // GET /api/admin/categories/:id/subcategories
-router.get('/categories/:id/subcategories', protect, isAdmin, async (req, res) => {
+router.get('/categories/:id/subcategories', protect, isAdmin, requirePermission('Products', 'View'), async (req, res) => {
   try {
     const r = await db.query(
       `SELECT s.id, s.name, s.fields, s.is_active,
@@ -2229,7 +2230,7 @@ router.get('/categories/:id/subcategories', protect, isAdmin, async (req, res) =
 });
 
 // POST /api/admin/categories/:id/subcategories { name, fields }
-router.post('/categories/:id/subcategories', protect, isAdmin, async (req, res) => {
+router.post('/categories/:id/subcategories', protect, isAdmin, requirePermission('Products', 'Create'), async (req, res) => {
   try {
     const name = (req.body.name || '').trim();
     if (name.length < 2 || name.length > 100) return sendError(res, 400, 'Name must be 2–100 characters');
@@ -2252,7 +2253,7 @@ router.post('/categories/:id/subcategories', protect, isAdmin, async (req, res) 
 });
 
 // PUT /api/admin/subcategories/:subId { name, fields }
-router.put('/subcategories/:subId', protect, isAdmin, async (req, res) => {
+router.put('/subcategories/:subId', protect, isAdmin, requirePermission('Products', 'Edit'), async (req, res) => {
   try {
     const name = (req.body.name || '').trim();
     if (name.length < 2 || name.length > 100) return sendError(res, 400, 'Name must be 2–100 characters');
@@ -2275,7 +2276,7 @@ router.put('/subcategories/:subId', protect, isAdmin, async (req, res) => {
 });
 
 // POST /api/admin/subcategories/:subId/toggle
-router.post('/subcategories/:subId/toggle', protect, isAdmin, async (req, res) => {
+router.post('/subcategories/:subId/toggle', protect, isAdmin, requirePermission('Products', 'Edit'), async (req, res) => {
   try {
     const r = await db.query(
       `UPDATE subcategories SET is_active = NOT is_active WHERE id=$1 RETURNING is_active`, [req.params.subId]);
@@ -2286,7 +2287,7 @@ router.post('/subcategories/:subId/toggle', protect, isAdmin, async (req, res) =
 });
 
 // DELETE /api/admin/subcategories/:subId (blocked if products use it)
-router.delete('/subcategories/:subId', protect, isAdmin, async (req, res) => {
+router.delete('/subcategories/:subId', protect, isAdmin, requirePermission('Products', 'Delete'), async (req, res) => {
   try {
     const used = await db.query(
       `SELECT COUNT(*) FROM products WHERE subcategory_id=$1 AND is_deleted=false`, [req.params.subId]);
@@ -2323,7 +2324,7 @@ const shape = r => ({
   method: METHOD[r.channel] || r.channel || '—', status: r.status, date: r.created_at,
 });
 
-router.get('/payments', protect, isAdmin, async (req, res) => {
+router.get('/payments', protect, isAdmin, requirePermission('Payments', 'View'), async (req, res) => {
   try {
     const { search, status='all', method='all', gateway='all', date } = req.query;
     const page = Math.max(+req.query.page || 1, 1), limit = Math.min(+req.query.limit || 20, 100);
@@ -2355,7 +2356,7 @@ router.get('/payments', protect, isAdmin, async (req, res) => {
   }
 });
 
-router.get('/payments/overview', protect, isAdmin, async (req, res) => {
+router.get('/payments/overview', protect, isAdmin, requirePermission('Payments', 'View'), async (req, res) => {
   try {
     const [gw, paid, esc, wd, act] = await Promise.all([
       db.query(`${PAY_BASE} SELECT gateway, COUNT(*) total, COUNT(*) FILTER (WHERE status='Paid') ok,
@@ -2390,7 +2391,7 @@ router.get('/payments/overview', protect, isAdmin, async (req, res) => {
   }
 });
 
-router.get('/payments/:id', protect, isAdmin, async (req, res) => {
+router.get('/payments/:id', protect, isAdmin, requirePermission('Payments', 'View'), async (req, res) => {
   try {
     const r = (await db.query(`${PAY_BASE} SELECT * FROM base WHERE id=$1`, [req.params.id])).rows[0];
     if (!r) return sendError(res, 404, 'Payment not found');
