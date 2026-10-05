@@ -11,6 +11,8 @@ const { handlePaystackWithdrawalWebhook } = require('./controllers/withdrawal.co
 
 // Create Express app
 const app = express();
+app.set('trust proxy', 1); // Render sits behind a proxy
+app.use(require('./utils/auditContext').middleware);
 
 // Security middleware
 app.use(helmet());
@@ -96,6 +98,7 @@ app.use('/api/admin/notifications', require('./routes/admin_notifications.routes
 app.use('/api/admin/cms', require('./routes/admin_cms.routes'));
 app.use('/api/admin/analytics', require('./routes/admin_analytics.routes'));
 app.use('/api/admin/coupons', require('./routes/admin_coupons.routes'));
+app.use('/api/admin/audit-logs', require('./routes/admin_audit.routes'));
 app.use('/api/cms', require('./routes/cms_public.routes'));
 app.use('/api/admin', adminRoutes);
 app.use('/api/products', productsRoutes);

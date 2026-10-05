@@ -5,6 +5,7 @@ const { sendSuccess, sendError, suspendedPayload } = require('../utils/response'
 const { notifySeller } = require('../utils/sellerEmailService');
 const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
+const { logAudit } = require('../utils/audit');
 
 const createSellerWelcomeNotification = async (userId) => {
   try {
@@ -95,6 +96,7 @@ const register = async (req, res) => {
     );
 
     const user = result.rows[0];
+    await logAudit(user.id, 'USER_REGISTERED', 'user', user.id, { role: user.role });
 
     if (user.role === 'seller') {
       await createSellerWelcomeNotification(user.id);
@@ -381,6 +383,7 @@ const login = async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isMatch) {
+      await logAudit(user.id, 'USER_LOGIN_FAILED', 'user', user.id, { description: 'Failed login attempt', email });
       return sendError(res, 401, 'Invalid email or password');
     }
 
@@ -395,6 +398,7 @@ const login = async (req, res) => {
       email: user.email,
       role: user.role
     });
+    await logAudit(user.id, 'USER_LOGIN', 'user', user.id, { description: `${user.role} logged in`, email: user.email });
 
      if (user.role === 'seller') {
      notifySeller(user.id, 'newLogin', {
@@ -518,6 +522,7 @@ const updatePassword = async (req, res) => {
       newPasswordHash,
       req.user.id
     ]);
+    await logAudit(req.user.id, 'PASSWORD_CHANGED', 'user', req.user.id);
 
     return sendSuccess(res, 200, 'Password updated successfully');
   } catch (error) {
@@ -541,15 +546,7 @@ const logout = async (req, res) => {
     // If cart items are provided, they will be handled by frontend localStorage
     // Backend just clears the token and confirms logout
     
-    // Optional: Log logout event for audit trail
-    const auditResult = await db.query(
-      `INSERT INTO audit_log (user_id, action, details, created_at)
-       VALUES ($1, $2, $3, NOW())`,
-      [user_id, 'logout', JSON.stringify({ cartItemsCount: cartItems?.length || 0 })]
-    ).catch(() => {
-      // Audit log not critical, silently fail if table doesn't exist
-      return null;
-    });
+    await logAudit(user_id, 'USER_LOGOUT', 'user', user_id);
 
     // Cookie clearing disabled.
     // res.clearCookie('token');
@@ -713,6 +710,7 @@ const changePassword = async (req, res) => {
       newPasswordHash, 
       req.user.id
     ]);
+    await logAudit(req.user.id, 'PASSWORD_CHANGED', 'user', req.user.id);
 
     console.log(`✅ Password changed for user: ${user.email}`);
 
@@ -913,15 +911,7 @@ const deleteAccount = async (req, res) => {
 
     if (result.rows.length === 0) return sendError(res, 404, 'User not found');
 
-    // Optional: write audit log
-    await db.query(
-      `INSERT INTO audit_log (user_id, action, details, created_at) 
-       VALUES ($1, $2, $3, NOW())`,
-      [req.user.id, 'delete_account', JSON.stringify({ reason: req.body.reason || 'User requested deletion' })]
-    ).catch(() => {
-      // Audit log is optional, continue even if it fails
-      console.log('Audit log insert skipped (table may not exist)');
-    });
+    await logAudit(req.user.id, 'USER_DELETED', 'user', req.user.id, { reason: req.body.reason || 'self' });
 
     console.log(`✅ Account deleted for user: ${user.email}`);
 
@@ -1039,5 +1029,4 @@ module.exports = {
   updateNotificationPreferences,
   deleteAccount
 };
-
 

@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { get: getAuditContext } = require('./auditContext');
 
 /**
  * Log an action to the audit_logs table
@@ -10,10 +11,11 @@ const db = require('../config/db');
  */
 const logAudit = async (actorId, action, objectType = null, objectId = null, metadata = null) => {
   try {
+    const ctx = getAuditContext();
     await db.query(
-      `INSERT INTO audit_logs (actor_id, action, object_type, object_id, metadata, created_at)
-       VALUES ($1, $2, $3, $4, $5, now())`,
-      [actorId, action, objectType, objectId, metadata ? JSON.stringify(metadata) : null]
+      `INSERT INTO audit_logs (actor_id, action, object_type, object_id, metadata, ip_address, user_agent, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,now())`,
+      [actorId, action, objectType, objectId, metadata ? JSON.stringify(metadata) : null, ctx.ip || null, ctx.ua || null]
     );
   } catch (error) {
     console.error('Audit log error:', error);

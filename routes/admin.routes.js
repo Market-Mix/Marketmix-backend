@@ -11,6 +11,7 @@ const { createDedupedNotification } = require('../controllers/notification.contr
 const { getPaymentSummaryForRefundCase } = require('../services/refundPaymentPreparationService');
 const { recoverSellerDebtFromEscrowRelease } = require('../services/sellerDebtRecoveryService');
 const { syncRefundCase } = require('../utils/refundSync');
+const { logAudit } = require('../utils/audit');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zfyoxmwwuwgvaevwlgzn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -265,6 +266,7 @@ router.post('/escrow/:escrowId/resolve', protect, isAdmin, async (req, res) => {
     }
 
     await client.query('COMMIT');
+    await logAudit(req.user.id, 'ESCROW_RESOLVED', 'escrow', escrowId, { action, notes });
     return sendSuccess(res, 200, `Escrow ${action}d successfully`);
   } catch (err) {
     await client.query('ROLLBACK');
@@ -979,6 +981,7 @@ router.post('/refunds/:refundId/approve', protect, isAdmin, async (req, res) => 
       return sendError(res, 404, 'Refund case not found');
     }
 
+    await logAudit(req.user.id, 'REFUND_APPROVED', 'refund_case', refundId, { reason: trimmedReason });
     const reasonSummary = truncateText(trimmedReason, 150);
     const updatedCase = result.rows[0];
     const { buyer_id, seller_id } = updatedCase;
@@ -1045,6 +1048,7 @@ router.post('/refunds/:refundId/reject', protect, isAdmin, async (req, res) => {
       return sendError(res, 404, 'Refund case not found');
     }
 
+    await logAudit(req.user.id, 'REFUND_REJECTED', 'refund_case', refundId, { reason: trimmedReason });
     const reasonSummary = truncateText(trimmedReason, 150);
     const updatedCase = result.rows[0];
     const { buyer_id, seller_id } = updatedCase;
@@ -1085,6 +1089,7 @@ router.post('/withdrawals/:id/process', protect, isAdmin, async (req, res) => {
     // Admin can force-process regardless of scheduled time
     await db.query(`UPDATE withdrawals SET scheduled_for=NOW() WHERE id=$1`, [req.params.id]);
     const result = await processWithdrawal(req.params.id);
+    if (result.success) await logAudit(req.user.id, 'WITHDRAWAL_PROCESSED', 'withdrawal', req.params.id);
     return sendSuccess(res, 200, 'Processing initiated', result);
   } catch (err) {
     return sendError(res, 500, err.message);
@@ -1105,6 +1110,7 @@ router.post('/withdrawals/:id/reject', protect, isAdmin, async (req, res) => {
     `UPDATE seller_profiles SET available_balance=available_balance+$1 WHERE user_id=$2`,
     [wd.rows[0].amount, wd.rows[0].seller_id]
   );
+  await logAudit(req.user.id, 'WITHDRAWAL_REJECTED', 'withdrawal', req.params.id, { reason: reason || 'Rejected by admin' });
   return sendSuccess(res, 200, 'Withdrawal rejected and balance restored');
 });
 
@@ -1308,6 +1314,7 @@ router.post('/sellers/:id/suspend', protect, isAdmin, async (req, res) => {
     );
     if (!result.rows.length) return sendError(res, 404, 'Seller not found');
 
+    await logAudit(req.user.id, 'SELLER_SUSPENDED', 'seller', req.params.id, { duration, reason });
     await createDedupedNotification({
       userId: req.params.id,
       title: 'Account Suspended',
@@ -1339,6 +1346,7 @@ router.post('/sellers/:id/unsuspend', protect, isAdmin, async (req, res) => {
        WHERE seller_id = $2 AND admin_reviewed = false`,
       [req.user.id, req.params.id]
     );
+    await logAudit(req.user.id, 'SELLER_REACTIVATED', 'seller', req.params.id);
     return sendSuccess(res, 200, 'Seller reinstated');
   } catch (err) {
     return sendError(res, 500, 'Error reinstating seller', err.message);
@@ -1352,6 +1360,7 @@ router.post('/sellers/:id/activate', protect, isAdmin, async (req, res) => {
       [req.params.id]
     );
     if (!result.rows.length) return sendError(res, 404, 'Seller not found');
+    await logAudit(req.user.id, 'SELLER_REACTIVATED', 'seller', req.params.id);
     return sendSuccess(res, 200, 'Seller reactivated');
   } catch (err) {
     return sendError(res, 500, 'Error reactivating seller', err.message);
@@ -1414,6 +1423,7 @@ router.post('/sellers/:sellerId/kyc/approve', protect, isAdmin, async (req, res)
       [sellerId]
     );
 
+    await logAudit(req.user.id, 'SELLER_KYC_APPROVED', 'seller', sellerId);
     await createDedupedNotification({
       userId: sellerId,
       title: 'KYC Approved',
@@ -1455,6 +1465,7 @@ router.post('/sellers/:sellerId/kyc/reject', protect, isAdmin, async (req, res) 
       [sellerId]
     );
 
+    await logAudit(req.user.id, 'SELLER_KYC_REJECTED', 'seller', sellerId);
     await createDedupedNotification({
       userId: sellerId,
       title: 'KYC Rejected',
@@ -1504,6 +1515,7 @@ router.post('/withdrawals/:id/force-process', protect, isAdmin, async (req, res)
     );
     const { processWithdrawal } = require('../services/payout.service');
     const result = await processWithdrawal(req.params.id);
+    if (result.success) await logAudit(req.user.id, 'WITHDRAWAL_PROCESSED', 'withdrawal', req.params.id);
     return sendSuccess(res, 200, 'Processing initiated', result);
   } catch (err) {
     return sendError(res, 500, err.message);
@@ -1527,6 +1539,7 @@ router.post('/withdrawals/:id/approve', protect, isAdmin, async (req, res) => {
     `UPDATE users SET withdrawal_eligible_at=NOW() WHERE id=$1`,
     [wd.rows[0].seller_id]
   );
+  await logAudit(req.user.id, 'WITHDRAWAL_APPROVED', 'withdrawal', req.params.id, { notes });
   return sendSuccess(res, 200, 'Withdrawal approved and queued for immediate processing');
 });
 

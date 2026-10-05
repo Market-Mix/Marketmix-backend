@@ -5,6 +5,7 @@ const { sendSuccess, sendError } = require('../utils/response');
 const sendEmail = require('../utils/sendEmail');
 const { notifySeller } = require('../utils/sellerEmailService');
 const { hasUnresolvedCases } = require('../services/withdrawalEligibility.service');
+const { logAudit } = require('../utils/audit');
 
 const MIN_WITHDRAWAL = parseFloat(process.env.MIN_WITHDRAWAL || '1000');
 const WITHDRAWAL_DELAY_HOURS = parseInt(process.env.WITHDRAWAL_DELAY_HOURS || '24');
@@ -253,6 +254,9 @@ const requestWithdrawal = async (req, res) => {
   [sellerId, `Withdrawal of ₦${Number(amount).toFixed(2)} to ${p.bank_name} queued. Processing in ${WITHDRAWAL_DELAY_HOURS}h.`]
 );
     await client.query('COMMIT');
+    await logAudit(sellerId, 'WITHDRAWAL_REQUESTED', 'withdrawal', wdRes.rows[0].id, {
+      reference: wdRes.rows[0].reference
+    });
 
     return sendSuccess(res, 201, 'Withdrawal request created', {
       reference,

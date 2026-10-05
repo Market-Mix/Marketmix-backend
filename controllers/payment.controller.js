@@ -18,6 +18,7 @@ const marketpay  = require('../services/marketpay.service');
 const { sendSuccess, sendError } = require('../utils/response');
 const { notifySeller, notifyBuyer } = require('../utils/sellerEmailService');
 const { recordRedemption } = require('../utils/couponEngine');
+const { logAudit } = require('../utils/audit');
 
 // ── GET /api/payments/methods ─────────────────────────────────────────────────
 const getPaymentMethods = (req, res) => {
@@ -562,6 +563,7 @@ notifyBuyer(buyer_id, 'orderConfirmed', {
       [tx.order_id]
     );
 
+    await logAudit(null, 'PAYMENT_COMPLETED', 'payment', tx.id, { reference });
     console.log(`✅ Order ${tx.order_id} fulfilled — ref: ${reference}`);
   } catch (err) {
     console.error('_fulfillOrder error:', err);
