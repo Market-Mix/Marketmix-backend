@@ -100,6 +100,7 @@ app.use('/api/admin/analytics', require('./routes/admin_analytics.routes'));
 app.use('/api/admin/coupons', require('./routes/admin_coupons.routes'));
 app.use('/api/admin/audit-logs', require('./routes/admin_audit.routes'));
 app.use('/api/admin/rbac', require('./routes/admin_rbac.routes'));
+app.use('/api/admin/reviews', require('./routes/admin_reviews.routes'));
 app.use('/api/cms', require('./routes/cms_public.routes'));
 app.use('/api/admin', adminRoutes);
 app.use('/api/products', productsRoutes);
