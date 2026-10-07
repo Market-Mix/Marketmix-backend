@@ -135,12 +135,12 @@ router.get('/meta', requirePermission('Reviews', 'View'), wrap(async (req, res) 
 
 router.get('/summary', requirePermission('Reviews', 'View'), wrap(async (req, res) => {
   const [s, topCat, lowCat, topSeller, topProd, warns, removedWeek] = await Promise.all([
-    q(`${BASE} SELECT COUNT(*) total,
-        COUNT(*) FILTER (WHERE status='Pending') pending, COUNT(*) FILTER (WHERE status='Reported') reported,
-        COUNT(*) FILTER (WHERE status='Removed') removed, COUNT(*) FILTER (WHERE status='Published') published,
-        ROUND(AVG(rating) FILTER (WHERE status NOT IN ('Removed','Hidden')),1) avg,
-        COUNT(*) FILTER (WHERE created_at::date=CURRENT_DATE) today,
-        COUNT(*) FILTER (WHERE created_at>=date_trunc('month',NOW())) month FROM base`),
+    q(`${BASE} SELECT COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status='Pending') AS pending, COUNT(*) FILTER (WHERE status='Reported') AS reported,
+        COUNT(*) FILTER (WHERE status='Removed') AS removed, COUNT(*) FILTER (WHERE status='Published') AS published,
+        ROUND(AVG(rating) FILTER (WHERE status NOT IN ('Removed','Hidden')),1) AS avg,
+        COUNT(*) FILTER (WHERE created_at::date=CURRENT_DATE) AS today,
+        COUNT(*) FILTER (WHERE created_at>=date_trunc('month',NOW())) AS month FROM base`),
     q(`${BASE} SELECT category, COUNT(*) c FROM base WHERE status<>'Removed' GROUP BY 1 ORDER BY c DESC LIMIT 1`),
     q(`${BASE} SELECT category, ROUND(AVG(rating),1) a FROM base WHERE status<>'Removed' GROUP BY 1 ORDER BY a ASC LIMIT 1`),
     q(`${BASE} SELECT seller, SUM(reports) c FROM base GROUP BY seller_id, seller HAVING SUM(reports)>0 ORDER BY c DESC LIMIT 1`),
