@@ -974,12 +974,17 @@ router.post('/refunds/:refundId/approve', protect, isAdmin, requirePermission('R
            resolution_status = 'waiting_seller_return_decision',
            updated_at = NOW()
        WHERE id = $1
+         AND COALESCE(marketmix_decision,'') = ''
+         AND resolution_status IN ('escalated','awaiting_admin')
        RETURNING id, buyer_id, seller_id, order_id, resolution_status, status`,
       [refundId, trimmedReason, decidedBy]
     );
 
     if (!result.rows.length) {
-      return sendError(res, 404, 'Refund case not found');
+      const ex = await db.query('SELECT 1 FROM refund_cases WHERE id = $1', [refundId]);
+      return ex.rows.length
+        ? sendError(res, 409, 'This case was already decided or is not awaiting an admin decision')
+        : sendError(res, 404, 'Refund case not found');
     }
 
     await logAudit(req.user.id, 'REFUND_APPROVED', 'refund_case', refundId, { reason: trimmedReason });
@@ -1041,12 +1046,17 @@ router.post('/refunds/:refundId/reject', protect, isAdmin, requirePermission('Re
            resolution_status = 'refund_rejected',
            updated_at = NOW()
        WHERE id = $1
+         AND COALESCE(marketmix_decision,'') = ''
+         AND resolution_status IN ('escalated','awaiting_admin')
        RETURNING id, buyer_id, seller_id, order_id, resolution_status, status`,
       [refundId, trimmedReason, decidedBy]
     );
 
     if (!result.rows.length) {
-      return sendError(res, 404, 'Refund case not found');
+      const ex = await db.query('SELECT 1 FROM refund_cases WHERE id = $1', [refundId]);
+      return ex.rows.length
+        ? sendError(res, 409, 'This case was already decided or is not awaiting an admin decision')
+        : sendError(res, 404, 'Refund case not found');
     }
 
     await logAudit(req.user.id, 'REFUND_REJECTED', 'refund_case', refundId, { reason: trimmedReason });

@@ -96,15 +96,16 @@ router.post('/:caseId', protect, async (req, res) => {
 
     const msg = result.rows[0];
 
-    // Notify the other party
-    const notifyUserId = senderType === 'buyer' ? c.seller_id : c.buyer_id;
-    if (notifyUserId) {
-      const notificationTitle = senderType === 'buyer' 
-        ? 'New Refund Message' 
-        : 'New Refund Message';
+    // Notify the other party, or both parties when MarketMix posts.
+    const targets = senderType === 'admin' ? [c.buyer_id, c.seller_id]
+      : [senderType === 'buyer' ? c.seller_id : c.buyer_id];
+    for (const notifyUserId of targets.filter(Boolean)) {
+      const notificationTitle = 'New Refund Message';
       const notificationMessage = senderType === 'buyer'
         ? 'The buyer sent a new message regarding a refund case.'
-        : 'The seller replied to your refund case.';
+        : senderType === 'admin'
+          ? 'MarketMix support sent a new message regarding a refund case.'
+          : 'The seller replied to your refund case.';
       const refundLink = `/buyers/buyers%20return%20report.html?case=${caseId}`;
       
       await db.query(

@@ -3,7 +3,7 @@ const router = express.Router();
 const { sendSuccess, sendError } = require('../utils/response');
 const db = require('../config/db');
 const { protect } = require('../middlewares/auth.middleware');
-const { isSeller } = require('../middlewares/role.middleware');
+const { isSeller, isBuyer, isAdmin } = require('../middlewares/role.middleware');
 const { notifySeller } = require('../utils/sellerEmailService');
 const { notifyBuyer } = require('../utils/sellerEmailService');
 const { createDedupedNotification } = require('../controllers/notification.controller');
@@ -109,22 +109,21 @@ router.get('/seller', protect, isSeller, async (req, res) => {
 });
 
 // ─── POST /api/refunds/create — Create refund case ───────────────────────────
-router.post('/create', async (req, res) => {
+router.post('/create', protect, async (req, res) => {
   try {
     const {
-      buyer_id,
       order_id,
       order_item_id,
       product_id,
       product_name,
       complaint_text,
-      seller_id,
       evidence_url
     } = req.body;
+    const buyer_id = req.user.id;
 
     console.log('➡️ /api/refunds/create hit with body:', req.body);
 
-    const requiredFields = ['buyer_id', 'order_id', 'order_item_id', 'product_id', 'product_name', 'complaint_text'];
+    const requiredFields = ['order_id', 'order_item_id', 'product_id', 'product_name', 'complaint_text'];
     const missing = requiredFields.filter(field => !req.body[field]);
     if (missing.length > 0) {
       console.error('❌ Missing required refund fields:', missing);
@@ -133,107 +132,23 @@ router.post('/create', async (req, res) => {
 
     if (!ensureSupabaseConfigured(res)) return;
 
-    let resolvedSellerId = seller_id;
-    if (!resolvedSellerId && order_item_id) {
-      try {
-        const itemSellerRes = await db.query(
-          'SELECT seller_id FROM order_items WHERE id = $1 AND seller_id IS NOT NULL LIMIT 1',
-          [order_item_id]
-        );
-        if (itemSellerRes.rows.length > 0) {
-          resolvedSellerId = itemSellerRes.rows[0].seller_id;
-          console.log('🔎 Resolved seller_id from order_item_id:', resolvedSellerId);
-        }
-      } catch (err) {
-        console.warn('⚠️ Could not resolve seller_id from order_item_id:', err.message);
-      }
+    const orderItemRes = await db.query(
+      `SELECT oi.seller_id, oi.product_id
+       FROM orders o
+       JOIN order_items oi ON oi.order_id = o.id
+       WHERE o.id = $1 AND o.buyer_id = $2 AND oi.id = $3
+       LIMIT 1`,
+      [order_id, req.user.id, order_item_id]
+    );
+    if (!orderItemRes.rows.length) {
+      return res.status(404).json({ success: false, message: 'Order item not found' });
     }
-
-    if (!resolvedSellerId && order_id) {
-      try {
-        const orderItemsRes = await db.query(
-          'SELECT seller_id FROM order_items WHERE order_id = $1 AND seller_id IS NOT NULL LIMIT 1',
-          [order_id]
-        );
-        if (orderItemsRes.rows.length > 0) {
-          resolvedSellerId = orderItemsRes.rows[0].seller_id;
-          console.log('🔎 Resolved seller_id from order_items by order_id:', resolvedSellerId);
-        }
-      } catch (err) {
-        console.warn('⚠️ Could not resolve seller_id from order_items:', err.message);
-      }
-    }
-
-    if (!resolvedSellerId && product_id && order_id) {
-      try {
-        const orderItemRes = await db.query(
-          'SELECT seller_id FROM order_items WHERE order_id = $1 AND product_id = $2 AND seller_id IS NOT NULL LIMIT 1',
-          [order_id, product_id]
-        );
-        if (orderItemRes.rows.length > 0) {
-          resolvedSellerId = orderItemRes.rows[0].seller_id;
-          console.log('🔎 Resolved seller_id from order_items by product_id:', resolvedSellerId);
-        }
-      } catch (err) {
-        console.warn('⚠️ Could not resolve seller_id from order_items by product_id:', err.message);
-      }
-    }
-
-    if (!resolvedSellerId && product_id) {
-      try {
-        const productRes = await db.query(
-          'SELECT seller_id FROM products WHERE id = $1 AND seller_id IS NOT NULL LIMIT 1',
-          [product_id]
-        );
-        if (productRes.rows.length > 0) {
-          resolvedSellerId = productRes.rows[0].seller_id;
-          console.log('🔎 Resolved seller_id from product_id record:', resolvedSellerId);
-        }
-      } catch (err) {
-        console.warn('⚠️ Could not resolve seller_id from product record using product_id:', err.message);
-      }
-    }
-
-    if (!resolvedSellerId && product_name) {
-      try {
-        const productRes = await db.query(
-          'SELECT seller_id FROM products WHERE name = $1 AND seller_id IS NOT NULL LIMIT 1',
-          [product_name]
-        );
-        if (productRes.rows.length > 0) {
-          resolvedSellerId = productRes.rows[0].seller_id;
-          console.log('🔎 Resolved seller_id from product record by product_name:', resolvedSellerId);
-        }
-      } catch (err) {
-        console.warn('⚠️ Could not resolve seller_id from product record:', err.message);
-      }
-    }
-
+    const resolvedSellerId = orderItemRes.rows[0].seller_id;
     if (!resolvedSellerId) {
-      console.error('❌ Unable to resolve seller_id for refund create payload:', { order_id, product_name, receivedSellerId: seller_id });
-      return res.status(400).json({ success: false, message: 'Unable to resolve seller_id for this order', details: { order_id, product_name } });
+      return res.status(400).json({ success: false, message: 'Unable to resolve seller for this order item' });
     }
-
-    // Fetch buyer name and order item amount
-    let buyerName = null;
-    let totalAmount = 0;
-    try {
-      const buyerRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1', [buyer_id]);
-      if (buyerRes.rows.length > 0) {
-        const row = buyerRes.rows[0];
-        buyerName = `${row.first_name || ''} ${row.last_name || ''}`.trim() || null;
-      }
-
-      const itemRes = await db.query(
-        'SELECT quantity, price_at_purchase FROM order_items WHERE order_id = $1 AND id = $2',
-        [order_id, order_item_id]
-      );
-      if (itemRes.rows.length > 0) {
-        const row = itemRes.rows[0];
-        totalAmount = (parseFloat(row.quantity) || 1) * (parseFloat(row.price_at_purchase) || 0);
-      }
-    } catch (err) {
-      console.warn('⚠️ Could not fetch buyer name or amount:', err.message);
+    if (String(orderItemRes.rows[0].product_id) !== String(product_id)) {
+      return res.status(400).json({ success: false, message: 'Product does not match the order item' });
     }
 
     // Resolve store/seller name for display in refund case to avoid relying on order enrichment later
@@ -266,7 +181,7 @@ router.post('/create', async (req, res) => {
     }
 
     const refundPayload = {
-      buyer_id,
+      buyer_id: req.user.id,
       seller_id: resolvedSellerId,
       order_id: String(order_id),
       order_item_id: order_item_id || null,
@@ -348,10 +263,10 @@ router.post('/create', async (req, res) => {
       caseId: refundCase.id
     }).catch(() => {});
 
-    if (seller_id) {
+    if (resolvedSellerId) {
       try {
         await createDedupedNotification({
-          userId: seller_id,
+          userId: resolvedSellerId,
           title: 'New Refund Request',
           message: `A buyer has requested a refund for Order #${order_id}. Review the request.`,
           type: 'refund',
@@ -387,7 +302,12 @@ async function fetchRefundCaseById(refundId) {
   return Array.isArray(data) && data.length > 0 ? data[0] : null;
 }
 
-router.post('/chat-started', async (req, res) => {
+function isRefundParticipant(refundCase, userId) {
+  return [refundCase?.buyer_id, refundCase?.seller_id]
+    .some(participantId => participantId && String(participantId) === String(userId));
+}
+
+router.post('/chat-started', protect, async (req, res) => {
   try {
     const { refund_id } = req.body;
     console.log('➡️ /api/refunds/chat-started hit with refund_id:', refund_id);
@@ -401,6 +321,9 @@ router.post('/chat-started', async (req, res) => {
     const refundCase = await fetchRefundCaseById(refund_id);
     if (!refundCase) {
       return res.status(404).json({ success: false, message: 'Refund case not found' });
+    }
+    if (!isRefundParticipant(refundCase, req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
     if (refundCase.chat_started) {
@@ -442,7 +365,7 @@ router.post('/chat-started', async (req, res) => {
   }
 });
 
-router.post('/mark-resolved', async (req, res) => {
+router.post('/mark-resolved', protect, isSeller, async (req, res) => {
   try {
     const { refund_id } = req.body;
     console.log('➡️ /api/refunds/mark-resolved hit with refund_id:', refund_id);
@@ -452,6 +375,14 @@ router.post('/mark-resolved', async (req, res) => {
     }
 
     if (!ensureSupabaseConfigured(res)) return;
+
+    const refundCase = await fetchRefundCaseById(refund_id);
+    if (!refundCase) {
+      return res.status(404).json({ success: false, message: 'Refund case not found' });
+    }
+    if (String(refundCase.seller_id) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
 
     const updatePayload = {
       seller_marked_resolved: true,
@@ -506,7 +437,7 @@ router.post('/mark-resolved', async (req, res) => {
   }
 });
 
-router.post('/buyer-satisfied', async (req, res) => {
+router.post('/buyer-satisfied', protect, isBuyer, async (req, res) => {
   try {
     const { refund_id } = req.body;
     console.log('➡️ /api/refunds/buyer-satisfied hit with refund_id:', refund_id);
@@ -516,6 +447,14 @@ router.post('/buyer-satisfied', async (req, res) => {
     }
 
     if (!ensureSupabaseConfigured(res)) return;
+
+    const refundCase = await fetchRefundCaseById(refund_id);
+    if (!refundCase) {
+      return res.status(404).json({ success: false, message: 'Refund case not found' });
+    }
+    if (String(refundCase.buyer_id) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
 
     const updatePayload = {
       buyer_confirmed_resolution: true,
@@ -580,13 +519,13 @@ router.post('/buyer-satisfied', async (req, res) => {
   }
 });
 
-router.post('/escalate', async (req, res) => {
+router.post('/escalate', protect, async (req, res) => {
   try {
-    const { refund_id, escalated_by } = req.body;
-    console.log('➡️ /api/refunds/escalate hit with refund_id:', refund_id, 'escalated_by:', escalated_by);
+    const { refund_id } = req.body;
+    console.log('➡️ /api/refunds/escalate hit with refund_id:', refund_id, 'escalated_by:', req.user.id);
 
-    if (!refund_id || !escalated_by) {
-      return res.status(400).json({ success: false, message: 'Missing refund_id or escalated_by' });
+    if (!refund_id) {
+      return res.status(400).json({ success: false, message: 'Missing refund_id' });
     }
 
     if (!ensureSupabaseConfigured(res)) return;
@@ -594,6 +533,9 @@ router.post('/escalate', async (req, res) => {
     const refundCase = await fetchRefundCaseById(refund_id);
     if (!refundCase) {
       return res.status(404).json({ success: false, message: 'Refund case not found' });
+    }
+    if (!isRefundParticipant(refundCase, req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
     const updatePayload = {
@@ -622,7 +564,7 @@ router.post('/escalate', async (req, res) => {
       return res.status(response.status).json({ success: false, message: 'Failed to escalate refund case', details: updatedData });
     }
 
-    console.log(`✅ Refund ${refund_id} escalated to MarketMix by ${escalated_by}`);
+    console.log(`✅ Refund ${refund_id} escalated to MarketMix by ${req.user.id}`);
 
     // Notify buyer and seller that refund has been escalated to MarketMix
     try {
@@ -830,7 +772,7 @@ router.post('/:refundId/shipment-update', protect, async (req, res) => {
   }
 });
 
-router.patch('/:caseId/status', async (req, res) => {
+router.patch('/:caseId/status', protect, isAdmin, async (req, res) => {
   try {
     const { caseId } = req.params;
     const { status } = req.body;
