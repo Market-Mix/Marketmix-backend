@@ -241,6 +241,21 @@ router.delete('/admins/:id', MANAGE, wrap(async (req, res) => {
   return sendSuccess(res, 200, 'Administrator removed');
 }));
 
+router.put('/admins/:id/profile', MANAGE, wrap(async (req, res) => {
+  const a = await getAdmin(req.params.id);
+  const dept  = String(req.body.department || '').trim().slice(0, 60) || a.department;
+  const first = String(req.body.firstName || '').trim().slice(0, 80);
+  const last  = String(req.body.lastName  || '').trim().slice(0, 80);
+  await db.transaction(async c => {
+    await c.query(`UPDATE admin_members SET department=$1, updated_at=NOW() WHERE user_id=$2`, [dept, a.id]);
+    if (first) await c.query(
+      `UPDATE users SET first_name=$1, last_name=COALESCE(NULLIF($2,''),last_name), updated_at=NOW() WHERE id=$3`,
+      [first, last, a.id]);
+  });
+  await audit(req, 'RBAC_ADMIN_PROFILE_UPDATED', a.id, { target: adminShape(a).name, description: 'Administrator profile updated' });
+  return sendSuccess(res, 200, 'Profile updated');
+}));
+
 const INV_SQL = `SELECT i.id,i.email,i.first_name,i.last_name,i.department,i.expires_at,i.created_at,r.name role_name
   FROM admin_invitations i LEFT JOIN admin_roles r ON r.id=i.role_id
   WHERE i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at>NOW()`;
