@@ -2,6 +2,201 @@ const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { notifySeller } = require('../utils/sellerEmailService');
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const getVerifiedSellerStoreId = async (req, res) => {
+  const storeId = req.headers['x-store-id'];
+  if (typeof storeId !== 'string' || !UUID_PATTERN.test(storeId)) {
+    sendError(res, 400, 'A valid active store is required. Select a store you own and try again.');
+    return null;
+  }
+
+  const result = await db.query(
+    'SELECT id FROM stores WHERE id = $1 AND user_id = $2 AND is_deleted = false',
+    [storeId, req.user.id]
+  );
+  if (result.rows.length === 0) {
+    sendError(res, 400, 'A valid active store is required. Select a store you own and try again.');
+    return null;
+  }
+
+  return storeId;
+};
+
+/**
+ * @desc    Get visible reviews for the authenticated seller's active store
+ * @route   GET /api/reviews/seller/my-reviews
+ * @access  Private (Seller)
+ */
+const getSellerStoreReviews = async (req, res) => {
+  try {
+    const storeId = await getVerifiedSellerStoreId(req, res);
+    if (!storeId) return;
+
+    const page = Number(req.query.page ?? 1);
+    const limit = Number(req.query.limit ?? 20);
+    if (!Number.isInteger(page) || page < 1 ||
+        !Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return sendError(res, 400, 'Page must be a positive integer and limit must be between 1 and 100');
+    }
+
+    const offset = (page - 1) * limit;
+    const reviewFilter = `
+      p.seller_id = $1
+      AND p.store_id = $2
+      AND p.is_deleted = false
+      AND r.is_approved = true
+      AND r.is_deleted = false
+      AND COALESCE(r.moderation_status, 'published') = 'published'`;
+    const [reviewsResult, countResult] = await Promise.all([
+      db.query(
+        `SELECT
+           r.id,
+           r.product_id AS "productId",
+           p.name AS "productName",
+           p.main_image_url AS "productImage",
+           r.rating,
+           r.comment,
+           r.created_at AS "createdAt",
+           NULLIF(TRIM(CONCAT_WS(' ', NULLIF(u.first_name, ''), NULLIF(u.last_name, ''))), '') AS "buyerName",
+           COALESCE((
+             SELECT json_agg(
+               json_build_object(
+                 'id', rm.id,
+                 'type', rm.media_type,
+                 'url', rm.media_url,
+                 'thumbnailUrl', rm.thumbnail_url
+               ) ORDER BY rm.created_at, rm.id
+             )
+             FROM review_media rm
+             WHERE rm.review_id = r.id
+           ), '[]'::json) AS media,
+           COALESCE((
+             SELECT json_agg(
+               json_build_object(
+                 'id', rr.id,
+                 'text', rr.reply_text,
+                 'createdAt', rr.created_at,
+                 'updatedAt', rr.updated_at
+               ) ORDER BY rr.created_at, rr.id
+             )
+             FROM review_replies rr
+             WHERE rr.review_id = r.id AND rr.seller_id = $1
+           ), '[]'::json) AS replies
+         FROM reviews r
+         JOIN products p ON p.id = r.product_id
+         JOIN users u ON u.id = r.user_id
+         WHERE ${reviewFilter}
+         ORDER BY r.created_at DESC, r.id
+         LIMIT $3 OFFSET $4`,
+        [req.user.id, storeId, limit, offset]
+      ),
+      db.query(
+        `SELECT COUNT(*) AS total
+         FROM reviews r
+         JOIN products p ON p.id = r.product_id
+         WHERE ${reviewFilter}`,
+        [req.user.id, storeId]
+      )
+    ]);
+
+    const total = Number(countResult.rows[0].total);
+    return sendSuccess(res, 200, 'Seller reviews fetched successfully', {
+      reviews: reviewsResult.rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get seller store reviews error:', error);
+    return sendError(res, 500, 'Error fetching seller reviews', error);
+  }
+};
+
+/**
+ * @desc    Create a reply to a visible review for the authenticated seller
+ * @route   POST /api/reviews/seller/my-reviews/:reviewId/replies
+ * @access  Private (Seller)
+ * @body    { reply_text }
+ */
+const createSellerReviewReply = async (req, res) => {
+  try {
+    const storeId = await getVerifiedSellerStoreId(req, res);
+    if (!storeId) return;
+
+    const { reviewId } = req.params;
+    if (!UUID_PATTERN.test(reviewId)) {
+      return sendError(res, 400, 'A valid review ID is required');
+    }
+
+    const replyText = typeof req.body?.reply_text === 'string' ? req.body.reply_text.trim() : '';
+    const replyLength = Array.from(replyText).length;
+    if (replyLength < 1 || replyLength > 500) {
+      return sendError(res, 400, 'Reply text must be between 1 and 500 characters');
+    }
+
+    const result = await db.transaction(async (client) => {
+      const reviewResult = await client.query(
+        `SELECT r.id
+         FROM reviews r
+         JOIN products p ON p.id = r.product_id
+         WHERE r.id = $1
+           AND p.seller_id = $2
+           AND p.store_id = $3
+           AND p.is_deleted = false
+           AND r.is_approved = true
+           AND r.is_deleted = false
+           AND COALESCE(r.moderation_status, 'published') = 'published'
+         FOR UPDATE OF r`,
+        [reviewId, req.user.id, storeId]
+      );
+      if (reviewResult.rows.length === 0) return { notFound: true };
+
+      const duplicateResult = await client.query(
+        `SELECT id, review_id AS "reviewId", reply_text AS text,
+                created_at AS "createdAt", updated_at AS "updatedAt"
+         FROM review_replies
+         WHERE review_id = $1
+           AND seller_id = $2
+           AND reply_text = $3
+           AND created_at >= NOW() - INTERVAL '10 seconds'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [reviewId, req.user.id, replyText]
+      );
+      if (duplicateResult.rows.length > 0) {
+        return { reply: duplicateResult.rows[0], duplicate: true };
+      }
+
+      const replyResult = await client.query(
+        `INSERT INTO review_replies (review_id, seller_id, reply_text)
+         VALUES ($1, $2, $3)
+         RETURNING id, review_id AS "reviewId", reply_text AS text,
+                   created_at AS "createdAt", updated_at AS "updatedAt"`,
+        [reviewId, req.user.id, replyText]
+      );
+      return { reply: replyResult.rows[0], duplicate: false };
+    });
+
+    if (result.notFound) {
+      return sendError(res, 404, 'Review not found for the selected store');
+    }
+
+    return sendSuccess(
+      res,
+      result.duplicate ? 200 : 201,
+      result.duplicate ? 'Reply already submitted' : 'Reply created successfully',
+      { reply: result.reply }
+    );
+  } catch (error) {
+    console.error('Create seller review reply error:', error);
+    return sendError(res, 500, 'Error creating review reply', error);
+  }
+};
+
 /**
  * @desc    Get all reviews for current user (buyer)
  * @route   GET /api/reviews/my-reviews
@@ -495,5 +690,7 @@ module.exports = {
   deleteReview,
   getProductReviews,
   voteReview,
-  reportReview
+  reportReview,
+  getSellerStoreReviews,
+  createSellerReviewReply
 };

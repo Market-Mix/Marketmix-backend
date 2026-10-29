@@ -9,9 +9,12 @@ const {
   deleteReview,
   getProductReviews,
   voteReview,
-  reportReview
+  reportReview,
+  getSellerStoreReviews,
+  createSellerReviewReply
 } = require('../controllers/reviews.controller');
 const { protect } = require('../middlewares/auth.middleware');
+const { isSeller } = require('../middlewares/role.middleware');
 
 // =====================================================
 // BUYER ROUTES (Protected - Requires Authentication)
@@ -74,6 +77,29 @@ router.post('/:id/report', protect, reportReview);
  * @query   page, limit, rating
  */
 router.get('/product/:productId', getProductReviews);
+
+/**
+ * @route   GET /api/reviews/seller/my-reviews
+ * @desc    Get visible reviews for the authenticated seller's active store
+ * @access  Private (Seller)
+ * @query   page, limit
+ * @header  X-Store-Id
+ */
+router.get('/seller/my-reviews', protect, isSeller, getSellerStoreReviews);
+
+/**
+ * @route   POST /api/reviews/seller/my-reviews/:reviewId/replies
+ * @desc    Reply to a visible review belonging to the authenticated seller
+ * @access  Private (Seller)
+ * @header  X-Store-Id
+ * @body    { reply_text }
+ */
+router.post(
+  '/seller/my-reviews/:reviewId/replies',
+  protect,
+  isSeller,
+  createSellerReviewReply
+);
 
 // GET /api/reviews/seller/:sellerId — public seller reviews
 router.get('/seller/:sellerId', async (req, res) => {
