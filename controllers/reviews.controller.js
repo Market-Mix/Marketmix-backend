@@ -522,6 +522,7 @@ const getProductReviews = async (req, res) => {
         u.last_name AS "lastName",
         CASE WHEN r.order_id IS NOT NULL THEN true ELSE false END AS "verifiedPurchase",
         (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id AND vote_type = 'helpful') AS "helpfulCount",
+        (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id AND vote_type = 'not_helpful') AS "notHelpfulCount",
         (SELECT json_agg(
           json_build_object(
               'type', rm.media_type,
@@ -629,12 +630,17 @@ const voteReview = async (req, res) => {
 
     // Get updated count
     const countResult = await db.query(
-      "SELECT COUNT(*) as count FROM review_helpful_votes WHERE review_id = $1 AND vote_type = 'helpful'",
+      `SELECT
+         COUNT(*) FILTER (WHERE vote_type = 'helpful') AS "helpfulCount",
+         COUNT(*) FILTER (WHERE vote_type = 'not_helpful') AS "notHelpfulCount"
+       FROM review_helpful_votes
+       WHERE review_id = $1`,
       [reviewId]
     );
 
     return sendSuccess(res, 200, 'Vote recorded successfully', {
-      helpfulCount: parseInt(countResult.rows[0].count)
+      helpfulCount: parseInt(countResult.rows[0].helpfulCount),
+      notHelpfulCount: parseInt(countResult.rows[0].notHelpfulCount)
     });
   } catch (error) {
     console.error('Vote review error:', error);
