@@ -822,10 +822,14 @@ router.get('/stores/public/:storeId/products', async (req, res) => {
           COALESCE(c.name, 'Uncategorized') AS category_name,
           COALESCE(
             (SELECT AVG(r.rating)::numeric(10,1) FROM reviews r
-             WHERE r.product_id = p.id AND r.is_deleted = false), 0
+             WHERE r.product_id = p.id AND r.is_deleted = false
+               AND r.is_approved = true
+               AND to_jsonb(r)->>'moderation_status' = 'published'), 0
           ) AS avg_rating,
           (SELECT COUNT(*) FROM reviews r
-           WHERE r.product_id = p.id AND r.is_deleted = false) AS review_count
+           WHERE r.product_id = p.id AND r.is_deleted = false
+             AND r.is_approved = true
+             AND to_jsonb(r)->>'moderation_status' = 'published') AS review_count
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
        ${where}
@@ -898,12 +902,14 @@ router.get('/stores/public/:storeId', async (req, res) => {
             FROM reviews r
             JOIN products p ON p.id = r.product_id
             WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+              AND to_jsonb(r)->>'moderation_status' = 'published'
           ), 0) AS rating,
           COALESCE((
             SELECT COUNT(*)
             FROM reviews r
             JOIN products p ON p.id = r.product_id
             WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+              AND to_jsonb(r)->>'moderation_status' = 'published'
           ), 0) AS total_reviews,
           COALESCE((
             SELECT COUNT(DISTINCT o.id)
@@ -994,8 +1000,24 @@ router.get('/public', async (req, res) => {
           s.user_id        AS seller_id,
           s.business_name,
           s.business_description,
-          s.rating,
-          s.total_reviews,
+          COALESCE((
+            SELECT AVG(r.rating)::numeric(10,1)
+            FROM reviews r
+            JOIN products p ON p.id = r.product_id
+            WHERE (p.store_id = s.id OR (p.store_id IS NULL AND p.seller_id = s.user_id))
+              AND r.is_deleted = false
+              AND r.is_approved = true
+              AND to_jsonb(r)->>'moderation_status' = 'published'
+          ), 0) AS rating,
+          COALESCE((
+            SELECT COUNT(*)
+            FROM reviews r
+            JOIN products p ON p.id = r.product_id
+            WHERE (p.store_id = s.id OR (p.store_id IS NULL AND p.seller_id = s.user_id))
+              AND r.is_deleted = false
+              AND r.is_approved = true
+              AND to_jsonb(r)->>'moderation_status' = 'published'
+          ), 0) AS total_reviews,
           s.total_sales,
           s.is_verified,
           s.store_logo_url,
@@ -1012,7 +1034,7 @@ router.get('/public', async (req, res) => {
        WHERE s.is_active = true AND s.is_deleted = false
          AND u.is_deleted = false AND u.role = 'seller'
          AND s.business_name IS NOT NULL
-       ORDER BY s.total_sales DESC NULLS LAST, s.rating DESC NULLS LAST, s.created_at DESC
+       ORDER BY s.total_sales DESC NULLS LAST, rating DESC NULLS LAST, s.created_at DESC
        LIMIT $1 OFFSET $2`,
       [parseInt(limit), offset]
     );
@@ -1077,12 +1099,14 @@ router.get('/public/:id', async (req, res) => {
             FROM reviews r
             JOIN products p ON p.id = r.product_id
             WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+              AND to_jsonb(r)->>'moderation_status' = 'published'
           ), 0) AS rating,
           COALESCE((
             SELECT COUNT(*)
             FROM reviews r
             JOIN products p ON p.id = r.product_id
             WHERE p.store_id = s.id AND r.is_deleted = false AND r.is_approved = true
+              AND to_jsonb(r)->>'moderation_status' = 'published'
           ), 0) AS total_reviews,
           COALESCE((
             SELECT COUNT(DISTINCT o.id)

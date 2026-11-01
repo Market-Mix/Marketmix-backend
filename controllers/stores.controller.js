@@ -351,6 +351,7 @@ const getPublicStore = async (req, res) => {
            JOIN products p ON p.id = r.product_id
            WHERE (p.store_id = s.id OR (p.store_id IS NULL AND p.seller_id = s.user_id))
              AND r.is_deleted = false AND r.is_approved = true
+             AND to_jsonb(r)->>'moderation_status' = 'published'
          ), 0) AS rating,
          COALESCE((
            SELECT COUNT(*)
@@ -358,6 +359,7 @@ const getPublicStore = async (req, res) => {
            JOIN products p ON p.id = r.product_id
            WHERE (p.store_id = s.id OR (p.store_id IS NULL AND p.seller_id = s.user_id))
              AND r.is_deleted = false AND r.is_approved = true
+             AND to_jsonb(r)->>'moderation_status' = 'published'
          ), 0) AS total_reviews,
          COALESCE((
            SELECT COUNT(DISTINCT o.id)
@@ -458,10 +460,14 @@ const getPublicStoreProducts = async (req, res) => {
               COALESCE(c.name, 'Uncategorized') AS category_name,
               COALESCE(
                 (SELECT AVG(r.rating)::numeric(10,1) FROM reviews r
-                 WHERE r.product_id = p.id AND r.is_deleted = false), 0
+                 WHERE r.product_id = p.id AND r.is_deleted = false
+                   AND r.is_approved = true
+                   AND to_jsonb(r)->>'moderation_status' = 'published'), 0
               ) AS avg_rating,
               (SELECT COUNT(*) FROM reviews r
-               WHERE r.product_id = p.id AND r.is_deleted = false) AS review_count
+               WHERE r.product_id = p.id AND r.is_deleted = false
+                 AND r.is_approved = true
+                 AND to_jsonb(r)->>'moderation_status' = 'published') AS review_count
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
        ${where}

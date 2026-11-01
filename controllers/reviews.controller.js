@@ -12,7 +12,7 @@ const getVerifiedSellerStoreId = async (req, res) => {
   }
 
   const result = await db.query(
-    'SELECT id FROM stores WHERE id = $1 AND user_id = $2 AND is_deleted = false',
+    'SELECT id FROM stores WHERE id = $1 AND user_id = $2 AND is_deleted = false AND is_active = true',
     [storeId, req.user.id]
   );
   if (result.rows.length === 0) {
@@ -47,7 +47,7 @@ const getSellerStoreReviews = async (req, res) => {
       AND p.is_deleted = false
       AND r.is_approved = true
       AND r.is_deleted = false
-      AND COALESCE(r.moderation_status, 'published') = 'published'`;
+      AND r.moderation_status = 'published'`;
     const [reviewsResult, countResult] = await Promise.all([
       db.query(
         `SELECT
@@ -149,7 +149,7 @@ const createSellerReviewReply = async (req, res) => {
            AND p.is_deleted = false
            AND r.is_approved = true
            AND r.is_deleted = false
-           AND COALESCE(r.moderation_status, 'published') = 'published'
+           AND r.moderation_status = 'published'
          FOR UPDATE OF r`,
         [reviewId, req.user.id, storeId]
       );
@@ -217,6 +217,7 @@ const getMyReviews = async (req, res) => {
         r.created_at AS "createdAt",
         r.updated_at AS "updatedAt",
         r.is_approved AS "isApproved",
+        to_jsonb(r)->>'moderation_status' AS "moderationStatus",
         COALESCE(p.name, 'Product') AS "productName",
         CASE WHEN r.order_id IS NOT NULL THEN true ELSE false END AS "verifiedPurchase",
         (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id AND vote_type = 'helpful') AS "helpfulCount",
@@ -240,7 +241,8 @@ const getMyReviews = async (req, res) => {
         ) THEN 'flagged' ELSE 'active' END AS status
       FROM reviews r
       LEFT JOIN products p ON r.product_id = p.id
-      WHERE r.user_id = $1 AND r.is_deleted = FALSE
+      WHERE r.user_id = $1
+        AND (r.is_deleted = FALSE OR to_jsonb(r)->>'moderation_status' = 'removed')
       ORDER BY r.created_at DESC`,
       [userId]
     );
@@ -496,7 +498,10 @@ const getProductReviews = async (req, res) => {
     const rating = req.query.rating ? parseInt(req.query.rating) : null;
 
     // Build WHERE clause
-    let whereClause = 'r.product_id = $1 AND r.is_deleted = FALSE AND r.is_approved = TRUE';
+    let whereClause = `r.product_id = $1
+      AND r.is_deleted = FALSE
+      AND r.is_approved = TRUE
+      AND to_jsonb(r)->>'moderation_status' = 'published'`;
     const queryParams = [productId];
     let paramCount = 2;
 
@@ -554,7 +559,10 @@ const getProductReviews = async (req, res) => {
         COUNT(*) FILTER (WHERE rating = 2) as "twoStar",
         COUNT(*) FILTER (WHERE rating = 1) as "oneStar"
       FROM reviews
-      WHERE product_id = $1 AND is_deleted = FALSE AND is_approved = TRUE`,
+      WHERE product_id = $1
+        AND is_deleted = FALSE
+        AND is_approved = TRUE
+        AND to_jsonb(reviews)->>'moderation_status' = 'published'`,
       [productId]
     );
 

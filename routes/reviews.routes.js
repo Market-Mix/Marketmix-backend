@@ -31,7 +31,7 @@ router.get('/my-reviews', protect, getMyReviews);
  * @route   POST /api/reviews
  * @desc    Create a new review for a product
  * @access  Private (Buyer)
- * @body    { product_id, order_id?, rating, body, media? }
+ * @body    { product_id, order_id, rating, body, media? }
  */
 router.post('/', protect, createReview);
 
@@ -126,7 +126,10 @@ router.get('/seller/:sellerId', async (req, res) => {
        FROM reviews r
        JOIN users u ON r.user_id = u.id
        JOIN products p ON r.product_id = p.id
-       WHERE p.seller_id = $1 AND r.is_deleted = false AND r.is_approved = true${storeFilter}
+       WHERE p.seller_id = $1
+         AND r.is_deleted = false
+         AND r.is_approved = true
+         AND to_jsonb(r)->>'moderation_status' = 'published'${storeFilter}
        ORDER BY r.created_at DESC
        LIMIT $2 OFFSET $3`,
       resultParams
@@ -145,7 +148,10 @@ router.get('/seller/:sellerId', async (req, res) => {
           COUNT(*) FILTER (WHERE r.rating = 1) AS one_star
        FROM reviews r
        JOIN products p ON r.product_id = p.id
-       WHERE p.seller_id = $1 AND r.is_deleted = false AND r.is_approved = true${countFilter}`,
+       WHERE p.seller_id = $1
+         AND r.is_deleted = false
+         AND r.is_approved = true
+         AND to_jsonb(r)->>'moderation_status' = 'published'${countFilter}`,
       countParams
     );
 
