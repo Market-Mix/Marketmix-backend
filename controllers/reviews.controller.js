@@ -289,6 +289,10 @@ const createReview = async (req, res) => {
       return sendError(res, 404, 'Product not found');
     }
 
+    if (!order_id) {
+      return sendError(res, 400, 'A delivered order containing this product is required');
+    }
+
     // Check if user already reviewed this product
     const existingReview = await db.query(
       'SELECT id FROM reviews WHERE product_id = $1 AND user_id = $2 AND is_deleted = FALSE',
@@ -299,18 +303,16 @@ const createReview = async (req, res) => {
       return sendError(res, 409, 'You have already reviewed this product');
     }
 
-    // If order_id provided, verify it belongs to user and has this product
-    if (order_id) {
-      const orderCheck = await db.query(
-        `SELECT 1 FROM orders o
-         JOIN order_items oi ON o.id = oi.order_id
-         WHERE o.id = $1 AND o.buyer_id = $2 AND oi.product_id = $3 AND o.status = 'delivered'`,
-        [order_id, userId, product_id]
-      );
+    // Verify the authenticated buyer owns the delivered order and bought this product.
+    const orderCheck = await db.query(
+      `SELECT 1 FROM orders o
+       JOIN order_items oi ON o.id = oi.order_id
+       WHERE o.id = $1 AND o.buyer_id = $2 AND oi.product_id = $3 AND o.status = 'delivered'`,
+      [order_id, userId, product_id]
+    );
 
-      if (orderCheck.rows.length === 0) {
-        return sendError(res, 400, 'Invalid order or order not delivered');
-      }
+    if (orderCheck.rows.length === 0) {
+      return sendError(res, 400, 'Invalid order or order not delivered');
     }
 
     // Use a transaction to create review and optional media rows atomically
