@@ -1,8 +1,33 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { notifySeller } = require('../utils/sellerEmailService');
+const { uploadReviewMedia, deleteReviewMedia } = require('../utils/cloudinary');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_REVIEW_MEDIA_FILES = 5;
+const MAX_REVIEW_MEDIA_BYTES = 10 * 1024 * 1024;
+
+const getReviewMediaType = (file) => {
+  const extension = file.originalname.split('.').pop()?.toLowerCase();
+  const buffer = file.buffer;
+  if (!buffer || buffer.length > MAX_REVIEW_MEDIA_BYTES) return null;
+
+  if (file.mimetype === 'image/jpeg' && ['jpg', 'jpeg'].includes(extension) &&
+      buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image';
+  if (file.mimetype === 'image/png' && extension === 'png' &&
+      buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image';
+  if (file.mimetype === 'image/gif' && extension === 'gif' &&
+      ['GIF87a', 'GIF89a'].includes(buffer.toString('ascii', 0, 6))) return 'image';
+  if (file.mimetype === 'image/webp' && extension === 'webp' &&
+      buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'image';
+  if (file.mimetype === 'video/mp4' && extension === 'mp4' &&
+      buffer.toString('ascii', 4, 8) === 'ftyp') return 'video';
+  if (file.mimetype === 'video/quicktime' && extension === 'mov' &&
+      buffer.toString('ascii', 4, 8) === 'ftyp' && buffer.toString('ascii', 8, 12) === 'qt  ') return 'video';
+  if (file.mimetype === 'video/webm' && extension === 'webm' &&
+      buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return 'video';
+  return null;
+};
 
 const getVerifiedSellerStoreId = async (req, res) => {
   const storeId = req.headers['x-store-id'];
@@ -264,10 +289,11 @@ const getMyReviews = async (req, res) => {
 const createReview = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { product_id, order_id, rating, body, media } = req.body;
+    const { product_id, order_id, rating, body } = req.body;
+    const files = Array.isArray(req.files) ? req.files : [];
 
     // Validate required fields
-    if (!product_id || !rating || !body) {
+    if (!product_id || !rating || typeof body !== 'string') {
       return sendError(res, 400, 'Product ID, rating, and review body are required');
     }
 
@@ -277,8 +303,17 @@ const createReview = async (req, res) => {
     }
 
     // Validate body length
-    if (body.length < 4 || body.length > 1200) {
+    if (body.trim().length < 4 || body.length > 1200) {
       return sendError(res, 400, 'Review must be between 4 and 1200 characters');
+    }
+
+    if (files.length > MAX_REVIEW_MEDIA_FILES) {
+      return sendError(res, 400, `A maximum of ${MAX_REVIEW_MEDIA_FILES} review media files is allowed`);
+    }
+
+    const mediaTypes = files.map(getReviewMediaType);
+    if (mediaTypes.some((mediaType) => !mediaType)) {
+      return sendError(res, 400, 'Each review attachment must be a supported image or video file with a valid file signature');
     }
 
     // Check if product exists
@@ -317,45 +352,41 @@ const createReview = async (req, res) => {
       return sendError(res, 400, 'Invalid order or order not delivered');
     }
 
-    // Use a transaction to create review and optional media rows atomically
-    const result = await db.transaction(async (client) => {
-      const reviewRes = await client.query(
-        `INSERT INTO reviews (product_id, user_id, order_id, rating, comment)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, product_id, user_id, order_id, rating, comment AS body, created_at AS "createdAt"`,
-        [product_id, userId, order_id || null, rating, body]
-      );
-
-      const created = reviewRes.rows[0];
-
-      // Only insert media rows when media array exists and has items
-      if (media && Array.isArray(media) && media.length > 0) {
-        // Limit to 5 items maximum
-        const toInsert = media.slice(0, 5);
-        for (const item of toInsert) {
-          // Support either simple URL strings or objects with { data, type } from the frontend
-          let mediaUrl = null;
-          let mediaType = 'image';
-
-          if (typeof item === 'string') {
-            mediaUrl = item;
-          } else if (item && typeof item === 'object') {
-            if (item.data) mediaUrl = item.data;
-            if (item.type) mediaType = item.type.startsWith('image/') ? 'image' : 'video';
-          }
-
-          if (mediaUrl) {
-            await client.query(
-              `INSERT INTO review_media (review_id, media_type, media_url)
-               VALUES ($1, $2, $3)`,
-              [created.id, mediaType, mediaUrl]
-            );
-          }
-        }
+    const uploadedMedia = [];
+    let result;
+    try {
+      for (let index = 0; index < files.length; index += 1) {
+        uploadedMedia.push(await uploadReviewMedia(files[index].buffer, mediaTypes[index], userId));
       }
 
-      return created;
-    });
+      result = await db.transaction(async (client) => {
+        const reviewRes = await client.query(
+          `INSERT INTO reviews (product_id, user_id, order_id, rating, comment)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id, product_id, user_id, order_id, rating, comment AS body, created_at AS "createdAt"`,
+          [product_id, userId, order_id, rating, body.trim()]
+        );
+
+        const created = reviewRes.rows[0];
+        for (let index = 0; index < uploadedMedia.length; index += 1) {
+          await client.query(
+            `INSERT INTO review_media (review_id, media_type, media_url)
+             VALUES ($1, $2, $3)`,
+            [created.id, mediaTypes[index], uploadedMedia[index].url]
+          );
+        }
+
+        return created;
+      });
+    } catch (error) {
+      const cleanupResults = await Promise.allSettled(uploadedMedia.map(deleteReviewMedia));
+      cleanupResults.forEach((cleanupResult) => {
+        if (cleanupResult.status === 'rejected') {
+          console.error('Failed to clean up an unassociated review media upload:', cleanupResult.reason);
+        }
+      });
+      throw error;
+    }
 
     console.log(`✅ Review created by user ${userId} for product ${product_id}`);
 

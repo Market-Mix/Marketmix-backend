@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
 const db = require('../config/db');                          // ADD THIS
 const { sendSuccess, sendError } = require('../utils/response'); // ADD THIS
 const {
@@ -15,6 +17,37 @@ const {
 } = require('../controllers/reviews.controller');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
+
+const reviewMediaTypes = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm'
+};
+const reviewMediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 5, fields: 4, parts: 9 },
+  fileFilter: (req, file, callback) => {
+    const extension = path.extname(file.originalname).toLowerCase();
+    if (reviewMediaTypes[extension] !== file.mimetype) {
+      const error = new Error('Review attachments must be supported image or video files with matching extensions and MIME types');
+      error.status = 400;
+      return callback(error);
+    }
+    return callback(null, true);
+  }
+});
+const parseReviewMedia = (req, res, next) => {
+  reviewMediaUpload.array('media', 5)(req, res, (error) => {
+    if (!error) return next();
+    const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : (error.status || 400);
+    return sendError(res, status, error.message || 'Review media could not be uploaded');
+  });
+};
 
 // =====================================================
 // BUYER ROUTES (Protected - Requires Authentication)
@@ -33,7 +66,7 @@ router.get('/my-reviews', protect, getMyReviews);
  * @access  Private (Buyer)
  * @body    { product_id, order_id, rating, body, media? }
  */
-router.post('/', protect, createReview);
+router.post('/', protect, parseReviewMedia, createReview);
 
 /**
  * @route   PUT /api/reviews/:id
