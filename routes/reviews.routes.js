@@ -30,7 +30,7 @@ const reviewMediaTypes = {
 };
 const reviewMediaUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 5, fields: 4, parts: 9 },
+  limits: { fileSize: 10 * 1024 * 1024, files: 5, fields: 5, parts: 10 },
   fileFilter: (req, file, callback) => {
     const extension = path.extname(file.originalname).toLowerCase();
     if (reviewMediaTypes[extension] !== file.mimetype) {
