@@ -24,18 +24,31 @@ async function createDedupedNotification({ userId, title, message, type = 'accou
     throw new Error('Missing required fields for deduped notification');
   }
 
-  const existingQuery = `
-    SELECT id FROM notifications
-    WHERE user_id = $1 AND type = $2 AND title = $3 AND message = $4
-      AND is_deleted = FALSE
-    LIMIT 1
-  `;
-  const existingResult = await db.query(existingQuery, [userId, type, title, message]);
+  const hasLink = await notificationHasLinkColumn();
+  const existingQuery = referenceId
+    ? hasLink
+      ? `SELECT id FROM notifications
+         WHERE user_id = $1 AND type = $2 AND title = $3
+           AND link LIKE $4 AND is_deleted = FALSE
+         LIMIT 1`
+      : `SELECT id FROM notifications
+         WHERE user_id = $1 AND type = $2 AND title = $3
+           AND data->>'reference_id' = $4 AND is_deleted = FALSE
+         LIMIT 1`
+    : `SELECT id FROM notifications
+       WHERE user_id = $1 AND type = $2 AND title = $3 AND message = $4
+         AND is_deleted = FALSE
+       LIMIT 1`;
+  const existingParams = referenceId
+    ? hasLink
+      ? [userId, type, title, `%reference_id=${encodeURIComponent(referenceId)}%`]
+      : [userId, type, title, String(referenceId)]
+    : [userId, type, title, message];
+  const existingResult = await db.query(existingQuery, existingParams);
   if (existingResult.rows.length > 0) {
     return existingResult.rows[0];
   }
 
-  const hasLink = await notificationHasLinkColumn();
   if (hasLink) {
     // If the schema has a dedicated `link` column we can't store arbitrary JSON there.
     // Append the referenceId to the link as a query param when provided so callers

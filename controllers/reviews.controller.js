@@ -217,7 +217,8 @@ const createSellerReviewReply = async (req, res) => {
         title: 'Seller replied to your review',
         message: `Your review for ${result.productName || 'this product'} has a new seller response.`,
         type: 'review',
-        link: '/buyers/reviews%20ratings.html'
+        link: '/buyers/reviews%20ratings.html',
+        referenceId: result.reply.id
       });
     }
 
@@ -404,6 +405,19 @@ const createReview = async (req, res) => {
 
     const prod = await db.query('SELECT seller_id, name FROM products WHERE id=$1', [product_id]);
     if (prod.rows.length) {
+      try {
+        await createDedupedNotification({
+          userId: prod.rows[0].seller_id,
+          title: 'New product review',
+          message: `A buyer left a ${rating}-star review on ${prod.rows[0].name || 'your product'}.`,
+          type: 'review',
+          link: '/sellers/seller-reviews.html',
+          referenceId: result.id
+        });
+      } catch (notificationError) {
+        console.error('Failed to create seller review notification:', notificationError);
+      }
+
       notifySeller(prod.rows[0].seller_id, 'newReview', {
         productName: prod.rows[0].name,
         rating, comment: body,
