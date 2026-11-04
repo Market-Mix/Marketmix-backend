@@ -2,6 +2,7 @@ const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { notifySeller } = require('../utils/sellerEmailService');
 const { uploadReviewMedia, deleteReviewMedia } = require('../utils/cloudinary');
+const { createDedupedNotification } = require('./notification.controller');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_REVIEW_MEDIA_FILES = 5;
@@ -165,7 +166,7 @@ const createSellerReviewReply = async (req, res) => {
 
     const result = await db.transaction(async (client) => {
       const reviewResult = await client.query(
-        `SELECT r.id
+        `SELECT r.id, r.user_id AS "buyerId", p.name AS "productName"
          FROM reviews r
          JOIN products p ON p.id = r.product_id
          WHERE r.id = $1
@@ -203,11 +204,21 @@ const createSellerReviewReply = async (req, res) => {
                    created_at AS "createdAt", updated_at AS "updatedAt"`,
         [reviewId, req.user.id, replyText]
       );
-      return { reply: replyResult.rows[0], duplicate: false };
+      return { reply: replyResult.rows[0], duplicate: false, buyerId: reviewResult.rows[0]?.buyerId, productName: reviewResult.rows[0]?.productName };
     });
 
     if (result.notFound) {
       return sendError(res, 404, 'Review not found for the selected store');
+    }
+
+    if (!result.duplicate && result.buyerId) {
+      await createDedupedNotification({
+        userId: result.buyerId,
+        title: 'Seller replied to your review',
+        message: `Your review for ${result.productName || 'this product'} has a new seller response.`,
+        type: 'review',
+        link: '/buyers/reviews%20ratings.html'
+      });
     }
 
     return sendSuccess(
@@ -246,6 +257,7 @@ const getMyReviews = async (req, res) => {
         COALESCE(p.name, 'Product') AS "productName",
         CASE WHEN r.order_id IS NOT NULL THEN true ELSE false END AS "verifiedPurchase",
         (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id AND vote_type = 'helpful') AS "helpfulCount",
+        (SELECT COUNT(*) FROM review_helpful_votes WHERE review_id = r.id AND vote_type = 'not_helpful') AS "notHelpfulCount",
         COALESCE((SELECT json_agg(
           json_build_object(
             'id', rm.id,
