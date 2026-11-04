@@ -13,7 +13,9 @@ const {
   voteReview,
   reportReview,
   getSellerStoreReviews,
-  createSellerReviewReply
+  createSellerReviewReply,
+  getSellerUnreadReviewCount,
+  markSellerReviewNotificationsRead
 } = require('../controllers/reviews.controller');
 const { protect } = require('../middlewares/auth.middleware');
 const { isSeller } = require('../middlewares/role.middleware');
@@ -119,6 +121,9 @@ router.get('/product/:productId', getProductReviews);
  * @header  X-Store-Id
  */
 router.get('/seller/my-reviews', protect, isSeller, getSellerStoreReviews);
+
+router.get('/seller/my-reviews/unread-count', protect, isSeller, getSellerUnreadReviewCount);
+router.put('/seller/my-reviews/notifications/read', protect, isSeller, markSellerReviewNotificationsRead);
 
 /**
  * @route   POST /api/reviews/seller/my-reviews/:reviewId/replies

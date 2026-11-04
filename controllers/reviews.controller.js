@@ -142,6 +142,87 @@ const getSellerStoreReviews = async (req, res) => {
   }
 };
 
+const getSellerUnreadReviewCount = async (req, res) => {
+  try {
+    const storeId = await getVerifiedSellerStoreId(req, res);
+    if (!storeId) return;
+
+    const result = await db.query(
+      `SELECT COUNT(*) AS count
+       FROM notifications n
+       WHERE n.user_id = $1
+         AND n.type = 'review'
+         AND n.title = 'New product review'
+         AND n.is_read = false
+         AND n.is_deleted = false
+         AND EXISTS (
+           SELECT 1
+           FROM reviews r
+           JOIN products p ON p.id = r.product_id
+           WHERE r.id::text = COALESCE(
+             to_jsonb(n)->'data'->>'reference_id',
+             substring(to_jsonb(n)->>'link' FROM '[?&]reference_id=([^&]+)')
+           )
+             AND p.store_id = $2
+             AND p.seller_id = $1
+             AND p.is_deleted = false
+             AND r.is_deleted = false
+             AND r.is_approved = true
+             AND r.moderation_status = 'published'
+         )`,
+      [req.user.id, storeId]
+    );
+
+    return sendSuccess(res, 200, 'Unread review count fetched successfully', {
+      unreadCount: Number(result.rows[0].count)
+    });
+  } catch (error) {
+    console.error('Get seller unread review count error:', error);
+    return sendError(res, 500, 'Error fetching unread review count', error);
+  }
+};
+
+const markSellerReviewNotificationsRead = async (req, res) => {
+  try {
+    const storeId = await getVerifiedSellerStoreId(req, res);
+    if (!storeId) return;
+
+    const result = await db.query(
+      `UPDATE notifications n
+       SET is_read = true, updated_at = NOW()
+       WHERE n.user_id = $1
+         AND n.type = 'review'
+         AND n.title = 'New product review'
+         AND n.is_read = false
+         AND n.is_deleted = false
+         AND EXISTS (
+           SELECT 1
+           FROM reviews r
+           JOIN products p ON p.id = r.product_id
+           WHERE r.id::text = COALESCE(
+             to_jsonb(n)->'data'->>'reference_id',
+             substring(to_jsonb(n)->>'link' FROM '[?&]reference_id=([^&]+)')
+           )
+             AND p.store_id = $2
+             AND p.seller_id = $1
+             AND p.is_deleted = false
+             AND r.is_deleted = false
+             AND r.is_approved = true
+             AND r.moderation_status = 'published'
+         )
+       RETURNING n.id`,
+      [req.user.id, storeId]
+    );
+
+    return sendSuccess(res, 200, 'Review notifications marked as read', {
+      updatedCount: result.rowCount
+    });
+  } catch (error) {
+    console.error('Mark seller review notifications read error:', error);
+    return sendError(res, 500, 'Error marking review notifications as read', error);
+  }
+};
+
 /**
  * @desc    Create a reply to a visible review for the authenticated seller
  * @route   POST /api/reviews/seller/my-reviews/:reviewId/replies
@@ -765,5 +846,7 @@ module.exports = {
   voteReview,
   reportReview,
   getSellerStoreReviews,
-  createSellerReviewReply
+  createSellerReviewReply,
+  getSellerUnreadReviewCount,
+  markSellerReviewNotificationsRead
 };
