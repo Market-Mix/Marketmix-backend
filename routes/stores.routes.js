@@ -6,6 +6,7 @@ const {
   getStoreById,
   updateStore,
   getStoreStats,
+  getStoreFollowerCount,
   getPublicStore,
   getPublicStoreProducts,
 } = require('../controllers/stores.controller');
@@ -67,5 +68,6 @@ router.post('/',             createStore);
 router.get('/:storeId',      getStoreById);
 router.put('/:storeId',      updateStore);
 router.get('/:storeId/stats', getStoreStats);
+router.get('/:storeId/followers', getStoreFollowerCount);
 
 module.exports = router;

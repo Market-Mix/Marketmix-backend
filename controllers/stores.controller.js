@@ -314,6 +314,37 @@ const getStoreStats = async (req, res) => {
   }
 };
 
+/* ─── GET /api/seller/stores/:storeId/followers ─────────────────────────── */
+/**
+ * @desc  Get the follower count for a store owned by the authenticated seller
+ * @route GET /api/seller/stores/:storeId/followers
+ * @access Private (seller)
+ */
+const getStoreFollowerCount = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { storeId } = req.params;
+
+    if (!await ownsStore(userId, storeId)) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    const result = await db.query(
+      `SELECT COUNT(DISTINCT buyer_id) AS follower_count
+       FROM shop_follows
+       WHERE store_id = $1`,
+      [storeId]
+    );
+
+    return sendSuccess(res, 200, 'Store followers fetched', {
+      followerCount: parseInt(result.rows[0].follower_count, 10)
+    });
+  } catch (err) {
+    console.error('getStoreFollowerCount error:', err);
+    return sendError(res, 500, 'Error fetching store followers');
+  }
+};
+
 /* ─── GET /api/seller/stores/public/:storeId ────────────────────────────── */
 /**
  * @desc  Public store page (buyers view)
@@ -521,6 +552,7 @@ module.exports = {
   getStoreById,
   updateStore,
   getStoreStats,
+  getStoreFollowerCount,
   getPublicStore,
   getPublicStoreProducts,
 };
