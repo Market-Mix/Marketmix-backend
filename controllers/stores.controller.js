@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const { slugify, uniqueAccountSlug } = require('../utils/slugify');
+const { stripFee } = require('../utils/pricing');
 
 /* ─── helpers ────────────────────────────────────────────────────────────── */
 
@@ -20,6 +21,26 @@ async function ownsStore(userId, storeId) {
     [storeId, userId]
   );
   return r.rows.length > 0;
+}
+
+function parseAnalyticsMonth(month) {
+  if (typeof month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return null;
+  }
+
+  const [yearText, monthText] = month.split('-');
+  const year = Number(yearText);
+  const monthNumber = Number(monthText);
+  if (year < 1000) return null;
+
+  const start = new Date(Date.UTC(year, monthNumber - 1, 1, 0, 0, 0));
+  const end = new Date(Date.UTC(year, monthNumber, 1, 0, 0, 0));
+
+  const formatUtcTimestamp = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
+  return {
+    startTimestamp: formatUtcTimestamp(start),
+    endTimestamp: formatUtcTimestamp(end)
+  };
 }
 
 /* ─── GET /api/seller/stores ─────────────────────────────────────────────── */
@@ -345,6 +366,80 @@ const getStoreFollowerCount = async (req, res) => {
   }
 };
 
+/* ─── GET /api/seller/stores/monthly-analytics ──────────────────────────── */
+/**
+ * @desc  Get monthly paid-order and sales totals for the authenticated seller's active store
+ * @route GET /api/seller/stores/monthly-analytics
+ * @access Private (seller)
+ */
+const getStoreMonthlyAnalytics = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    const headerStoreId = typeof req.headers['x-store-id'] === 'string'
+      ? req.headers['x-store-id'].trim()
+      : '';
+    const storeId = headerStoreId || (typeof req.query.storeId === 'string' ? req.query.storeId.trim() : '');
+
+    if (!storeId) {
+      return sendError(res, 400, 'Active store ID is required');
+    }
+
+    const month = typeof req.query.month === 'string' ? req.query.month.trim() : '';
+    const monthRange = parseAnalyticsMonth(month);
+    if (!monthRange) {
+      return sendError(res, 400, 'Invalid month. Use YYYY-MM');
+    }
+
+    const storeResult = await db.query(
+      `SELECT id FROM stores
+       WHERE id = $1 AND user_id = $2
+         AND is_deleted = false AND is_active = true
+       LIMIT 1`,
+      [storeId, sellerId]
+    );
+    if (!storeResult.rows.length) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    const analyticsResult = await db.query(
+      `SELECT
+         COUNT(DISTINCT o.id) AS monthly_order_count,
+         COALESCE(SUM(oi.quantity * oi.price_at_purchase), 0) AS gross_monthly_sales
+       FROM order_items oi
+       JOIN orders o ON o.id = oi.order_id
+       WHERE oi.seller_id = $1
+         AND oi.store_id = $2
+         AND o.payment_status = 'paid'
+         AND o.paid_at >= $3::timestamp
+         AND o.paid_at < $4::timestamp
+         AND EXISTS (
+           SELECT 1
+           FROM payment_transactions pt
+           WHERE pt.order_id = o.id
+             AND pt.status = 'success'
+         )`,
+      [sellerId, storeId, monthRange.startTimestamp, monthRange.endTimestamp]
+    );
+
+    const row = analyticsResult.rows[0] || {};
+    const monthlyOrderCount = parseInt(row.monthly_order_count, 10) || 0;
+    const grossMonthlySales = parseFloat(row.gross_monthly_sales) || 0;
+    const netMonthlySales = stripFee(grossMonthlySales);
+
+    return sendSuccess(res, 200, 'Monthly store analytics fetched', {
+      storeId,
+      month,
+      currency: 'NGN',
+      monthlyOrderCount,
+      grossMonthlySales: Number(grossMonthlySales.toFixed(2)),
+      netMonthlySales: Number(netMonthlySales.toFixed(2))
+    });
+  } catch (err) {
+    console.error('getStoreMonthlyAnalytics error:', err);
+    return sendError(res, 500, 'Unable to fetch monthly store analytics');
+  }
+};
+
 /* ─── GET /api/seller/stores/public/:storeId ────────────────────────────── */
 /**
  * @desc  Public store page (buyers view)
@@ -553,6 +648,8 @@ module.exports = {
   updateStore,
   getStoreStats,
   getStoreFollowerCount,
+  getStoreMonthlyAnalytics,
+  parseAnalyticsMonth,
   getPublicStore,
   getPublicStoreProducts,
 };
