@@ -528,6 +528,57 @@ const getStoreReviewAnalytics = async (req, res) => {
   }
 };
 
+/* ─── GET /api/seller/stores/refund-analytics ──────────────────────────── */
+/**
+ * @desc  Get refund report totals for the authenticated seller's active store
+ * @route GET /api/seller/stores/refund-analytics
+ * @access Private (seller)
+ */
+const getStoreRefundAnalytics = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    const headerStoreId = typeof req.headers['x-store-id'] === 'string'
+      ? req.headers['x-store-id'].trim()
+      : '';
+    const storeId = headerStoreId || (typeof req.query.storeId === 'string' ? req.query.storeId.trim() : '');
+
+    if (!storeId) {
+      return sendError(res, 400, 'Active store ID is required');
+    }
+
+    const storeResult = await db.query(
+      `SELECT id FROM stores
+       WHERE id = $1 AND user_id = $2
+         AND is_deleted = false AND is_active = true
+       LIMIT 1`,
+      [storeId, sellerId]
+    );
+    if (!storeResult.rows.length) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    const analyticsResult = await db.query(
+      `SELECT COUNT(DISTINCT rc.id)::integer AS refund_reports_received
+       FROM refund_cases rc
+       JOIN order_items oi
+         ON oi.id = rc.order_item_id
+        AND oi.order_id = rc.order_id
+        AND oi.seller_id = rc.seller_id
+       WHERE oi.store_id = $1
+         AND oi.seller_id = $2`,
+      [storeId, sellerId]
+    );
+
+    return sendSuccess(res, 200, 'Store refund analytics fetched', {
+      storeId,
+      refundReportsReceived: Number(analyticsResult.rows[0].refund_reports_received)
+    });
+  } catch (err) {
+    console.error('getStoreRefundAnalytics error:', err);
+    return sendError(res, 500, 'Unable to fetch store refund analytics');
+  }
+};
+
 /* ─── GET /api/seller/stores/public/:storeId ────────────────────────────── */
 /**
  * @desc  Public store page (buyers view)
@@ -738,6 +789,7 @@ module.exports = {
   getStoreFollowerCount,
   getStoreMonthlyAnalytics,
   getStoreReviewAnalytics,
+  getStoreRefundAnalytics,
   parseAnalyticsMonth,
   getPublicStore,
   getPublicStoreProducts,
