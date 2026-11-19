@@ -9,6 +9,7 @@ const {
   getStoreFollowerCount,
   getStoreMonthlyAnalytics,
   getStoreReviewAnalytics,
+  getStoreProductViewAnalytics,
   getStoreRefundAnalytics,
   getPublicStore,
   getPublicStoreProducts,
@@ -69,6 +70,7 @@ router.post('/logo-upload', upload.single('file'), async (req, res) => {
 router.get('/',              getMyStores);
 router.get('/monthly-analytics', getStoreMonthlyAnalytics);
 router.get('/review-analytics', getStoreReviewAnalytics);
+router.get('/product-view-analytics', getStoreProductViewAnalytics);
 router.get('/refund-analytics', getStoreRefundAnalytics);
 router.post('/',             createStore);
 router.get('/:storeId',      getStoreById);

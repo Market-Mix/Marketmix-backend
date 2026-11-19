@@ -528,6 +528,69 @@ const getStoreReviewAnalytics = async (req, res) => {
   }
 };
 
+/* ─── GET /api/seller/stores/product-view-analytics ─────────────────────── */
+/**
+ * @desc  Get product view totals for the authenticated seller's active store
+ * @route GET /api/seller/stores/product-view-analytics
+ * @access Private (seller)
+ */
+const getStoreProductViewAnalytics = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    const headerStoreId = typeof req.headers['x-store-id'] === 'string'
+      ? req.headers['x-store-id'].trim()
+      : '';
+    const storeId = headerStoreId || (typeof req.query.storeId === 'string' ? req.query.storeId.trim() : '');
+
+    if (!storeId) {
+      return sendError(res, 400, 'Active store ID is required');
+    }
+
+    const storeResult = await db.query(
+      `SELECT id FROM stores
+       WHERE id = $1 AND user_id = $2
+         AND is_deleted = false AND is_active = true
+       LIMIT 1`,
+      [storeId, sellerId]
+    );
+    if (!storeResult.rows.length) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    const analyticsResult = await db.query(
+      `SELECT
+         COALESCE(SUM(COALESCE(p.views, 0)), 0)::bigint AS total_product_views,
+         COALESCE(
+           json_agg(
+             json_build_object(
+               'productId', p.id,
+               'productName', p.name,
+               'views', COALESCE(p.views, 0)
+             )
+             ORDER BY p.name, p.id
+           ) FILTER (WHERE p.id IS NOT NULL),
+           '[]'::json
+         ) AS products
+       FROM products p
+       WHERE p.store_id = $1
+         AND p.seller_id = $2
+         AND p.is_active = true
+         AND p.is_deleted = false`,
+      [storeId, sellerId]
+    );
+
+    const analytics = analyticsResult.rows[0];
+    return sendSuccess(res, 200, 'Store product view analytics fetched', {
+      storeId,
+      totalProductViews: Number(analytics.total_product_views),
+      products: analytics.products
+    });
+  } catch (err) {
+    console.error('getStoreProductViewAnalytics error:', err);
+    return sendError(res, 500, 'Unable to fetch store product view analytics');
+  }
+};
+
 /* ─── GET /api/seller/stores/refund-analytics ──────────────────────────── */
 /**
  * @desc  Get refund report totals for the authenticated seller's active store
@@ -789,6 +852,7 @@ module.exports = {
   getStoreFollowerCount,
   getStoreMonthlyAnalytics,
   getStoreReviewAnalytics,
+  getStoreProductViewAnalytics,
   getStoreRefundAnalytics,
   parseAnalyticsMonth,
   getPublicStore,
