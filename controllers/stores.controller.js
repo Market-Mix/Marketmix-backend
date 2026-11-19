@@ -43,6 +43,23 @@ function parseAnalyticsMonth(month) {
   };
 }
 
+function getAnalyticsMonthHistory(month) {
+  const [yearText, monthText] = month.split('-');
+  const year = Number(yearText);
+  const monthNumber = Number(monthText);
+  const firstMonth = new Date(Date.UTC(year, monthNumber - 1 - 5, 1));
+  const formatUtcTimestamp = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
+  const months = Array.from({ length: 6 }, (_, index) => {
+    const date = new Date(Date.UTC(year, monthNumber - 1 - 5 + index, 1));
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+  });
+
+  return {
+    months,
+    startTimestamp: formatUtcTimestamp(firstMonth)
+  };
+}
+
 /* ─── GET /api/seller/stores ─────────────────────────────────────────────── */
 /**
  * @desc  List all stores owned by the authenticated seller
@@ -401,8 +418,10 @@ const getStoreMonthlyAnalytics = async (req, res) => {
       return sendError(res, 404, 'Store not found');
     }
 
+    const historyRange = getAnalyticsMonthHistory(month);
     const analyticsResult = await db.query(
       `SELECT
+         TO_CHAR(DATE_TRUNC('month', o.paid_at), 'YYYY-MM') AS month,
          COUNT(DISTINCT o.id) AS monthly_order_count,
          COALESCE(SUM(oi.quantity * oi.price_at_purchase), 0) AS gross_monthly_sales
        FROM order_items oi
@@ -417,22 +436,35 @@ const getStoreMonthlyAnalytics = async (req, res) => {
            FROM payment_transactions pt
            WHERE pt.order_id = o.id
              AND pt.status = 'success'
-         )`,
-      [sellerId, storeId, monthRange.startTimestamp, monthRange.endTimestamp]
+         )
+       GROUP BY DATE_TRUNC('month', o.paid_at)
+       ORDER BY DATE_TRUNC('month', o.paid_at)`,
+      [sellerId, storeId, historyRange.startTimestamp, monthRange.endTimestamp]
     );
 
-    const row = analyticsResult.rows[0] || {};
-    const monthlyOrderCount = parseInt(row.monthly_order_count, 10) || 0;
-    const grossMonthlySales = parseFloat(row.gross_monthly_sales) || 0;
-    const netMonthlySales = stripFee(grossMonthlySales);
+    const rowsByMonth = new Map(analyticsResult.rows.map((row) => [row.month, row]));
+    const monthlyHistory = historyRange.months.map((historyMonth) => {
+      const row = rowsByMonth.get(historyMonth) || {};
+      const monthlyOrderCount = parseInt(row.monthly_order_count, 10) || 0;
+      const grossMonthlySales = parseFloat(row.gross_monthly_sales) || 0;
+      const netMonthlySales = stripFee(grossMonthlySales);
+      return {
+        month: historyMonth,
+        monthlyOrderCount,
+        grossMonthlySales: Number(grossMonthlySales.toFixed(2)),
+        netMonthlySales: Number(netMonthlySales.toFixed(2))
+      };
+    });
+    const currentMonth = monthlyHistory[monthlyHistory.length - 1];
 
     return sendSuccess(res, 200, 'Monthly store analytics fetched', {
       storeId,
       month,
       currency: 'NGN',
-      monthlyOrderCount,
-      grossMonthlySales: Number(grossMonthlySales.toFixed(2)),
-      netMonthlySales: Number(netMonthlySales.toFixed(2))
+      monthlyOrderCount: currentMonth.monthlyOrderCount,
+      grossMonthlySales: currentMonth.grossMonthlySales,
+      netMonthlySales: currentMonth.netMonthlySales,
+      monthlyHistory
     });
   } catch (err) {
     console.error('getStoreMonthlyAnalytics error:', err);
