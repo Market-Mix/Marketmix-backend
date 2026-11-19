@@ -10,6 +10,8 @@ const {
   getStoreMonthlyAnalytics,
   getStoreReviewAnalytics,
   getStoreProductViewAnalytics,
+  recordStoreView,
+  getStoreViewAnalytics,
   getStoreRefundAnalytics,
   getPublicStore,
   getPublicStoreProducts,
@@ -29,6 +31,7 @@ const upload = multer({
 });
 
 /* ── Public routes (no auth) ────────────────────────────────────────────── */
+router.post('/public/:storeId/view', recordStoreView);
 router.get('/public/:storeId',          getPublicStore);
 router.get('/public/:storeId/products', getPublicStoreProducts);
 router.get('/public-by-slug/:acctSlug/:storeSlug', async (req, res) => {
@@ -71,6 +74,7 @@ router.get('/',              getMyStores);
 router.get('/monthly-analytics', getStoreMonthlyAnalytics);
 router.get('/review-analytics', getStoreReviewAnalytics);
 router.get('/product-view-analytics', getStoreProductViewAnalytics);
+router.get('/store-view-analytics', getStoreViewAnalytics);
 router.get('/refund-analytics', getStoreRefundAnalytics);
 router.post('/',             createStore);
 router.get('/:storeId',      getStoreById);

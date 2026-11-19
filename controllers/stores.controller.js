@@ -5,6 +5,11 @@ const { stripFee } = require('../utils/pricing');
 
 /* ─── helpers ────────────────────────────────────────────────────────────── */
 
+function isUuid(value) {
+  return typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
 /** Return how many stores this user already has (active, not deleted) */
 async function countStores(userId) {
   const r = await db.query(
@@ -591,6 +596,82 @@ const getStoreProductViewAnalytics = async (req, res) => {
   }
 };
 
+/* ─── POST /api/seller/stores/public/:storeId/view ───────────────────────── */
+/**
+ * @desc  Record a visit to a public, active store
+ * @route POST /api/seller/stores/public/:storeId/view
+ * @access Public
+ */
+const recordStoreView = async (req, res) => {
+  try {
+    const { storeId } = req.params;
+    if (!isUuid(storeId)) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    const result = await db.query(
+      `UPDATE stores
+       SET views = views + 1
+       WHERE id = $1 AND is_active = true AND is_deleted = false
+       RETURNING id, views`,
+      [storeId]
+    );
+    if (!result.rows.length) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    return sendSuccess(res, 200, 'Store view tracked', {
+      storeId: result.rows[0].id,
+      views: Number(result.rows[0].views)
+    });
+  } catch (err) {
+    console.error('recordStoreView error:', err);
+    return sendError(res, 500, 'Unable to track store view');
+  }
+};
+
+/* ─── GET /api/seller/stores/store-view-analytics ───────────────────────── */
+/**
+ * @desc  Get view totals for the authenticated seller's active store
+ * @route GET /api/seller/stores/store-view-analytics
+ * @access Private (seller)
+ */
+const getStoreViewAnalytics = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    const headerStoreId = typeof req.headers['x-store-id'] === 'string'
+      ? req.headers['x-store-id'].trim()
+      : '';
+    const storeId = headerStoreId || (typeof req.query.storeId === 'string' ? req.query.storeId.trim() : '');
+
+    if (!storeId) {
+      return sendError(res, 400, 'Active store ID is required');
+    }
+    if (!isUuid(storeId)) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    const storeResult = await db.query(
+      `SELECT id, views FROM stores
+       WHERE id = $1 AND user_id = $2
+         AND is_deleted = false AND is_active = true
+       LIMIT 1`,
+      [storeId, sellerId]
+    );
+    if (!storeResult.rows.length) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    return sendSuccess(res, 200, 'Store view analytics fetched', {
+      storeId: storeResult.rows[0].id,
+      storeViews: Number(storeResult.rows[0].views)
+    });
+  } catch (err) {
+    console.error('getStoreViewAnalytics error:', err);
+    return sendError(res, 500, 'Unable to fetch store view analytics');
+  }
+};
+
 /* ─── GET /api/seller/stores/refund-analytics ──────────────────────────── */
 /**
  * @desc  Get refund report totals for the authenticated seller's active store
@@ -853,6 +934,8 @@ module.exports = {
   getStoreMonthlyAnalytics,
   getStoreReviewAnalytics,
   getStoreProductViewAnalytics,
+  recordStoreView,
+  getStoreViewAnalytics,
   getStoreRefundAnalytics,
   parseAnalyticsMonth,
   getPublicStore,
