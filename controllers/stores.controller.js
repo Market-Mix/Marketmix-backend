@@ -562,7 +562,7 @@ const getStoreRefundAnalytics = async (req, res) => {
        FROM refund_cases rc
        JOIN order_items oi
          ON oi.id = rc.order_item_id
-        AND oi.order_id = rc.order_id
+        AND oi.order_id = rc.order_id::uuid
         AND oi.seller_id = rc.seller_id
        WHERE oi.store_id = $1
          AND oi.seller_id = $2`,
