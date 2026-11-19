@@ -472,6 +472,62 @@ const getStoreMonthlyAnalytics = async (req, res) => {
   }
 };
 
+/* ─── GET /api/seller/stores/review-analytics ──────────────────────────── */
+/**
+ * @desc  Get visible review totals for the authenticated seller's active store
+ * @route GET /api/seller/stores/review-analytics
+ * @access Private (seller)
+ */
+const getStoreReviewAnalytics = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    const headerStoreId = typeof req.headers['x-store-id'] === 'string'
+      ? req.headers['x-store-id'].trim()
+      : '';
+    const storeId = headerStoreId || (typeof req.query.storeId === 'string' ? req.query.storeId.trim() : '');
+
+    if (!storeId) {
+      return sendError(res, 400, 'Active store ID is required');
+    }
+
+    const storeResult = await db.query(
+      `SELECT id FROM stores
+       WHERE id = $1 AND user_id = $2
+         AND is_deleted = false AND is_active = true
+       LIMIT 1`,
+      [storeId, sellerId]
+    );
+    if (!storeResult.rows.length) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    const analyticsResult = await db.query(
+      `SELECT
+         COUNT(r.id)::integer AS total_reviews,
+         ROUND(COALESCE(AVG(r.rating), 0)::numeric, 2) AS average_rating
+       FROM reviews r
+       JOIN products p ON p.id = r.product_id
+       WHERE r.is_deleted = false
+         AND r.is_approved = true
+         AND r.moderation_status = 'published'
+         AND p.is_deleted = false
+         AND p.store_id = $1
+         AND p.seller_id = $2`,
+      [storeId, sellerId]
+    );
+
+    const analytics = analyticsResult.rows[0];
+    return sendSuccess(res, 200, 'Store review analytics fetched', {
+      storeId,
+      totalReviews: Number(analytics.total_reviews),
+      averageRating: Number(analytics.average_rating)
+    });
+  } catch (err) {
+    console.error('getStoreReviewAnalytics error:', err);
+    return sendError(res, 500, 'Unable to fetch store review analytics');
+  }
+};
+
 /* ─── GET /api/seller/stores/public/:storeId ────────────────────────────── */
 /**
  * @desc  Public store page (buyers view)
@@ -681,6 +737,7 @@ module.exports = {
   getStoreStats,
   getStoreFollowerCount,
   getStoreMonthlyAnalytics,
+  getStoreReviewAnalytics,
   parseAnalyticsMonth,
   getPublicStore,
   getPublicStoreProducts,
