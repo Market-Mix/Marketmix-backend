@@ -609,20 +609,99 @@ const recordStoreView = async (req, res) => {
       return sendError(res, 404, 'Store not found');
     }
 
-    const result = await db.query(
-      `UPDATE stores
-       SET views = views + 1
-       WHERE id = $1 AND is_active = true AND is_deleted = false
-       RETURNING id, views`,
-      [storeId]
-    );
-    if (!result.rows.length) {
+    const requestId = req.body?.request_id;
+    if (!isUuid(requestId)) {
+      return sendError(res, 400, 'A valid request_id is required');
+    }
+
+    const result = await db.transaction(async (client) => {
+      const storeResult = await client.query(
+        `SELECT id, user_id, views, is_active, is_deleted
+         FROM stores
+         WHERE id = $1
+         FOR UPDATE`,
+        [storeId]
+      );
+      if (!storeResult.rows.length) {
+        return { status: 'not-found' };
+      }
+
+      const store = storeResult.rows[0];
+      const isSameStoreEvent = (existingEvent) => existingEvent &&
+        existingEvent.view_type === 'store' &&
+        String(existingEvent.store_id).toLowerCase() === String(store.id).toLowerCase() &&
+        existingEvent.product_id == null &&
+        String(existingEvent.seller_id).toLowerCase() === String(store.user_id).toLowerCase();
+      const readExistingEvent = async () => {
+        if (!store.is_active || store.is_deleted) {
+          return { status: 'not-found' };
+        }
+        const existingEventResult = await client.query(
+          `SELECT view_type, store_id, product_id, seller_id
+           FROM public.view_events
+           WHERE request_id = $1`,
+          [requestId]
+        );
+        return isSameStoreEvent(existingEventResult.rows[0])
+          ? { status: 'success', storeId: store.id, views: Number(store.views) }
+          : { status: 'conflict' };
+      };
+
+      if (!store.is_active || store.is_deleted) {
+        return { status: 'not-found' };
+      }
+
+      const priorEventResult = await client.query(
+        `SELECT view_type, store_id, product_id, seller_id
+         FROM public.view_events
+         WHERE request_id = $1`,
+        [requestId]
+      );
+      if (priorEventResult.rows.length) {
+        return isSameStoreEvent(priorEventResult.rows[0])
+          ? { status: 'success', storeId: store.id, views: Number(store.views) }
+          : { status: 'conflict' };
+      }
+      const eventResult = await client.query(
+        `INSERT INTO public.view_events (request_id, view_type, store_id, product_id, seller_id)
+         VALUES ($1, 'store', $2, NULL, $3)
+         ON CONFLICT (request_id) DO NOTHING
+         RETURNING id`,
+        [requestId, store.id, store.user_id]
+      );
+
+      if (!eventResult.rows.length) {
+        return readExistingEvent();
+      }
+
+      const updateResult = await client.query(
+        `UPDATE stores
+         SET views = COALESCE(views, 0) + 1
+         WHERE id = $1 AND is_active = true AND is_deleted = false
+         RETURNING id, views`,
+        [store.id]
+      );
+      if (!updateResult.rows.length) {
+        throw new Error('Store disappeared while recording a view');
+      }
+
+      return {
+        status: 'success',
+        storeId: updateResult.rows[0].id,
+        views: Number(updateResult.rows[0].views)
+      };
+    });
+
+    if (result.status === 'not-found') {
       return sendError(res, 404, 'Store not found');
+    }
+    if (result.status === 'conflict') {
+      return sendError(res, 409, 'request_id is already associated with a different view');
     }
 
     return sendSuccess(res, 200, 'Store view tracked', {
-      storeId: result.rows[0].id,
-      views: Number(result.rows[0].views)
+      storeId: result.storeId,
+      views: result.views
     });
   } catch (err) {
     console.error('recordStoreView error:', err);

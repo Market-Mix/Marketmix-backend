@@ -52,13 +52,21 @@ const query = async (text, params) => {
 // Transaction helper
 const transaction = async (callback) => {
   const client = await pool.connect();
+  let transactionStarted = false;
   try {
     await client.query('BEGIN');
+    transactionStarted = true;
     const result = await callback(client);
     await client.query('COMMIT');
     return result;
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (transactionStarted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_) {
+        // Preserve the callback or COMMIT error if ROLLBACK also fails.
+      }
+    }
     throw error;
   } finally {
     client.release();

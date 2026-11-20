@@ -4,6 +4,8 @@ const pool = require('../config/db');
 const { isFlashSaleActive, formatFlashSaleInfo } = require('../utils/flashSaleHelper');
 
 const CRAWLER_UA = /facebookexternalhit|Twitterbot|WhatsApp|LinkedInBot|Slackbot|TelegramBot|Discordbot/i;
+const isUuid = (value) => typeof value === 'string' &&
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
 router.get('/share/:id', async (req, res, next) => {
   if (!CRAWLER_UA.test(req.headers['user-agent'] || '')) return next();
@@ -435,30 +437,119 @@ router.get('/search/query', async (req, res) => {
 router.post('/:id/view', async (req, res) => {
 	try {
 		const { id } = req.params;
-
-		// Increment the views column for this product
-		const result = await pool.query(
-			`UPDATE products 
-			 SET views = COALESCE(views, 0) + 1,
-			     updated_at = NOW()
-			 WHERE id = $1
-			 RETURNING id, views`,
-			[id]
-		);
-
-		if (result.rows.length === 0) {
+		const requestId = req.body?.request_id;
+		if (!isUuid(id)) {
 			return res.status(404).json({ status: 'error', message: 'Product not found' });
+		}
+		if (!isUuid(requestId)) {
+			return res.status(400).json({ status: 'error', message: 'A valid request_id is required' });
+		}
+
+		const result = await pool.transaction(async (client) => {
+			const productResult = await client.query(
+				`SELECT p.id, p.store_id, p.seller_id, p.views,
+				        p.is_active, p.is_deleted,
+				        s.user_id AS store_owner_id,
+				        s.is_active AS store_is_active,
+				        s.is_deleted AS store_is_deleted
+				 FROM products p
+				 JOIN stores s ON s.id = p.store_id
+				 WHERE p.id = $1
+				 FOR UPDATE OF p, s`,
+				[id]
+			);
+			if (!productResult.rows.length) {
+				return { status: 'not-found' };
+			}
+
+			const product = productResult.rows[0];
+			const isSameProductEvent = (existingEvent) => existingEvent &&
+				existingEvent.view_type === 'product' &&
+				String(existingEvent.store_id).toLowerCase() === String(product.store_id).toLowerCase() &&
+				String(existingEvent.product_id).toLowerCase() === String(product.id).toLowerCase() &&
+				String(existingEvent.seller_id).toLowerCase() === String(product.seller_id).toLowerCase();
+			const readExistingEvent = async () => {
+				const existingEventResult = await client.query(
+					`SELECT view_type, store_id, product_id, seller_id
+					 FROM public.view_events
+					 WHERE request_id = $1`,
+					[requestId]
+				);
+				return isSameProductEvent(existingEventResult.rows[0])
+					? { status: "success", productId: product.id, views: Number(product.views) || 0 }
+					: { status: "conflict" };
+			};
+
+			const priorEventResult = await client.query(
+				`SELECT view_type, store_id, product_id, seller_id
+				 FROM public.view_events
+				 WHERE request_id = $1`,
+				[requestId]
+			);
+			if (!product.is_active ||
+				product.is_deleted ||
+				!product.store_owner_id ||
+				String(product.store_owner_id).toLowerCase() !== String(product.seller_id).toLowerCase() ||
+				!product.store_is_active ||
+				product.store_is_deleted) {
+				return { status: 'not-found' };
+			}
+			if (priorEventResult.rows.length) {
+				return isSameProductEvent(priorEventResult.rows[0])
+					? { status: "success", productId: product.id, views: Number(product.views) || 0 }
+					: { status: "conflict" };
+			}
+
+			const eventResult = await client.query(
+				`INSERT INTO public.view_events (request_id, view_type, store_id, product_id, seller_id)
+				 VALUES ($1, 'product', $2, $3, $4)
+				 ON CONFLICT (request_id) DO NOTHING
+				 RETURNING id`,
+				[requestId, product.store_id, product.id, product.seller_id]
+			);
+
+			if (!eventResult.rows.length) {
+				return readExistingEvent();
+			}
+
+			const updateResult = await client.query(
+				`UPDATE products
+				 SET views = COALESCE(views, 0) + 1,
+				     updated_at = NOW()
+				 WHERE id = $1
+				   AND store_id = $2
+				   AND seller_id = $3
+				   AND is_active = true
+				   AND is_deleted = false
+				 RETURNING id, views`,
+				[product.id, product.store_id, product.seller_id]
+			);
+			if (!updateResult.rows.length) {
+				throw new Error('Product disappeared while recording a view');
+			}
+
+			return {
+				status: 'success',
+				productId: updateResult.rows[0].id,
+				views: updateResult.rows[0].views
+			};
+		});
+
+		if (result.status === 'not-found') {
+			return res.status(404).json({ status: 'error', message: 'Product not found' });
+		}
+		if (result.status === 'conflict') {
+			return res.status(409).json({ status: 'error', message: 'request_id is already associated with a different view' });
 		}
 
 		res.json({
 			status: 'success',
 			message: 'View tracked',
-			data: { product_id: id, views: result.rows[0].views }
+			data: { product_id: result.productId, views: result.views }
 		});
 	} catch (error) {
 		console.error('Error tracking product view:', error.message);
-		// Don't fail the request - view tracking is non-critical
-		res.json({ status: 'success', message: 'View tracked (async)' });
+		res.status(500).json({ status: 'error', message: 'Unable to track product view' });
 	}
 });
 
