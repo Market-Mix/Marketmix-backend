@@ -128,6 +128,7 @@ app.use('/api/seller/stores', storesRoutes);  // ← BEFORE /api/seller
 app.use('/api/seller/shipping', vendorRoutes);
 app.use('/api/refunds', refundsRoutes);
 app.use('/api/refund-chat', refundChatRoutes);
+app.use('/api/seller/ai', require('./routes/seller_ai.routes'));
 app.use('/api/seller', sellerRoutes);           // ← AFTER /api/seller/stores
 app.use('/api/shops/following', shopFollowsRoutes);
 app.use('/api/cron', cronRoutes);
