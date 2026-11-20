@@ -40,6 +40,41 @@ router.get('/share/:id', async (req, res, next) => {
 });
 
 // Get all products (with pagination)
+router.get('/homepage-hero', async (req, res) => {
+	try {
+		const result = await pool.query(
+			`SELECT p.id AS product_id,
+			        s.id AS store_id,
+			        s.user_id AS seller_id,
+			        p.name,
+			        p.main_image_url AS image,
+			        p.price
+			 FROM products p
+			 JOIN stores s ON s.id = p.store_id
+			    AND s.user_id = p.seller_id
+			 WHERE p.is_active = true
+			   AND p.is_deleted = false
+			   AND s.is_active = true
+			   AND s.is_deleted = false
+			 ORDER BY p.created_at DESC, p.id
+			 LIMIT 3`
+		);
+
+		return res.json({
+			status: 'success',
+			data: {
+				products: result.rows.map((product) => ({
+					...product,
+					product_url: `product.html?id=${encodeURIComponent(product.product_id)}`
+				}))
+			}
+		});
+	} catch (error) {
+		console.error('Error fetching homepage hero products:', error.message);
+		return res.status(500).json({ status: 'error', message: 'Unable to fetch homepage hero products' });
+	}
+});
+
 router.get('/', async (req, res) => {
 	try {
 		const page = parseInt(req.query.page) || 1;

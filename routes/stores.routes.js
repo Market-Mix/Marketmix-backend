@@ -7,6 +7,8 @@ const {
   updateStore,
   getStoreStats,
   getStoreFollowerCount,
+  recordFeaturedStoreImpression,
+  getFeaturedStoreImpressionAnalytics,
   getStoreMonthlyAnalytics,
   getStoreReviewAnalytics,
   getStoreProductViewAnalytics,
@@ -32,6 +34,7 @@ const upload = multer({
 
 /* ── Public routes (no auth) ────────────────────────────────────────────── */
 router.post('/public/:storeId/view', recordStoreView);
+router.post('/public/:storeId/featured-impression', recordFeaturedStoreImpression);
 router.get('/public/:storeId',          getPublicStore);
 router.get('/public/:storeId/products', getPublicStoreProducts);
 router.get('/public-by-slug/:acctSlug/:storeSlug', async (req, res) => {
@@ -75,6 +78,7 @@ router.get('/monthly-analytics', getStoreMonthlyAnalytics);
 router.get('/review-analytics', getStoreReviewAnalytics);
 router.get('/product-view-analytics', getStoreProductViewAnalytics);
 router.get('/store-view-analytics', getStoreViewAnalytics);
+router.get('/featured-store-impression-analytics', getFeaturedStoreImpressionAnalytics);
 router.get('/refund-analytics', getStoreRefundAnalytics);
 router.post('/',             createStore);
 router.get('/:storeId',      getStoreById);

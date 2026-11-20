@@ -388,6 +388,81 @@ const getStoreFollowerCount = async (req, res) => {
   }
 };
 
+const recordFeaturedStoreImpression = async (req, res) => {
+  try {
+    const { storeId } = req.params;
+    if (!isUuid(storeId)) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    const requestId = req.body?.request_id;
+    if (!isUuid(requestId)) {
+      return sendError(res, 400, 'A valid request_id is required');
+    }
+
+    const result = await db.transaction(async (client) => {
+      const storeResult = await client.query(
+        `SELECT id, user_id, is_active, is_deleted
+         FROM stores
+         WHERE id = $1
+         FOR SHARE`,
+        [storeId]
+      );
+      if (!storeResult.rows.length) {
+        return { status: 'not-found' };
+      }
+
+      const store = storeResult.rows[0];
+      if (!store.is_active || store.is_deleted) {
+        return { status: 'not-found' };
+      }
+
+      const isSameImpression = (impression) => impression &&
+        String(impression.store_id).toLowerCase() === String(store.id).toLowerCase() &&
+        String(impression.seller_id).toLowerCase() === String(store.user_id).toLowerCase();
+      const findDuplicate = async () => {
+        const existingResult = await client.query(
+          `SELECT store_id, seller_id
+           FROM public.featured_store_impressions
+           WHERE request_id = $1`,
+          [requestId]
+        );
+        return isSameImpression(existingResult.rows[0])
+          ? { status: 'success', storeId: store.id, duplicate: true }
+          : { status: 'conflict' };
+      };
+
+      const insertResult = await client.query(
+        `INSERT INTO public.featured_store_impressions (request_id, store_id, seller_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (request_id) DO NOTHING
+         RETURNING id`,
+        [requestId, store.id, store.user_id]
+      );
+      if (!insertResult.rows.length) {
+        return findDuplicate();
+      }
+
+      return { status: 'success', storeId: store.id, duplicate: false };
+    });
+
+    if (result.status === 'not-found') {
+      return sendError(res, 404, 'Store not found');
+    }
+    if (result.status === 'conflict') {
+      return sendError(res, 409, 'request_id is already associated with a different store impression');
+    }
+
+    return sendSuccess(res, 200, 'Featured store impression recorded', {
+      storeId: result.storeId,
+      duplicate: result.duplicate
+    });
+  } catch (err) {
+    console.error('recordFeaturedStoreImpression error:', err);
+    return sendError(res, 500, 'Unable to record featured store impression');
+  }
+};
+
 /* ─── GET /api/seller/stores/monthly-analytics ──────────────────────────── */
 /**
  * @desc  Get monthly paid-order and sales totals for the authenticated seller's active store
@@ -751,6 +826,49 @@ const getStoreViewAnalytics = async (req, res) => {
   }
 };
 
+const getFeaturedStoreImpressionAnalytics = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    const headerStoreId = typeof req.headers['x-store-id'] === 'string'
+      ? req.headers['x-store-id'].trim()
+      : '';
+    const storeId = headerStoreId || (typeof req.query.storeId === 'string' ? req.query.storeId.trim() : '');
+
+    if (!storeId) {
+      return sendError(res, 400, 'Active store ID is required');
+    }
+    if (!isUuid(storeId)) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    const storeResult = await db.query(
+      `SELECT id FROM stores
+       WHERE id = $1 AND user_id = $2
+         AND is_deleted = false AND is_active = true
+       LIMIT 1`,
+      [storeId, sellerId]
+    );
+    if (!storeResult.rows.length) {
+      return sendError(res, 404, 'Store not found');
+    }
+
+    const analyticsResult = await db.query(
+      `SELECT COUNT(*)::bigint AS impression_count
+       FROM public.featured_store_impressions
+       WHERE store_id = $1 AND seller_id = $2`,
+      [storeId, sellerId]
+    );
+
+    return sendSuccess(res, 200, 'Featured store impression analytics fetched', {
+      storeId: storeResult.rows[0].id,
+      impressionCount: Number(analyticsResult.rows[0].impression_count)
+    });
+  } catch (err) {
+    console.error('getFeaturedStoreImpressionAnalytics error:', err);
+    return sendError(res, 500, 'Unable to fetch featured store impression analytics');
+  }
+};
+
 /* ─── GET /api/seller/stores/refund-analytics ──────────────────────────── */
 /**
  * @desc  Get refund report totals for the authenticated seller's active store
@@ -1010,6 +1128,8 @@ module.exports = {
   updateStore,
   getStoreStats,
   getStoreFollowerCount,
+  recordFeaturedStoreImpression,
+  getFeaturedStoreImpressionAnalytics,
   getStoreMonthlyAnalytics,
   getStoreReviewAnalytics,
   getStoreProductViewAnalytics,
