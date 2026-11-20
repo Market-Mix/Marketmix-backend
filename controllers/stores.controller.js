@@ -65,6 +65,58 @@ function getAnalyticsMonthHistory(month) {
   };
 }
 
+const LAGOS_OFFSET_MS = 60 * 60 * 1000;
+
+function getLagosDateParts(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Lagos',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day)
+  };
+}
+
+function lagosMidnightUtc(year, month, day) {
+  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0) - LAGOS_OFFSET_MS);
+}
+
+function parseAnalyticsRange(range, now = new Date()) {
+  if (!['7days', '30days', '90days', 'year'].includes(range)) return null;
+
+  const lagosToday = getLagosDateParts(now);
+  let start;
+  if (range === 'year') {
+    start = lagosMidnightUtc(lagosToday.year, 1, 1);
+  } else {
+    const days = Number(range.replace('days', ''));
+    start = lagosMidnightUtc(lagosToday.year, lagosToday.month, lagosToday.day);
+    start = new Date(start.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+  }
+
+  const todayStart = lagosMidnightUtc(lagosToday.year, lagosToday.month, lagosToday.day);
+  const end = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
+  return {
+    range,
+    start,
+    end,
+    startTimestamp: start.toISOString(),
+    endTimestamp: end.toISOString()
+  };
+}
+
+function getRequestedAnalyticsRange(req) {
+  const range = typeof req.query.range === 'string' ? req.query.range.trim() : '';
+  if (!range) return null;
+  return parseAnalyticsRange(range);
+}
+
 /* ─── GET /api/seller/stores ─────────────────────────────────────────────── */
 /**
  * @desc  List all stores owned by the authenticated seller
@@ -481,9 +533,17 @@ const getStoreMonthlyAnalytics = async (req, res) => {
       return sendError(res, 400, 'Active store ID is required');
     }
 
+    const analyticsRange = getRequestedAnalyticsRange(req);
     const month = typeof req.query.month === 'string' ? req.query.month.trim() : '';
-    const monthRange = parseAnalyticsMonth(month);
-    if (!monthRange) {
+    if (!analyticsRange && !month) {
+      return sendError(res, 400, 'An analytics range or month is required');
+    }
+    if (req.query.range && !analyticsRange) {
+      return sendError(res, 400, 'Invalid range. Use 7days, 30days, 90days or year');
+    }
+
+    const monthRange = month ? parseAnalyticsMonth(month) : null;
+    if (month && !monthRange) {
       return sendError(res, 400, 'Invalid month. Use YYYY-MM');
     }
 
@@ -496,6 +556,58 @@ const getStoreMonthlyAnalytics = async (req, res) => {
     );
     if (!storeResult.rows.length) {
       return sendError(res, 404, 'Store not found');
+    }
+
+    if (analyticsRange) {
+      const analyticsResult = await db.query(
+        `SELECT
+           TO_CHAR((o.paid_at AT TIME ZONE 'Africa/Lagos')::date, 'YYYY-MM-DD') AS day,
+           COUNT(DISTINCT o.id) AS order_count,
+           COALESCE(SUM(oi.quantity * oi.price_at_purchase), 0) AS gross_sales
+         FROM order_items oi
+         JOIN orders o ON o.id = oi.order_id
+         WHERE oi.seller_id = $1
+           AND oi.store_id = $2
+           AND o.payment_status = 'paid'
+           AND o.paid_at >= $3::timestamptz
+           AND o.paid_at < $4::timestamptz
+           AND EXISTS (
+             SELECT 1 FROM payment_transactions pt
+             WHERE pt.order_id = o.id AND pt.status = 'success'
+           )
+         GROUP BY (o.paid_at AT TIME ZONE 'Africa/Lagos')::date
+         ORDER BY (o.paid_at AT TIME ZONE 'Africa/Lagos')::date`,
+        [sellerId, storeId, analyticsRange.startTimestamp, analyticsRange.endTimestamp]
+      );
+
+      let grossMonthlySales = 0;
+      let monthlyOrderCount = 0;
+      const periodHistory = analyticsResult.rows.map((row) => {
+        const gross = parseFloat(row.gross_sales) || 0;
+        const orders = parseInt(row.order_count, 10) || 0;
+        grossMonthlySales += gross;
+        monthlyOrderCount += orders;
+        return {
+          day: row.day,
+          monthlyOrderCount: orders,
+          grossMonthlySales: Number(gross.toFixed(2)),
+          netMonthlySales: Number(stripFee(gross).toFixed(2))
+        };
+      });
+
+      const netMonthlySales = stripFee(grossMonthlySales);
+      return sendSuccess(res, 200, 'Range store analytics fetched', {
+        storeId,
+        range: analyticsRange.range,
+        rangeStart: analyticsRange.startTimestamp,
+        rangeEnd: analyticsRange.endTimestamp,
+        currency: 'NGN',
+        monthlyOrderCount,
+        grossMonthlySales: Number(grossMonthlySales.toFixed(2)),
+        netMonthlySales: Number(netMonthlySales.toFixed(2)),
+        monthlyHistory: periodHistory,
+        periodHistory
+      });
     }
 
     const historyRange = getAnalyticsMonthHistory(month);
@@ -581,6 +693,14 @@ const getStoreReviewAnalytics = async (req, res) => {
       return sendError(res, 404, 'Store not found');
     }
 
+    const analyticsRange = getRequestedAnalyticsRange(req);
+    if (req.query.range && !analyticsRange) {
+      return sendError(res, 400, 'Invalid range. Use 7days, 30days, 90days or year');
+    }
+
+    const rangePredicate = analyticsRange
+      ? 'AND r.created_at >= $3::timestamptz AND r.created_at < $4::timestamptz'
+      : '';
     const analyticsResult = await db.query(
       `SELECT
          COUNT(r.id)::integer AS total_reviews,
@@ -592,13 +712,21 @@ const getStoreReviewAnalytics = async (req, res) => {
          AND r.moderation_status = 'published'
          AND p.is_deleted = false
          AND p.store_id = $1
-         AND p.seller_id = $2`,
-      [storeId, sellerId]
+         AND p.seller_id = $2
+         ${rangePredicate}`,
+      analyticsRange
+        ? [storeId, sellerId, analyticsRange.startTimestamp, analyticsRange.endTimestamp]
+        : [storeId, sellerId]
     );
 
     const analytics = analyticsResult.rows[0];
     return sendSuccess(res, 200, 'Store review analytics fetched', {
       storeId,
+      ...(analyticsRange ? {
+        range: analyticsRange.range,
+        rangeStart: analyticsRange.startTimestamp,
+        rangeEnd: analyticsRange.endTimestamp
+      } : {}),
       totalReviews: Number(analytics.total_reviews),
       averageRating: Number(analytics.average_rating)
     });
@@ -637,31 +765,69 @@ const getStoreProductViewAnalytics = async (req, res) => {
       return sendError(res, 404, 'Store not found');
     }
 
-    const analyticsResult = await db.query(
-      `SELECT
-         COALESCE(SUM(COALESCE(p.views, 0)), 0)::bigint AS total_product_views,
-         COALESCE(
-           json_agg(
-             json_build_object(
-               'productId', p.id,
-               'productName', p.name,
-               'views', COALESCE(p.views, 0)
-             )
-             ORDER BY p.name, p.id
-           ) FILTER (WHERE p.id IS NOT NULL),
-           '[]'::json
-         ) AS products
-       FROM products p
-       WHERE p.store_id = $1
-         AND p.seller_id = $2
-         AND p.is_active = true
-         AND p.is_deleted = false`,
-      [storeId, sellerId]
-    );
+    const analyticsRange = getRequestedAnalyticsRange(req);
+    if (req.query.range && !analyticsRange) {
+      return sendError(res, 400, 'Invalid range. Use 7days, 30days, 90days or year');
+    }
+
+    const analyticsResult = analyticsRange
+      ? await db.query(
+          `WITH product_totals AS (
+             SELECT ve.product_id,
+                    COUNT(*)::bigint AS views
+             FROM public.view_events ve
+             WHERE ve.view_type = 'product'
+               AND ve.store_id = $1
+               AND ve.seller_id = $2
+               AND ve.viewed_at >= $3::timestamptz
+               AND ve.viewed_at < $4::timestamptz
+             GROUP BY ve.product_id
+           )
+           SELECT COALESCE(SUM(pt.views), 0)::bigint AS total_product_views,
+                  COALESCE(
+                    json_agg(
+                      json_build_object(
+                        'productId', pt.product_id,
+                        'productName', COALESCE(p.name, 'Deleted or unavailable product'),
+                        'views', pt.views
+                      )
+                      ORDER BY COALESCE(p.name, 'Deleted or unavailable product'), pt.product_id
+                    ), '[]'::json
+                  ) AS products
+           FROM product_totals pt
+           LEFT JOIN products p ON p.id = pt.product_id`,
+          [storeId, sellerId, analyticsRange.startTimestamp, analyticsRange.endTimestamp]
+        )
+      : await db.query(
+          `SELECT
+             COALESCE(SUM(COALESCE(p.views, 0)), 0)::bigint AS total_product_views,
+             COALESCE(
+               json_agg(
+                 json_build_object(
+                   'productId', p.id,
+                   'productName', p.name,
+                   'views', COALESCE(p.views, 0)
+                 )
+                 ORDER BY p.name, p.id
+               ) FILTER (WHERE p.id IS NOT NULL),
+               '[]'::json
+             ) AS products
+           FROM products p
+           WHERE p.store_id = $1
+             AND p.seller_id = $2
+             AND p.is_active = true
+             AND p.is_deleted = false`,
+          [storeId, sellerId]
+        );
 
     const analytics = analyticsResult.rows[0];
     return sendSuccess(res, 200, 'Store product view analytics fetched', {
       storeId,
+      ...(analyticsRange ? {
+        range: analyticsRange.range,
+        rangeStart: analyticsRange.startTimestamp,
+        rangeEnd: analyticsRange.endTimestamp
+      } : {}),
       totalProductViews: Number(analytics.total_product_views),
       products: analytics.products
     });
@@ -816,6 +982,31 @@ const getStoreViewAnalytics = async (req, res) => {
       return sendError(res, 404, 'Store not found');
     }
 
+    const analyticsRange = getRequestedAnalyticsRange(req);
+    if (req.query.range && !analyticsRange) {
+      return sendError(res, 400, 'Invalid range. Use 7days, 30days, 90days or year');
+    }
+
+    if (analyticsRange) {
+      const rangeResult = await db.query(
+        `SELECT COUNT(*)::bigint AS store_views
+         FROM public.view_events
+         WHERE view_type = 'store'
+           AND store_id = $1
+           AND seller_id = $2
+           AND viewed_at >= $3::timestamptz
+           AND viewed_at < $4::timestamptz`,
+        [storeId, sellerId, analyticsRange.startTimestamp, analyticsRange.endTimestamp]
+      );
+      return sendSuccess(res, 200, 'Range store view analytics fetched', {
+        storeId: storeResult.rows[0].id,
+        range: analyticsRange.range,
+        rangeStart: analyticsRange.startTimestamp,
+        rangeEnd: analyticsRange.endTimestamp,
+        storeViews: Number(rangeResult.rows[0].store_views)
+      });
+    }
+
     return sendSuccess(res, 200, 'Store view analytics fetched', {
       storeId: storeResult.rows[0].id,
       storeViews: Number(storeResult.rows[0].views)
@@ -852,15 +1043,33 @@ const getFeaturedStoreImpressionAnalytics = async (req, res) => {
       return sendError(res, 404, 'Store not found');
     }
 
+    const analyticsRange = getRequestedAnalyticsRange(req);
+    if (req.query.range && !analyticsRange) {
+      return sendError(res, 400, 'Invalid range. Use 7days, 30days, 90days or year');
+    }
+
     const analyticsResult = await db.query(
-      `SELECT COUNT(*)::bigint AS impression_count
-       FROM public.featured_store_impressions
-       WHERE store_id = $1 AND seller_id = $2`,
-      [storeId, sellerId]
+      analyticsRange
+        ? `SELECT COUNT(*)::bigint AS impression_count
+           FROM public.featured_store_impressions
+           WHERE store_id = $1 AND seller_id = $2
+             AND viewed_at >= $3::timestamptz
+             AND viewed_at < $4::timestamptz`
+        : `SELECT COUNT(*)::bigint AS impression_count
+           FROM public.featured_store_impressions
+           WHERE store_id = $1 AND seller_id = $2`,
+      analyticsRange
+        ? [storeId, sellerId, analyticsRange.startTimestamp, analyticsRange.endTimestamp]
+        : [storeId, sellerId]
     );
 
     return sendSuccess(res, 200, 'Featured store impression analytics fetched', {
       storeId: storeResult.rows[0].id,
+      ...(analyticsRange ? {
+        range: analyticsRange.range,
+        rangeStart: analyticsRange.startTimestamp,
+        rangeEnd: analyticsRange.endTimestamp
+      } : {}),
       impressionCount: Number(analyticsResult.rows[0].impression_count)
     });
   } catch (err) {
@@ -898,6 +1107,14 @@ const getStoreRefundAnalytics = async (req, res) => {
       return sendError(res, 404, 'Store not found');
     }
 
+    const analyticsRange = getRequestedAnalyticsRange(req);
+    if (req.query.range && !analyticsRange) {
+      return sendError(res, 400, 'Invalid range. Use 7days, 30days, 90days or year');
+    }
+
+    const rangePredicate = analyticsRange
+      ? 'AND rc.created_at >= $3::timestamptz AND rc.created_at < $4::timestamptz'
+      : '';
     const analyticsResult = await db.query(
       `SELECT COUNT(DISTINCT rc.id)::integer AS refund_reports_received
        FROM refund_cases rc
@@ -906,12 +1123,20 @@ const getStoreRefundAnalytics = async (req, res) => {
         AND oi.order_id = rc.order_id::uuid
         AND oi.seller_id = rc.seller_id
        WHERE oi.store_id = $1
-         AND oi.seller_id = $2`,
-      [storeId, sellerId]
+         AND oi.seller_id = $2
+         ${rangePredicate}`,
+      analyticsRange
+        ? [storeId, sellerId, analyticsRange.startTimestamp, analyticsRange.endTimestamp]
+        : [storeId, sellerId]
     );
 
     return sendSuccess(res, 200, 'Store refund analytics fetched', {
       storeId,
+      ...(analyticsRange ? {
+        range: analyticsRange.range,
+        rangeStart: analyticsRange.startTimestamp,
+        rangeEnd: analyticsRange.endTimestamp
+      } : {}),
       refundReportsReceived: Number(analyticsResult.rows[0].refund_reports_received)
     });
   } catch (err) {
@@ -1137,6 +1362,7 @@ module.exports = {
   getStoreViewAnalytics,
   getStoreRefundAnalytics,
   parseAnalyticsMonth,
+  parseAnalyticsRange,
   getPublicStore,
   getPublicStoreProducts,
 };
