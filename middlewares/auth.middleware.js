@@ -54,8 +54,8 @@ const protect = async (req, res, next) => {
       // Attach user info to request
       req.user = {
         id: decoded.id,
-        email: decoded.email,
-        role: decoded.role,
+        email: user.email || decoded.email,
+        role: user.role,
         is_suspended: user.is_suspended
       };
 
