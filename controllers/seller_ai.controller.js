@@ -76,8 +76,8 @@ const generateListing = async (req, res) => {
       dynamic_fields_schema: schema.map(({ key, label, type, options }) => ({ key, label, type, options }))
     });
 
-    const { json, tokens } = await generateJSON({ system: LISTING_SYSTEM, prompt, maxTokens: 900 });
-    await logUsage(sellerId, 'listing', tokens, 'ok');
+    const { json, tokens, provider } = await generateJSON({ system: LISTING_SYSTEM, prompt, maxTokens: 900 });
+    await logUsage(sellerId, `listing:${provider}`, tokens, 'ok');
 
     return sendSuccess(res, 200, 'Listing draft generated', {
       draft: {
